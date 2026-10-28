@@ -1,0 +1,3509 @@
+% ============================================================
+% mynotes.sty -- shared notes configuration
+% Updated: 2026-10-18
+% ============================================================
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mynotes}[2026/10/18 Personal Notes v12]
+% 1. Required packages
+\RequirePackage{xcolor}
+\RequirePackage{tcolorbox}
+\RequirePackage{minted}
+\RequirePackage{xparse}
+\RequirePackage{fancyvrb}
+\RequirePackage{xurl}
+\RequirePackage{amsmath}
+\RequirePackage{amssymb}
+\RequirePackage{mathtools}
+% 2. Paragraph formatting (unchanged)
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4mm}
+% 3. Note: a consistent full text-width box
+% Replaces both the old \dhknt and variable-looking notes.
+\newtcolorbox{dhknote}{%
+  width=\linewidth,
+  colback=gray!10,
+  colframe=gray!30,
+  boxrule=0.4pt,
+  arc=1mm,
+  boxsep=1mm,
+  left=2mm,
+  right=2mm,
+  top=2mm,
+  bottom=2mm,
+  before skip=2mm,
+  after skip=2mm,
+  before upper={\setlength{\parindent}{0pt}}
+}
+% 4. Minted Python highlighting (unchanged)
+\setminted{
+  style=vscode-notes,
+  fontsize=\small,
+  breaklines=true,
+  breakanywhere=true,
+  linenos=false,
+  numbersep=10pt,
+  tabsize=4,
+  autogobble=true
+}
+\newminted[dhkcode]{vscodepython}{%
+  listparameters={\setlength{\topsep}{1mm}}
+}
+% 5. Shell blocks and robust inline monospaced text
+% Note: \zsh accepts _, backslash paths, #, &, and braces in
+% section headings. Literal percent must be written as \% because TeX
+% removes comments before a macro can read its argument.
+\newcommand{\dhkcell}[1]{\makebox[\fontcharwd\font`0][c]{#1}}
+\providecommand{\ra}{\dhkcell{\ensuremath{\rightarrow}}}
+\providecommand{\la}{\dhkcell{\ensuremath{\leftarrow}}}
+\providecommand{\ua}{\dhkcell{\ensuremath{\uparrow}}}
+\providecommand{\da}{\dhkcell{\ensuremath{\downarrow}}}
+\providecommand{\lra}{\dhkcell{\ensuremath{\leftrightarrow}}}
+\providecommand{\uda}{\dhkcell{\ensuremath{\updownarrow}}}
+\providecommand{\Ra}{\dhkcell{\ensuremath{\Rightarrow}}}
+\providecommand{\Da}{\dhkcell{\ensuremath{\Downarrow}}}
+% This argument is read normally, so it also works inside
+% \section, \subsection, and \subsubsection.
+% The function converts tokens to literal text and removes
+% the extra space inserted after control words by detokenize.
+\ExplSyntaxOn
+\tl_new:N \l_dhk_zsh_inline_tl
+\cs_generate_variant:Nn \tl_replace_all:Nnn {NVV}
+\cs_new_protected:Npn \dhk_zsh_inline:n #1
+  {
+    \tl_set:Nx \l_dhk_zsh_inline_tl {#1}
+    \regex_replace_all:nnN { (\\[A-Za-z]+) \s } { \1 } \l_dhk_zsh_inline_tl
+    \regex_replace_all:nnN { \\ \% } { \% } \l_dhk_zsh_inline_tl
+    \tl_set:Nx \l_tmpa_tl {\char_generate:nn {35}{12}\char_generate:nn {35}{12}}
+    \tl_set:Nx \l_tmpb_tl {\char_generate:nn {35}{12}}
+    \tl_replace_all:NVV \l_dhk_zsh_inline_tl \l_tmpa_tl \l_tmpb_tl
+    \texttt{\tl_use:N \l_dhk_zsh_inline_tl}
+  }
+\cs_new:Npn \zsh #1 { \exp_not:n { \dhkZshText {\detokenize{#1}} } }
+\cs_new_protected:Npn \dhkZshText #1 { \dhk_zsh_inline:n {#1} }
+\ExplSyntaxOff
+% Fancyvrb centered key, preserves original small-font layout.
+\makeatletter
+\define@key{FV}{centered}[true]{%
+  \def\FancyVerbFormatLine##1{%
+    \hbox to \linewidth{\hfil ##1\hfil}%
+  }%
+}
+\makeatother
+% Literal shell/JSON/code: ALL input chars remain literal.
+% In particular \\, {, }, _, #, $, %, & are not parsed.
+\DefineVerbatimEnvironment{dhkzsh}{Verbatim}{%
+  fontsize=\small,
+  vspace=1mm
+}
+\DefineVerbatimEnvironment{dhkzshcode}{Verbatim}{%
+  fontsize=\small,
+  vspace=1mm
+}
+% Optional old-style arrow macros inside a verbatim block.
+% This separate environment retains the original commandchars
+% behaviour; use only if raw JSON/braces/backslashes aren't needed.
+\DefineVerbatimEnvironment{dhksmry}{Verbatim}{%
+  commandchars=\\\{\},
+  codes={\catcode`\$=3},
+  fontsize=\small
+}
+
+% ============================================================
+% 6. dhktable v14: auto-detected columns + //* intra-cell breaks
+% ============================================================
+% Same Markdown-like syntax; table width remains \linewidth.
+% Header is bold; all BODY cells use \normalfont\ttfamily\small.
+% Example cell: first line //* second line (breaks INSIDE one cell).
+\RequirePackage{tabularx}
+\RequirePackage{booktabs}
+\ExplSyntaxOn
+\ior_new:N \g_dhk_table_ior
+\seq_new:N \l_dhk_table_cells_seq
+\tl_new:N \l_dhk_table_line_tl
+\tl_new:N \l_dhk_table_cell_tl
+\tl_new:N \l_dhk_table_body_tl
+\tl_new:N \l_dhk_table_colspec_tl
+\int_new:N \l_dhk_table_stage_int
+\int_new:N \l_dhk_table_columns_int
+\cs_generate_variant:Nn \seq_set_split:Nnn {NnV}
+\cs_generate_variant:Nn \tl_put_right:Nn {NV}
+% Turn //* into a real line break inside a tabularx X-column.
+% Note: do NOT use a table-row \\ here; that would create another row.
+\cs_new_protected:Npn \dhk_table_prepare_cell:
+ {
+  \tl_replace_all:Nnn \l_dhk_table_cell_tl {//*} {\newline}
+ }
+\cs_new_protected:Npn \dhk_table_row:n #1
+ {
+  \tl_set:Nn \l_dhk_table_line_tl {#1}
+  \tl_trim_spaces:N \l_dhk_table_line_tl
+  \seq_set_split:NnV \l_dhk_table_cells_seq {|} \l_dhk_table_line_tl
+  \seq_pop_left:NN \l_dhk_table_cells_seq \l_tmpa_tl
+  \seq_pop_right:NN \l_dhk_table_cells_seq \l_tmpa_tl
+  % Determine column count from actual rows (not the |:---| divider).
+  \int_set:Nn \l_dhk_table_columns_int
+   {\int_max:nn {\l_dhk_table_columns_int} {\seq_count:N \l_dhk_table_cells_seq}}
+  \seq_map_indexed_inline:Nn \l_dhk_table_cells_seq
+   {
+    \int_compare:nNnT {##1} > {1}
+     {\tl_put_right:Nn \l_dhk_table_body_tl {&}}
+    \tl_set:Nn \l_dhk_table_cell_tl {##2}
+    \tl_trim_spaces:N \l_dhk_table_cell_tl
+    \dhk_table_prepare_cell:
+    \int_compare:nNnTF {\l_dhk_table_stage_int} = {2}
+     {
+      \tl_put_right:Nn \l_dhk_table_body_tl
+       {\begingroup\normalfont\ttfamily\small}
+      \tl_put_right:NV \l_dhk_table_body_tl \l_dhk_table_cell_tl
+      \tl_put_right:Nn \l_dhk_table_body_tl {\endgroup}
+     }
+     {
+      \tl_put_right:Nn \l_dhk_table_body_tl {\begingroup\bfseries}
+      \tl_put_right:NV \l_dhk_table_body_tl \l_dhk_table_cell_tl
+      \tl_put_right:Nn \l_dhk_table_body_tl {\endgroup}
+     }
+   }
+  \tl_put_right:Nn \l_dhk_table_body_tl {\\}
+ }
+\cs_new_protected:Npn \dhk_table_process:n #1
+ {
+  \tl_if_blank:nF {#1}
+   {
+    \int_case:nnF {\l_dhk_table_stage_int}
+     {
+      {0}{\dhk_table_row:n {#1}
+          \tl_put_right:Nn \l_dhk_table_body_tl {\midrule}
+          \int_set:Nn \l_dhk_table_stage_int {1}}
+      {1}{\int_set:Nn \l_dhk_table_stage_int {2}}
+      {2}{\dhk_table_row:n {#1}}
+     }{}
+   }
+ }
+\cs_new_protected:Npn \dhk_table_begin:n #1
+ {\begin{tabularx}{\linewidth}{#1}}
+\cs_new_protected:Npn \dhk_table_render:
+ {
+  \par\smallskip\noindent
+  \begingroup
+  \footnotesize
+  \renewcommand{\arraystretch}{1.5}
+  \int_zero:N \l_dhk_table_stage_int
+  \int_zero:N \l_dhk_table_columns_int
+  \tl_clear:N \l_dhk_table_body_tl
+  \ior_open:Nn \g_dhk_table_ior {\jobname-dhktable.tmp}
+  \char_set_catcode_other:n {35}
+  \char_set_catcode_other:n {36}
+  \char_set_catcode_other:n {37}
+  \char_set_catcode_other:n {38}
+  \char_set_catcode_other:n {95}
+  \char_set_catcode_other:n {94}
+  \char_set_catcode_other:n {126}
+  \char_set_catcode_other:n {92}
+  \char_set_catcode_other:n {123}
+  \char_set_catcode_other:n {125}
+  \ior_map_inline:Nn \g_dhk_table_ior {\dhk_table_process:n {##1}}
+  \ior_close:N \g_dhk_table_ior
+  % Auto-generated tabularx preamble: X for EVERY detected column.
+  \tl_set:Nn \l_dhk_table_colspec_tl {@{}}
+  \int_step_inline:nn {\l_dhk_table_columns_int}
+   {\tl_put_right:Nn \l_dhk_table_colspec_tl
+     {>{\raggedright\arraybackslash}X}}
+  \tl_put_right:Nn \l_dhk_table_colspec_tl {@{}}
+  \int_compare:nNnTF {\l_dhk_table_columns_int} > {0}
+   {
+    \exp_args:NV \dhk_table_begin:n \l_dhk_table_colspec_tl
+    \toprule
+    \tl_use:N \l_dhk_table_body_tl
+    \bottomrule
+    \end{tabularx}
+   }
+   {\PackageWarning{mynotes}{Empty~dhktable~environment}}
+  \endgroup
+  \par\smallskip
+ }
+\cs_new_eq:NN \dhktablerender \dhk_table_render:
+\ExplSyntaxOff
+\newenvironment{dhktable}{%
+  \VerbatimEnvironment
+  \begin{VerbatimOut}{\jobname-dhktable.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhktablerender
+}
+
+
+
+% ==================================================
+% 7. Automatic tree diagrams
+% ==================================================
+%
+% dhktree          : Vertical tree
+% dhktreeh         : Horizontal tree
+% dhktreediagonal  : Diagonal tree
+% dhkdir           : Directory-style tree
+%
+% Common syntax:
+%   >    : Depth
+%   ::   : Description
+%   //   : Manual line break
+%
+% ==================================================
+
+
+% ==================================================
+% 7.1 Packages
+% ==================================================
+
+\RequirePackage{forest}
+\RequirePackage{fancyvrb}
+\RequirePackage{adjustbox}
+\RequirePackage{dirtree}
+
+
+% ==================================================
+% 7.2 Forest styles — Compact and clean layout
+% ==================================================
+
+\forestset{
+  dhktreevertical/.style={for tree={
+    grow=270,
+    l sep=10mm,
+    s sep=7mm,
+    anchor=center,
+    align=center,
+    inner sep=2pt,
+    edge={thick},
+    edge path={
+      \noexpand\path[\forestoption{edge}]
+      (!u.south)
+      -- ++(0,-4mm)
+      -| (.north)
+      \forestoption{edge label};}
+  }},
+  dhktreeh/.style={for tree={
+    grow=0,
+    l sep=12mm,
+    s sep=7mm,
+    anchor=center,
+    align=center,
+    inner sep=2pt,
+    edge={thick},
+    edge path={
+      \noexpand\path[\forestoption{edge}]
+      (!u.east)
+      -- ++(4mm,0)
+      |- (.west)
+      \forestoption{edge label};}
+  }},
+  dhktreediagonal/.style={for tree={
+    grow=270,
+    l sep=12mm,
+    s sep=7mm,
+    anchor=center,
+    align=center,
+    inner sep=2pt,
+    edge={thick}
+  }}
+}
+
+
+% ==================================================
+% 7.3 Automatic Forest width adjustment
+% ==================================================
+%
+% Must be defined outside \ExplSyntaxOn.
+%
+% "max width" contains a space.
+%
+% ==================================================
+
+\newcommand{\dhktreefitbegin}{%
+  \begin{adjustbox}{max width=\linewidth}%
+}
+
+
+% ==================================================
+% 7.4 Original tree parser
+% ==================================================
+
+\ExplSyntaxOn
+
+\ior_new:N \g_dhktree_in_ior
+
+\tl_new:N \l_dhktree_content_tl
+\tl_new:N \l_dhktree_line_tl
+\tl_new:N \l_dhktree_name_tl
+\tl_new:N \l_dhktree_desc_tl
+\tl_new:N \l_dhktree_edge_tl
+
+\seq_new:N \l_dhktree_parts_seq
+
+\int_new:N \l_dhktree_previous_int
+\int_new:N \l_dhktree_depth_int
+\int_new:N \l_dhktree_count_int
+
+\bool_new:N \l_dhktree_started_bool
+
+\tl_new:N \l_dhktree_orientation_tl
+\tl_new:N \l_dhktree_edge_style_tl
+
+\cs_generate_variant:Nn \seq_set_split:Nnn { NnV, NVV }
+\cs_generate_variant:Nn \regex_extract_once:nnNTF { nVNTF }
+\cs_generate_variant:Nn \tl_put_right:Nn { Nx }
+
+
+% ==================================================
+% 7.5 Parse Forest node
+% ==================================================
+
+\cs_new_protected:Npn \dhktree_parse:n #1
+ {
+  \tl_set:Nn \l_dhktree_line_tl {#1}
+  \tl_trim_spaces:N \l_dhktree_line_tl
+
+  \tl_if_blank:VF \l_dhktree_line_tl
+   {
+    \int_zero:N \l_dhktree_depth_int
+
+    \regex_extract_once:nVNTF
+      {\A(>+)}
+      \l_dhktree_line_tl
+      \l_dhktree_parts_seq
+     {
+      \int_set:Nn \l_dhktree_depth_int
+       {
+        \tl_count:e
+         {
+          \seq_item:Nn \l_dhktree_parts_seq {2}
+         }
+       }
+     }
+     {}
+
+    \regex_replace_once:nnN
+      {\A>+\s*}
+      {}
+      \l_dhktree_line_tl
+
+    % Edge label: =>
+
+    \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {=>}}
+
+    \seq_set_split:NVV
+      \l_dhktree_parts_seq
+      \l_tmpa_tl
+      \l_dhktree_line_tl
+
+    \seq_pop_left:NN
+      \l_dhktree_parts_seq
+      \l_dhktree_line_tl
+
+    \seq_if_empty:NTF \l_dhktree_parts_seq
+      {\tl_clear:N \l_dhktree_edge_tl}
+      {
+       \seq_pop_left:NN
+         \l_dhktree_parts_seq
+         \l_dhktree_edge_tl
+      }
+
+    \tl_trim_spaces:N \l_dhktree_edge_tl
+
+    % Description: ::
+
+    \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {::}}
+
+    \seq_set_split:NVV
+      \l_dhktree_parts_seq
+      \l_tmpa_tl
+      \l_dhktree_line_tl
+
+    \seq_pop_left:NN
+      \l_dhktree_parts_seq
+      \l_dhktree_name_tl
+
+    \tl_trim_spaces:N \l_dhktree_name_tl
+
+    \seq_if_empty:NTF \l_dhktree_parts_seq
+      {\tl_clear:N \l_dhktree_desc_tl}
+      {
+       \seq_pop_left:NN
+         \l_dhktree_parts_seq
+         \l_dhktree_desc_tl
+      }
+
+    \tl_trim_spaces:N \l_dhktree_desc_tl
+
+    % Close completed branches
+
+    \bool_if:NT \l_dhktree_started_bool
+     {
+      \int_step_inline:nn
+       {
+        \int_max:nn
+         {0}
+         {
+          \l_dhktree_previous_int
+          -
+          \l_dhktree_depth_int
+          +
+          1
+         }
+       }
+       {
+        \tl_put_right:Nn
+          \l_dhktree_content_tl
+          {]}
+       }
+     }
+
+    % Create node
+
+    \tl_put_right:Nx \l_dhktree_content_tl
+     {
+      [
+       {
+        \exp_not:N \dhktreebox
+         {\exp_not:V \l_dhktree_name_tl}
+         {\exp_not:V \l_dhktree_desc_tl}
+       }
+     }
+
+    % Edge label
+
+    \tl_if_blank:VF \l_dhktree_edge_tl
+     {
+      \tl_put_right:Nx \l_dhktree_content_tl
+       {
+        ,edge\c_space_tl label=
+         {
+          node[
+            midway,
+            fill=white,
+            inner\c_space_tl sep=1pt,
+            font=\exp_not:N \scriptsize
+          ]
+          {
+           \exp_not:V \l_dhktree_edge_tl
+          }
+         }
+       }
+     }
+
+    % Orientation
+
+    \bool_if:NF \l_dhktree_started_bool
+     {
+      \tl_put_right:Nx \l_dhktree_content_tl
+       {
+        ,\exp_not:V \l_dhktree_orientation_tl
+       }
+     }
+
+    \int_set_eq:NN
+      \l_dhktree_previous_int
+      \l_dhktree_depth_int
+
+    \bool_set_true:N \l_dhktree_started_bool
+   }
+ }
+
+
+% ==================================================
+% 7.6 Original Forest renderer
+% ==================================================
+
+\cs_new_protected:Npn \dhktree_render:n #1
+ {
+  \group_begin:
+
+  \tl_clear:N \l_dhktree_content_tl
+  \int_zero:N \l_dhktree_previous_int
+  \bool_set_false:N \l_dhktree_started_bool
+
+  \str_case:nnF {#1}
+   {
+    {horizontal}
+     {
+      \tl_set:Nn
+        \l_dhktree_orientation_tl
+        {dhktreeh}
+     }
+
+    {diagonal}
+     {
+      \tl_set:Nn
+        \l_dhktree_orientation_tl
+        {dhktreediagonal}
+     }
+   }
+   {
+    \tl_set:Nn
+      \l_dhktree_orientation_tl
+      {dhktreevertical}
+   }
+
+  \ior_open:Nn
+    \g_dhktree_in_ior
+    {\jobname-dhktree.tmp}
+
+  \ior_str_map_inline:Nn
+    \g_dhktree_in_ior
+   {
+    \dhktree_parse:n {##1}
+   }
+
+  \ior_close:N \g_dhktree_in_ior
+
+  \bool_if:NT \l_dhktree_started_bool
+   {
+    \int_step_inline:nn
+      {\l_dhktree_previous_int + 1}
+     {
+      \tl_put_right:Nn
+        \l_dhktree_content_tl
+        {]}
+     }
+
+    \par\smallskip\noindent
+
+    \dhktreefitbegin
+      \exp_args:NV
+        \Forest
+        \l_dhktree_content_tl
+    \end{adjustbox}
+
+    \par\smallskip
+   }
+
+  \group_end:
+ }
+
+
+% ==================================================
+% 7.7 Manual line breaks
+% ==================================================
+
+\seq_new:N \l_dhktree_breaks_seq
+
+\cs_new_protected:Npn \dhktree_print_lines:n #1
+ {
+  \seq_set_split:Nnn
+    \l_dhktree_breaks_seq
+    {//}
+    {#1}
+
+  \seq_map_indexed_inline:Nn
+    \l_dhktree_breaks_seq
+   {
+    \int_compare:nNnT
+      {##1} > {1}
+     {
+      \tabularnewline
+     }
+
+    \tl_trim_spaces:n {##2}
+   }
+ }
+
+
+% ==================================================
+% 7.8 Original Forest node box
+% ==================================================
+
+\cs_new_protected:Npn \dhktreebox #1#2
+ {
+  \begin{tabular}{@{}c@{}}
+
+   \dhktree_print_lines:n {#1}
+
+   \tl_if_blank:nF {#2}
+    {
+     \tabularnewline
+     \footnotesize
+     \dhktree_print_lines:n {#2}
+    }
+
+  \end{tabular}
+ }
+
+
+% ==================================================
+% 7.9 Original public renderer
+% ==================================================
+
+\cs_new_eq:NN
+  \dhktreerender
+  \dhktree_render:n
+
+
+% ==================================================
+% 7.10 NEW: Directory tree parser
+% ==================================================
+%
+% Uses dirtree instead of forest.
+%
+% Special characters in file paths are read
+% as literal strings by \ior_str_map_inline.
+%
+% ==================================================
+
+\tl_new:N \l_dhkdir_content_tl
+
+\cs_new_protected:Npn \dhkdir_parse:n #1
+ {
+  \tl_set:Nn
+    \l_dhktree_line_tl
+    {#1}
+
+  \tl_trim_spaces:N
+    \l_dhktree_line_tl
+
+  \tl_if_blank:VF \l_dhktree_line_tl
+   {
+    % ----------------------------------------------
+    % 1. Calculate depth from > characters
+    % ----------------------------------------------
+
+    \int_zero:N \l_dhktree_depth_int
+
+    \regex_extract_once:nVNTF
+      {\A(>+)}
+      \l_dhktree_line_tl
+      \l_dhktree_parts_seq
+     {
+      \int_set:Nn
+        \l_dhktree_depth_int
+       {
+        \tl_count:e
+         {
+          \seq_item:Nn
+            \l_dhktree_parts_seq
+            {2}
+         }
+       }
+     }
+     {}
+
+    \regex_replace_once:nnN
+      {\A>+\s*}
+      {}
+      \l_dhktree_line_tl
+
+    % ----------------------------------------------
+    % 2. Split filename and description at ::
+    % ----------------------------------------------
+
+    \tl_set:Nx \l_tmpa_tl
+      {\tl_to_str:n {::}}
+
+    \seq_set_split:NVV
+      \l_dhktree_parts_seq
+      \l_tmpa_tl
+      \l_dhktree_line_tl
+
+    \seq_pop_left:NN
+      \l_dhktree_parts_seq
+      \l_dhktree_name_tl
+
+    \tl_trim_spaces:N
+      \l_dhktree_name_tl
+
+    \seq_if_empty:NTF
+      \l_dhktree_parts_seq
+     {
+      \tl_clear:N \l_dhktree_desc_tl
+     }
+     {
+      \seq_pop_left:NN
+        \l_dhktree_parts_seq
+        \l_dhktree_desc_tl
+     }
+
+    \tl_trim_spaces:N
+      \l_dhktree_desc_tl
+
+    % ----------------------------------------------
+    % 3. Convert to dirtree syntax
+    %
+    % Input:
+    %   >data/
+    %   >>train.csv :: Training dataset
+    %
+    % Conversion:
+    %   .2 {data/}.
+    %   .3 {train.csv + description}.
+    %
+    % IMPORTANT:
+    % \c_space_tl is required by dirtree's parser.
+    % ----------------------------------------------
+
+    \tl_put_right:Nx
+      \l_dhkdir_content_tl
+     {
+      .
+      \int_eval:n
+       {
+        \l_dhktree_depth_int + 1
+       }
+      \c_space_tl
+       {
+        \exp_not:N \dhkdirbox
+         {
+          \exp_not:V \l_dhktree_name_tl
+         }
+         {
+          \exp_not:V \l_dhktree_desc_tl
+         }
+       }
+      .
+      \c_space_tl
+     }
+   }
+ }
+
+% ==================================================
+% 7.11 dhkdir v6: unified spacing + [in=N] option
+%     >, >>, ... : original hierarchy (unchanged in ordinary mode)
+%     | text     : connect preceding node vertically to text
+%     |          : optional extra spacing before next linked node
+%     //         : manual line break inside a node
+%     ::         : smaller description
+%     ->         : visible right arrow
+%     @          : attachment at the following character's START (hidden)
+%                  e.g. /Users/user/@Desktop/python/project or -> @module
+% ==================================================
+\RequirePackage{tikz}
+\ExplSyntaxOff
+\usetikzlibrary{calc}
+\ExplSyntaxOn
+% Shared [in=N] option parser for dhkdir and dhkdiagram.
+% Nonnegative decimals are accepted; unrecognised options warn and use zero.
+\dim_new:N \l_dhkvisual_indent_dim
+\seq_new:N \l_dhkvisual_indent_match_seq
+\cs_new_protected:Npn \dhkvisual_set_indent:n #1
+ {
+  \dim_zero:N \l_dhkvisual_indent_dim
+  \tl_set:Nn \l_tmpa_tl {#1}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_if_blank:VF \l_tmpa_tl
+   {
+    \regex_extract_once:nVNTF
+     {\A in \s* = \s* ([0-9]+ (?: \. [0-9]+ )?) \Z}
+     \l_tmpa_tl \l_dhkvisual_indent_match_seq
+     {\dim_set:Nn \l_dhkvisual_indent_dim
+       {\seq_item:Nn \l_dhkvisual_indent_match_seq {2} em}}
+     {\PackageWarning{mynotes}{Unknown~option;~use~[in=5]}}
+   }
+ }
+\tl_new:N \g_dhkdir_option_tl
+\tl_new:N \g_dhkdiagram_option_tl
+\cs_new_protected:Npn \dhkdir_set_option:n #1
+ {\tl_gset:Nn \g_dhkdir_option_tl {#1}}
+\cs_new_protected:Npn \dhkdiagram_set_option:n #1
+ {\tl_gset:Nn \g_dhkdiagram_option_tl {#1}}
+\cs_new_eq:NN \dhkdirsetoption \dhkdir_set_option:n
+\cs_new_eq:NN \dhkdiagramsetoption \dhkdiagram_set_option:n
+\cs_new_protected:Npn \dhkvisual_verbatim_start:
+ {\cs_set_eq:cc {FV@BeginScanning} {FV@GetLine}}
+\cs_new_eq:NN \dhkvisualverbatimstart \dhkvisual_verbatim_start:
+\seq_new:N  \l_dhkdirx_input_seq
+\seq_new:N  \l_dhkdirx_parts_seq
+\bool_new:N \l_dhkdirx_mixed_bool
+\bool_new:N \l_dhkdirx_pending_bool
+\bool_new:N \l_dhkdirx_pipe_bool
+\tl_new:N   \l_dhkdirx_line_tl
+\tl_new:N   \l_dhkdirx_name_tl
+\tl_new:N   \l_dhkdirx_desc_tl
+\tl_new:N   \l_dhkdirx_key_tl
+\int_new:N  \l_dhkdirx_depth_int
+\int_new:N  \l_dhkdirx_previous_depth_int
+\cs_generate_variant:Nn \regex_match:nnTF {nVTF}
+\cs_generate_variant:Nn \seq_set_split:Nnn {NnV,NVV}
+\cs_generate_variant:Nn \seq_put_right:Nn {NV}
+\cs_generate_variant:Nn \prop_get:NnNTF {NVNTF}
+\cs_generate_variant:Nn \prop_put:Nnn {NVx}
+% In mixed mode the labels are real TikZ nodes.  Connecting the
+% anchors of the ACTUAL nodes avoids a second, mismatched coordinate
+% system and makes multiline node heights automatic.
+\tl_new:N \l_dhkdirx_last_node_tl
+\tl_new:N \l_dhkdirx_new_node_tl
+\tl_new:N \l_dhkdirx_parent_node_tl
+\dim_new:N \l_dhkdirx_horizontal_delta_dim
+\dim_new:N \l_dhkdirx_vertical_gap_dim
+\int_new:N \l_dhkdirx_serial_int
+\prop_new:N \l_dhkdirx_nodes_prop
+\prop_new:N \l_dhkdirx_x_prop
+\prop_new:N \l_dhkdirx_attach_prop
+\seq_new:N  \l_dhkdirx_at_seq
+\seq_new:N  \l_dhkdirx_splitlines_seq
+\tl_new:N   \l_dhkdirx_prefix_tl
+\tl_new:N   \l_dhkdirx_attach_tl
+\tl_new:N   \l_dhkdirx_parent_x_tl
+\dim_new:N  \l_dhkdirx_current_x_dim
+\dim_new:N  \l_dhkdirx_last_x_dim
+\dim_new:N  \l_dhkdirx_attach_dim
+\tl_new:N   \l_dhkdirx_prefix_node_tl
+\cs_new_protected:Npn \dhkdirx_print_inline:n #1
+ {
+  \tl_set:Nn \l_tmpa_tl {#1}
+  \tl_replace_all:Nnn \l_tmpa_tl {->} {→}
+  \tl_use:N \l_tmpa_tl
+ }
+
+\cs_new_protected:Npn \dhkdirx_row:n #1
+ {
+  \tl_set:Nn \l_dhkdirx_line_tl {#1}
+  \tl_trim_spaces:N \l_dhkdirx_line_tl
+  \tl_if_blank:VF \l_dhkdirx_line_tl
+   {
+    \bool_set_false:N \l_dhkdirx_pipe_bool
+    \regex_match:nVTF {\A\|} \l_dhkdirx_line_tl
+     {
+      \bool_set_true:N \l_dhkdirx_pipe_bool
+      \regex_replace_once:nnN {\A\|\s*} {} \l_dhkdirx_line_tl
+     }{}
+    \tl_if_blank:VTF \l_dhkdirx_line_tl
+     {\bool_set_true:N \l_dhkdirx_pending_bool}
+     {
+      \int_zero:N \l_dhkdirx_depth_int
+      \bool_if:NTF \l_dhkdirx_pipe_bool
+       {\int_set_eq:NN \l_dhkdirx_depth_int \l_dhkdirx_previous_depth_int}
+       {
+        \regex_extract_once:nVNTF {\A(>+)}
+         \l_dhkdirx_line_tl \l_dhktree_parts_seq
+         {\int_set:Nn \l_dhkdirx_depth_int
+           {\tl_count:e {\seq_item:Nn \l_dhktree_parts_seq {2}}}}
+         {}
+        \regex_replace_once:nnN {\A>+\s*} {} \l_dhkdirx_line_tl
+       }
+      \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {::}}
+      \seq_set_split:NVV \l_dhkdirx_parts_seq \l_tmpa_tl \l_dhkdirx_line_tl
+      \seq_pop_left:NN \l_dhkdirx_parts_seq \l_dhkdirx_name_tl
+      \tl_trim_spaces:N \l_dhkdirx_name_tl
+      \seq_if_empty:NTF \l_dhkdirx_parts_seq
+       {\tl_clear:N \l_dhkdirx_desc_tl}
+       {\seq_pop_left:NN \l_dhkdirx_parts_seq \l_dhkdirx_desc_tl
+        \tl_trim_spaces:N \l_dhkdirx_desc_tl}
+      % Detect an optional @ attachment point in the visible node name.
+      % We measure the prefix only AFTER creating an actual TikZ node:
+      % inside a bare tikzpicture the font is nullfont, so measuring
+      % the prefix in a plain TeX hbox would incorrectly yield 0pt.
+      % Without @ keep the previous inset for ordinary hierarchy edges.
+      % With @ the attachment is exactly at the NEXT glyph's start.
+      \dim_set:Nn \l_dhkdirx_attach_dim {2mm}
+      \tl_clear:N \l_dhkdirx_prefix_tl
+      \regex_match:nVTF {@} \l_dhkdirx_name_tl
+       {
+        \dim_zero:N \l_dhkdirx_attach_dim
+        \seq_set_split:NnV \l_dhkdirx_at_seq {@} \l_dhkdirx_name_tl
+        \seq_pop_left:NN \l_dhkdirx_at_seq \l_dhkdirx_prefix_tl
+        \tl_replace_once:Nnn \l_dhkdirx_name_tl {@} {}
+        \seq_set_split:NnV \l_dhkdirx_splitlines_seq {//} \l_dhkdirx_prefix_tl
+        \seq_pop_right:NN \l_dhkdirx_splitlines_seq \l_dhkdirx_prefix_tl
+       }{}
+      \int_incr:N \l_dhkdirx_serial_int
+      \tl_set:Nx \l_dhkdirx_new_node_tl
+       {dhkdirnode-\int_use:N \l_dhkdirx_serial_int}
+      % Horizontal positions are derived from the *parent* anchor.
+      % At a marked node, @ shifts only the tree connection anchor.
+      \dim_set:Nn \l_dhkdirx_current_x_dim {6mm}
+      \int_compare:nNnT \l_dhkdirx_serial_int > {1}
+       {
+        \bool_if:NTF \l_dhkdirx_pipe_bool
+         {\dim_set_eq:NN \l_dhkdirx_current_x_dim \l_dhkdirx_last_x_dim}
+         {
+          \int_compare:nNnT \l_dhkdirx_depth_int > {0}
+           {
+            \tl_set:Nx \l_dhkdirx_key_tl
+             {\int_eval:n{\l_dhkdirx_depth_int - 1}}
+            \prop_get:NVNTF \l_dhkdirx_x_prop \l_dhkdirx_key_tl
+              \l_dhkdirx_parent_x_tl
+             {\dim_set:Nn \l_dhkdirx_current_x_dim {\l_dhkdirx_parent_x_tl}}
+             {}
+            \prop_get:NVNTF \l_dhkdirx_attach_prop \l_dhkdirx_key_tl
+              \l_dhkdirx_attach_tl
+             {\dim_add:Nn \l_dhkdirx_current_x_dim
+               {\l_dhkdirx_attach_tl+7.5mm}}
+             {\dim_add:Nn \l_dhkdirx_current_x_dim {9.5mm}}
+           }
+         }
+       }
+      \dim_set:Nn \l_dhkdirx_horizontal_delta_dim
+       {\l_dhkdirx_current_x_dim - \l_dhkdirx_last_x_dim}
+      \dim_set:Nn \l_dhkdirx_vertical_gap_dim {3mm}
+      \bool_if:NT \l_dhkdirx_pending_bool
+       {\dim_add:Nn \l_dhkdirx_vertical_gap_dim {2mm}}
+      % Build the text directly inside a TikZ node, where the font is
+      % restored correctly (not nullfont as in bare TikZ picture scope).
+      \int_compare:nNnTF \l_dhkdirx_serial_int = {1}
+       {
+        \node[anchor=north~west,inner~sep=0pt,outer~sep=0pt,
+              font=\normalfont\ttfamily\small]
+           (\l_dhkdirx_new_node_tl) at (6mm,0mm)
+           {\dhkdirx_label:};
+       }
+       {
+        \node[anchor=north~west,inner~sep=0pt,outer~sep=0pt,
+              font=\normalfont\ttfamily\small]
+         (\l_dhkdirx_new_node_tl)
+         at ($ (\l_dhkdirx_last_node_tl.south~west) +
+           (\dim_use:N \l_dhkdirx_horizontal_delta_dim,
+            -\dim_use:N \l_dhkdirx_vertical_gap_dim) $)
+         {\dhkdirx_label:};
+       }
+      % Invisible measurement node: same font metrics as visible label.
+      % overlay excludes this helper from the bounding box.
+      \tl_if_blank:VF \l_dhkdirx_prefix_tl
+       {
+        \tl_set:Nx \l_dhkdirx_prefix_node_tl
+         {dhkdirprefix-\int_use:N \l_dhkdirx_serial_int}
+        \node[overlay,anchor=west,inner~sep=0pt,outer~sep=0pt,
+              font=\normalfont\ttfamily\small,opacity=0]
+         (\l_dhkdirx_prefix_node_tl)
+         at (\l_dhkdirx_new_node_tl.north~west)
+         {\exp_args:NV \dhkdirx_print_inline:n \l_dhkdirx_prefix_tl};
+        \pgfextractx{\l_dhkdirx_attach_dim}
+         {\pgfpointdiff
+           {\pgfpointanchor{\l_dhkdirx_new_node_tl}{north~west}}
+           {\pgfpointanchor{\l_dhkdirx_prefix_node_tl}{east}}}
+        % No extra x offset: @Desktop anchors directly under the D.
+       }
+      % A standalone | followed by an unprefixed row also means
+      % a vertical successor.  Before >children it only adds spacing.
+      \bool_set_eq:NN \l_tmpa_bool \l_dhkdirx_pipe_bool
+      \bool_if:NT \l_dhkdirx_pending_bool
+       {\int_compare:nNnT {\l_dhkdirx_depth_int} = {\l_dhkdirx_previous_depth_int}
+         {\bool_set_true:N \l_tmpa_bool}}
+      % Vertical successor |text: use the same node's own left anchor.
+      \bool_if:NTF \l_tmpa_bool
+       {
+        \int_compare:nNnT \l_dhkdirx_serial_int > {1}
+         {
+          \draw[thin]
+           ([xshift=2mm]\l_dhkdirx_last_node_tl.south~west)
+            -- ([xshift=2mm]\l_dhkdirx_new_node_tl.north~west);
+         }
+       }
+       {
+        \int_compare:nNnT \l_dhkdirx_depth_int > {0}
+         {
+          \tl_set:Nx \l_dhkdirx_key_tl
+           {\int_eval:n {\l_dhkdirx_depth_int - 1}}
+          \prop_get:NVNTF \l_dhkdirx_nodes_prop
+            \l_dhkdirx_key_tl \l_dhkdirx_parent_node_tl
+           {
+            % One elbow, adjacent to the parent.  No extra free-
+            % floating | segment above the child is created.
+            \prop_get:NVNTF \l_dhkdirx_attach_prop
+              \l_dhkdirx_key_tl \l_dhkdirx_attach_tl
+             {
+              \draw[thin]
+               ([xshift=\l_dhkdirx_attach_tl]\l_dhkdirx_parent_node_tl.south~west)
+                |- ([xshift=-1mm]\l_dhkdirx_new_node_tl.west);
+             }{}
+           }{}
+         }
+       }
+      \tl_set:Nx \l_dhkdirx_key_tl {\int_use:N \l_dhkdirx_depth_int}
+      \prop_put:NVx \l_dhkdirx_nodes_prop \l_dhkdirx_key_tl
+        {\tl_use:N \l_dhkdirx_new_node_tl}
+      \prop_put:NVx \l_dhkdirx_x_prop \l_dhkdirx_key_tl
+        {\dim_use:N \l_dhkdirx_current_x_dim}
+      \prop_put:NVx \l_dhkdirx_attach_prop \l_dhkdirx_key_tl
+        {\dim_use:N \l_dhkdirx_attach_dim}
+      \dim_set_eq:NN \l_dhkdirx_last_x_dim \l_dhkdirx_current_x_dim
+      \tl_set_eq:NN \l_dhkdirx_last_node_tl \l_dhkdirx_new_node_tl
+      \int_set_eq:NN \l_dhkdirx_previous_depth_int \l_dhkdirx_depth_int
+      \bool_set_false:N \l_dhkdirx_pending_bool
+     }
+   }
+ }
+% Keep the familiar // and :: formatting inside mixed-mode labels.
+\cs_new_protected:Npn \dhkdirx_label:
+ {
+  \begin{tabular}{@{}l@{}}
+   \normalfont\ttfamily\small
+   \exp_args:NV \dhkdir_print_lines:n \l_dhkdirx_name_tl
+   \tl_if_blank:VF \l_dhkdirx_desc_tl
+    {\tabularnewline\normalfont\footnotesize
+     \exp_args:NV \dhkdir_print_lines:n \l_dhkdirx_desc_tl}
+  \end{tabular}
+ }
+\cs_new_protected:Npn \dhkdir_render:
+ {
+  \group_begin:
+   \exp_args:NV \dhkvisual_set_indent:n \g_dhkdir_option_tl
+  \seq_clear:N \l_dhkdirx_input_seq
+  \bool_set_false:N \l_dhkdirx_mixed_bool
+  \ior_open:Nn \g_dhktree_in_ior {\jobname-dhktree.tmp}
+  \ior_str_map_inline:Nn \g_dhktree_in_ior
+   {
+    \tl_set:Nn \l_tmpa_tl {##1}
+    \tl_trim_spaces:N \l_tmpa_tl
+    \tl_if_blank:VF \l_tmpa_tl
+     {\seq_put_right:NV \l_dhkdirx_input_seq \l_tmpa_tl
+      \regex_match:nVTF {\A\|} \l_tmpa_tl
+       {\bool_set_true:N \l_dhkdirx_mixed_bool}{}
+      \regex_match:nVTF {@} \l_tmpa_tl
+       {\bool_set_true:N \l_dhkdirx_mixed_bool}{}
+     }
+   }
+  \ior_close:N \g_dhktree_in_ior
+  \par\addvspace{3mm}\noindent
+  \bool_if:NTF \l_dhkdirx_mixed_bool
+   {
+    \hspace*{\l_dhkvisual_indent_dim}% mixed TikZ: shift entire graph
+    \prop_clear:N \l_dhkdirx_nodes_prop
+    \prop_clear:N \l_dhkdirx_x_prop
+    \prop_clear:N \l_dhkdirx_attach_prop
+    \dim_set:Nn \l_dhkdirx_last_x_dim {6mm}
+    \int_zero:N \l_dhkdirx_serial_int
+    \bool_set_false:N \l_dhkdirx_pending_bool
+    \int_zero:N \l_dhkdirx_previous_depth_int
+    \begin{tikzpicture}[baseline=(current~bounding~box.north)]
+      \seq_map_inline:Nn \l_dhkdirx_input_seq {\dhkdirx_row:n {##1}}
+    \end{tikzpicture}
+   }
+   {
+     % Adjust only dirtree's level spacing; syntax/structure unchanged.
+     % Original dirtree horizontal line: 1em (about 3.9mm at 11pt).
+     % Original mixed-mode elbow: about 9mm. Midpoint ~6.5mm.
+     % Both render modes now draw a 6.5mm horizontal connector.
+     \DTsetlength{0.2em}{6.5mm}{0.2em}{0.4pt}{1.6pt}
+     % dirtree starts its own paragraph, so hspace alone is lost.
+     % Use an indented minipage only when [in=N] is requested.
+    \tl_clear:N \l_dhkdir_content_tl
+    \seq_map_inline:Nn \l_dhkdirx_input_seq {\dhkdir_parse:n {##1}}
+    \tl_if_empty:NF \l_dhkdir_content_tl
+     {
+      \dim_compare:nNnTF {\l_dhkvisual_indent_dim} > {0pt}
+       {\hspace*{\l_dhkvisual_indent_dim}%
+        \begin{minipage}[t]{\dim_eval:n {\linewidth-\l_dhkvisual_indent_dim}}
+        \exp_args:NV \dirtree \l_dhkdir_content_tl
+        \end{minipage}}
+       {\exp_args:NV \dirtree \l_dhkdir_content_tl}
+     }
+   }
+  \par\addvspace{3mm}
+  \group_end:
+ }
+% ==================================================
+% 7.12 Original-style node box (plain dirtree mode)
+% ==================================================
+\seq_new:N \l_dhkdir_lines_seq
+\cs_new_protected:Npn \dhkdir_print_lines:n #1
+ {
+  \seq_set_split:Nnn \l_dhkdir_lines_seq {//} {#1}
+  \seq_map_indexed_inline:Nn \l_dhkdir_lines_seq
+   {
+    \int_compare:nNnT {##1} > {1} {\tabularnewline}
+    \tl_set:Nn \l_tmpa_tl {##2}
+    \tl_trim_spaces:N \l_tmpa_tl
+    \tl_replace_all:Nnn \l_tmpa_tl {->} {→}
+    \tl_use:N \l_tmpa_tl
+   }
+ }
+\cs_new_protected:Npn \dhkdirbox #1#2
+ {
+  \begin{tabular}{@{}l@{}}
+   \ttfamily
+   \dhkdir_print_lines:n {#1}
+   \tl_if_blank:nF {#2}
+    {\tabularnewline\normalfont\footnotesize
+     \dhkdir_print_lines:n {#2}}
+  \end{tabular}
+ }
+
+% ==================================================
+% 7.13 Public renderer aliases
+% ==================================================
+
+\cs_new_eq:NN
+  \dhkdirrender
+  \dhkdir_render:
+
+\ExplSyntaxOff
+
+
+% ==================================================
+% 7.14 Original environments
+% ==================================================
+
+\newenvironment{dhktree}{%
+  \VerbatimEnvironment
+  \begin{VerbatimOut}{\jobname-dhktree.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhktreerender{vertical}%
+}
+
+\newenvironment{dhktreeh}{%
+  \VerbatimEnvironment
+  \begin{VerbatimOut}{\jobname-dhktree.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhktreerender{horizontal}%
+}
+
+\newenvironment{dhktreediagonal}{%
+  \VerbatimEnvironment
+  \begin{VerbatimOut}{\jobname-dhktree.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhktreerender{diagonal}%
+}
+
+
+% ==================================================
+% 7.15 Directory environment
+% ==================================================
+
+\newenvironment{dhkdir}[1][]{%
+  \VerbatimEnvironment
+  \dhkdirsetoption{#1}%
+  \dhkvisualverbatimstart%
+  \begin{VerbatimOut}{\jobname-dhktree.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhkdirrender%
+}
+
+% ==================================================
+% 8. DHK Branch v15: compact layout + [in=N] + arrowup
+% ==================================================
+% Syntax (one instruction per line):
+%   node   main :: Shell                 (STEP: breaks the spine)
+%   line   main :: python train.py ...  (ACTION: text right of spine)
+%   arrow  main                         (down arrow)
+%   arrowup main                         (up arrow)
+%   branchline main -> data :: --data (plain horizontal branch)
+%   branch     main -> data :: --data (horizontal arrow)
+%   node data :: Path(...)            (STEP in the offshoot)
+%   node main :: First line // Second line  (manual line break)
+%   node data :: Parent //* child       (small L-shaped child inside node)
+%   handoff main -> next :: process()  (end source trunk, continue on next)
+% After handoff main -> next, use arrow next / node next (not main).
+%   arrow data                         (vertical arrow only on data)
+%   stop data                          (ends only data, keeps main)
+% No automatic downward arrow is added when branching.
+% No LaTeX escaping is needed for ordinary paths and file names.
+% v10: horizontal lane spacing 18mm -> 9mm; vertical rows ~2/3 of v9.
+%   \begin{dhkbranch}[in=3]    shift complete graph right by 3em.
+%   \begin{dhkbranch}[in=5]    shift complete graph right by 5em.
+%   \begin{dhkbranch}          default left alignment (no shift).
+% Legacy [indent] still supported; uses \dhkbranchindent{7mm} (default 1em).
+% 'in=N' accepts nonnegative integer or decimal numbers (e.g. in=4.5).
+% For v9's wide spacing, use the saved original v9 section instead.
+\RequirePackage{tikz}
+\usetikzlibrary{arrows.meta}
+\RequirePackage{fancyvrb}
+\ExplSyntaxOn
+\ior_new:N \g_dhkbranch_source_ior
+\prop_new:N \l_dhkbranch_lanes_prop
+\seq_new:N \l_dhkbranch_free_seq
+\seq_new:N \l_dhkbranch_match_seq
+\seq_new:N \l_dhkbranch_chunks_seq
+\tl_new:N \l_dhkbranch_line_tl
+\tl_new:N \l_dhkbranch_command_tl
+\tl_new:N \l_dhkbranch_left_tl
+\tl_new:N \l_dhkbranch_right_tl
+\tl_new:N \l_dhkbranch_label_tl
+\tl_new:N \l_dhkbranch_new_slot_tl
+\int_new:N \l_dhkbranch_next_int
+\int_new:N \l_dhkbranch_max_int
+\dim_new:N \l_dhkbranch_gap_dim
+\dim_new:N \l_dhkbranch_label_dim
+\dim_new:N \l_dhkbranch_row_dim
+\box_new:N \l_dhkbranch_label_box
+\seq_new:N \l_dhkbranch_label_lines_seq
+\seq_new:N \l_dhkbranch_child_parts_seq
+\bool_new:N \l_dhkbranch_valid_bool
+\bool_new:N \l_dhkbranch_horizontal_arrow_bool
+\bool_new:N \l_dhkbranch_first_row_bool
+\bool_new:N \l_dhkbranch_terminal_node_bool
+\seq_new:N \l_dhkbranch_lines_seq
+\dim_new:N \l_dhkbranch_node_top_dim
+\dim_new:N \l_dhkbranch_node_bottom_dim
+\dim_new:N \l_dhkbranch_indentation_dim
+\dim_new:N \g_dhkbranch_indent_amount_dim
+\dim_gset:Nn \g_dhkbranch_indent_amount_dim {1em}
+\tl_new:N \g_dhkbranch_option_tl
+\seq_new:N \l_dhkbranch_option_match_seq
+\NewDocumentCommand{\dhkbranchindent}{m}
+ {\dim_gset:Nn \g_dhkbranch_indent_amount_dim {#1}}
+\cs_new_protected:Npn \dhkbranch_set_option:n #1
+ {\tl_gset:Nn \g_dhkbranch_option_tl {#1}}
+\cs_new_eq:NN \dhkbranchsetoption \dhkbranch_set_option:n
+% The optional environment argument consumes the original end-of-line.
+% Begin FancyVerb with the FIRST body line rather than discarding it.
+\cs_new_protected:Npn \dhkbranch_verbatim_start:
+ {\cs_set_eq:cc {FV@BeginScanning} {FV@GetLine}}
+\cs_new_eq:NN \dhkbranchverbatimstart \dhkbranch_verbatim_start:
+\cs_generate_variant:Nn \seq_set_split:Nnn { NVV }
+\cs_generate_variant:Nn \prop_get:NnNTF { NVNTF }
+\cs_generate_variant:Nn \prop_put:Nnn { NVV, NVn }
+\cs_generate_variant:Nn \prop_remove:Nn { NV }
+\cs_generate_variant:Nn \seq_put_right:Nn { NV }
+\cs_generate_variant:Nn \tl_set:Nn { NV }
+\cs_generate_variant:Nn \regex_extract_once:nnNTF { nVNTF }
+\cs_new_protected:Npn \dhkbranch_reset:
+ {
+  \prop_clear:N \l_dhkbranch_lanes_prop
+  \seq_clear:N \l_dhkbranch_free_seq
+  \prop_put:Nnn \l_dhkbranch_lanes_prop {main} {0}
+  \int_set:Nn \l_dhkbranch_next_int {1}
+ }
+\cs_new_protected:Npn \dhkbranch_allocate:n #1
+ {
+  \seq_if_empty:NTF \l_dhkbranch_free_seq
+   {
+    \tl_set:Nx \l_dhkbranch_new_slot_tl {\int_use:N \l_dhkbranch_next_int}
+    \int_incr:N \l_dhkbranch_next_int
+   }
+   {\seq_pop_left:NN \l_dhkbranch_free_seq \l_dhkbranch_new_slot_tl}
+  \prop_put:NnV \l_dhkbranch_lanes_prop {#1} \l_dhkbranch_new_slot_tl
+  \int_set:Nn \l_dhkbranch_max_int
+   {\int_max:nn {\l_dhkbranch_max_int} {\l_dhkbranch_new_slot_tl}}
+ }
+\cs_generate_variant:Nn \prop_put:Nnn { NnV }
+% Split one raw instruction into command/columns and literal label.
+\cs_new_protected:Npn \dhkbranch_decode:n #1
+ {
+  \tl_set:Nn \l_dhkbranch_line_tl {#1}
+  \tl_trim_spaces:N \l_dhkbranch_line_tl
+  \tl_clear:N \l_dhkbranch_command_tl
+  \tl_clear:N \l_dhkbranch_left_tl
+  \tl_clear:N \l_dhkbranch_right_tl
+  \tl_clear:N \l_dhkbranch_label_tl
+  \bool_set_true:N \l_dhkbranch_horizontal_arrow_bool
+  \tl_if_blank:VF \l_dhkbranch_line_tl
+   {
+    \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {::}}
+    \seq_set_split:NVV \l_dhkbranch_chunks_seq \l_tmpa_tl \l_dhkbranch_line_tl
+    \seq_pop_left:NN \l_dhkbranch_chunks_seq \l_dhkbranch_line_tl
+    \seq_if_empty:NF \l_dhkbranch_chunks_seq
+     {\seq_pop_left:NN \l_dhkbranch_chunks_seq \l_dhkbranch_label_tl}
+    \tl_trim_spaces:N \l_dhkbranch_label_tl
+    \tl_trim_spaces:N \l_dhkbranch_line_tl
+    \regex_extract_once:nVNTF
+      {\A(branchline|branch|handoff)\s+([-A-Za-z0-9\_]+)\s*->\s*([-A-Za-z0-9\_]+)\Z}
+      \l_dhkbranch_line_tl \l_dhkbranch_match_seq
+     {
+      \tl_set:Nx \l_dhkbranch_command_tl {\seq_item:Nn \l_dhkbranch_match_seq {2}}
+      \tl_set:Nx \l_dhkbranch_left_tl {\seq_item:Nn \l_dhkbranch_match_seq {3}}
+      \tl_set:Nx \l_dhkbranch_right_tl {\seq_item:Nn \l_dhkbranch_match_seq {4}}
+      \str_case:Vn \l_dhkbranch_command_tl
+       {
+        {branchline}
+         {\tl_set:Nn \l_dhkbranch_command_tl {branch}
+          \bool_set_false:N \l_dhkbranch_horizontal_arrow_bool}
+        {handoff} {\bool_set_false:N \l_dhkbranch_horizontal_arrow_bool}
+       }
+     }
+     {
+      \regex_extract_once:nVNTF
+       {\A(node|line|arrow|arrowup|stop)\s+([-A-Za-z0-9\_]+)\Z}
+       \l_dhkbranch_line_tl \l_dhkbranch_match_seq
+       {
+        \tl_set:Nx \l_dhkbranch_command_tl {\seq_item:Nn \l_dhkbranch_match_seq {2}}
+        \tl_set:Nx \l_dhkbranch_left_tl {\seq_item:Nn \l_dhkbranch_match_seq {3}}
+       }
+       {\PackageWarning{mynotes}{Ignoring~invalid~dhkbranch~line}}
+     }
+   }
+ }
+% First pass: find the widest simultaneous set of lanes.
+\cs_new_protected:Npn \dhkbranch_scan:n #1
+ {
+  \dhkbranch_decode:n {#1}
+  \str_case:Vn \l_dhkbranch_command_tl
+   {
+    {branch}
+     {
+      \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
+       {
+        \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_right_tl \l_tmpb_tl
+         {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+       } {}
+     }
+    {handoff}
+    {
+     \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
+      {
+       \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_right_tl \l_tmpb_tl
+        {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+       \str_if_eq:VnF \l_dhkbranch_left_tl {main}
+        {\seq_put_right:NV \l_dhkbranch_free_seq \l_tmpa_tl}
+       \prop_remove:NV \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl
+      }{}
+    }
+   {stop}
+     {
+      \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
+       {
+        \str_if_eq:VnF \l_dhkbranch_left_tl {main}
+         {
+          \seq_put_right:NV \l_dhkbranch_free_seq \l_tmpa_tl
+          \prop_remove:NV \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl
+         }
+       } {}
+     }
+   }
+ }
+% ==================================================
+% 8.5 Main trunk fixed at x=0; branch and handoff connections
+% ==================================================
+% Main trunk: fixed x=0; branch slots: 9mm apart.
+% Only one instruction/label occupies a given row; labels may
+% use the full remaining text width, not a tiny per-lane cell.
+%
+\dim_new:N \l_dhkbranch_label_width_dim
+\tl_new:N \l_dhkbranch_label_slot_tl
+% The // syntax is unchanged.  "//*" adds an indented child line.
+% It is drawn inside the existing label box, so row heights and gaps
+% are still computed from the final typeset node dimensions.
+\cs_new_protected:Npn \dhkbranch_normal_part:n #1
+ {
+  \seq_set_split:Nnn \l_dhkbranch_label_lines_seq {//} {#1}
+  \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
+   {
+    \int_compare:nNnT {##1} > {1} {\kern 1mm}
+    \tl_set:Nn \l_tmpb_tl {##2}
+    \tl_trim_spaces:N \l_tmpb_tl
+    \hbox{\ttfamily\small\tl_use:N \l_tmpb_tl}
+   }
+ }
+\cs_new_protected:Npn \dhkbranch_child_part:n #1
+ {
+  \seq_set_split:Nnn \l_dhkbranch_label_lines_seq {//} {#1}
+  \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
+   {
+    \kern 1mm
+    \tl_set:Nn \l_tmpb_tl {##2}
+    \tl_trim_spaces:N \l_tmpb_tl
+    \hbox{\kern 1mm
+      \tikz[baseline=-0.3ex]{\draw[thin] (0,1.2ex)--(0,0)--(2mm,0);}%
+      \kern 0.75mm\ttfamily\small\tl_use:N \l_tmpb_tl}
+   }
+ }
+\cs_new_protected:Npn \dhkbranch_child_label:
+ {
+  \seq_set_split:NnV \l_dhkbranch_child_parts_seq {//*} \l_dhkbranch_label_tl
+  \seq_map_indexed_inline:Nn \l_dhkbranch_child_parts_seq
+   {
+    \int_compare:nNnTF {##1} = {1}
+     {\dhkbranch_normal_part:n {##2}}
+     {\dhkbranch_child_part:n {##2}}
+   }
+ }
+\cs_new_protected:Npn \dhkbranch_prepare_row:
+ {
+  \tl_set_eq:NN \l_dhkbranch_label_slot_tl \l_dhkbranch_left_tl
+  \str_if_eq:VnT \l_dhkbranch_command_tl {branch}
+   {\tl_set_eq:NN \l_dhkbranch_label_slot_tl \l_dhkbranch_right_tl}
+  \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
+   {\tl_set_eq:NN \l_dhkbranch_label_slot_tl \l_dhkbranch_right_tl}
+  \tl_set:Nn \l_tmpa_tl {0}
+  \prop_get:NVNTF \l_dhkbranch_lanes_prop
+    \l_dhkbranch_label_slot_tl \l_tmpa_tl {} {}
+  \dim_set:Nn \l_dhkbranch_label_width_dim
+    {\linewidth - \l_tmpa_tl \l_dhkbranch_gap_dim - 11mm - \l_dhkbranch_indentation_dim}
+  \dim_set:Nn \l_dhkbranch_label_width_dim
+    {\dim_max:nn {22mm} {\l_dhkbranch_label_width_dim}}
+  % A label may contain //, just like dhktree.  Each segment is
+  % a separate line in ONE stage box (not separate graph rows).
+  % Single-line labels retain the original v7 box dimensions.
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {//}}
+  \seq_set_split:NVV \l_dhkbranch_label_lines_seq
+    \l_tmpa_tl \l_dhkbranch_label_tl
+  \tl_if_in:VnTF \l_dhkbranch_label_tl {//*}
+   {\vbox_set:Nn \l_dhkbranch_label_box
+     {\offinterlineskip\dhkbranch_child_label:}}
+   {
+  \int_compare:nNnTF {\seq_count:N \l_dhkbranch_label_lines_seq} = {1}
+   {
+    \hbox_set:Nn \l_dhkbranch_label_box
+      {\ttfamily\small\tl_use:N \l_dhkbranch_label_tl}
+   }
+   {
+    % Natural-width vertical box; 1mm between explicit lines.
+    \vbox_set:Nn \l_dhkbranch_label_box
+     {
+      \offinterlineskip
+      \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
+       {
+        \int_compare:nNnT {##1} > {1} {\kern 1mm}
+        \tl_set:Nn \l_tmpb_tl {##2}
+        \tl_trim_spaces:N \l_tmpb_tl
+        \hbox{\ttfamily\small\tl_use:N \l_tmpb_tl}
+       }
+     }
+   }
+   }
+  % Wrap only when the whole label would exceed the usable page width.
+  % This also supports // inside an unusually long label.
+  \dim_compare:nNnT
+    {\box_wd:N \l_dhkbranch_label_box}
+    > {\l_dhkbranch_label_width_dim}
+   {
+    \hbox_set:Nn \l_dhkbranch_label_box
+     {
+      \begin{minipage}{\l_dhkbranch_label_width_dim}
+       \raggedright\ttfamily\small
+       \tl_if_in:VnTF \l_dhkbranch_label_tl {//*}
+        {\par\noindent\vbox{\offinterlineskip\dhkbranch_child_label:}}
+        {
+       \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
+        {
+         \int_compare:nNnT {##1} > {1} {\par\vspace{1mm}\noindent}
+         \tl_set:Nn \l_tmpb_tl {##2}
+         \tl_trim_spaces:N \l_tmpb_tl
+         \tl_use:N \l_tmpb_tl
+        }
+        }
+      \end{minipage}
+     }
+   }
+  \dim_set:Nn \l_dhkbranch_row_dim
+   {\dim_max:nn {5.5mm}
+       {\box_ht:N \l_dhkbranch_label_box
+         + \box_dp:N \l_dhkbranch_label_box + 3.2mm}}
+  \dim_set:Nn \l_dhkbranch_node_top_dim
+   {0.5\l_dhkbranch_row_dim - 0.5\box_ht:N \l_dhkbranch_label_box
+    - 0.5\box_dp:N \l_dhkbranch_label_box - 0.6mm}
+  \dim_set:Nn \l_dhkbranch_node_bottom_dim
+   {0.5\l_dhkbranch_row_dim + 0.5\box_ht:N \l_dhkbranch_label_box
+    + 0.5\box_dp:N \l_dhkbranch_label_box + 0.6mm}
+  \str_case:Vn \l_dhkbranch_command_tl
+   {
+    {arrow}{\dim_set:Nn \l_dhkbranch_row_dim {4.7mm}}
+    {arrowup}{\dim_set:Nn \l_dhkbranch_row_dim {4.7mm}}
+    {branch}{\dim_set:Nn \l_dhkbranch_row_dim {8.7mm}}
+    {handoff}{\dim_set:Nn \l_dhkbranch_row_dim {8.7mm}}
+   }
+ }
+% ==================================================
+% 8.6 STEP interrupts only its own vertical line, ACTION stays to right.
+% ==================================================
+\cs_new_protected:Npn \dhkbranch_picture:
+ {
+  \par\noindent
+  \hbox to \linewidth
+   {
+    \begin{tikzpicture}[x=\l_dhkbranch_gap_dim,y=1mm]
+      \path[use~as~bounding~box] (0,0)
+        rectangle (\linewidth,-\l_dhkbranch_row_dim);
+      \begin{scope}[xshift=\dim_eval:n {9mm + \l_dhkbranch_indentation_dim}]
+      % Active vertical trunks; step nodes leave a clear text-only gap.
+      % No tiny line is drawn immediately above or below a node.
+      \prop_map_inline:Nn \l_dhkbranch_lanes_prop
+       {
+        \bool_set_true:N \l_dhkbranch_valid_bool
+        \str_if_eq:VnT \l_dhkbranch_command_tl {branch}
+         {\str_if_eq:eeT {##1} {\l_dhkbranch_right_tl}
+           {\bool_set_false:N \l_dhkbranch_valid_bool}}
+        \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
+         {\str_if_eq:eeT {##1} {\l_dhkbranch_left_tl}
+           {\bool_set_false:N \l_dhkbranch_valid_bool}
+          \str_if_eq:eeT {##1} {\l_dhkbranch_right_tl}
+           {\bool_set_false:N \l_dhkbranch_valid_bool}}
+        \str_if_eq:VnT \l_dhkbranch_command_tl {stop}
+         {\str_if_eq:eeT {##1} {\l_dhkbranch_left_tl}
+           {\bool_set_false:N \l_dhkbranch_valid_bool}}
+        \bool_if:NT \l_dhkbranch_valid_bool
+         {
+          \str_if_eq:VnTF \l_dhkbranch_command_tl {node}
+           {
+            \str_if_eq:eeF {##1} {\l_dhkbranch_left_tl}
+             {\draw[thin] (##2,0) -- (##2,-\l_dhkbranch_row_dim);}
+           }
+           {
+            \str_case:VnF \l_dhkbranch_command_tl
+             {
+              {arrow}
+               {
+                \str_if_eq:eeTF {##1} {\l_dhkbranch_left_tl}
+                 {\draw[thin,-{Stealth[length=1.5mm]}]
+                   (##2,0) -- (##2,-\l_dhkbranch_row_dim);}
+                 {\draw[thin] (##2,0) -- (##2,-\l_dhkbranch_row_dim);}
+               }
+              {arrowup}
+               {
+                \str_if_eq:eeTF {##1} {\l_dhkbranch_left_tl}
+                 {\draw[thin,-{Stealth[length=1.5mm]}]
+                   (##2,-\l_dhkbranch_row_dim) -- (##2,0);}
+                 {\draw[thin] (##2,0) -- (##2,-\l_dhkbranch_row_dim);}
+               }
+             }
+             {\draw[thin] (##2,0) -- (##2,-\l_dhkbranch_row_dim);}
+           }
+         }
+       }
+      % Handoff cuts the old trunk at its final horizontal branch.
+      \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
+       {\prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
+         {\draw[thin] (\l_tmpa_tl,0) -- (\l_tmpa_tl,-6.2mm);} {}}
+      % Branch is a horizontal connector to the LEFT edge of its label.
+      % No elbow: the child's vertical spine is used only by subsequent
+      % arrow/line/node rows, and is independent of the horizontal connector.
+      % Constant length for each reused branch slot.
+      \str_if_eq:VnT \l_dhkbranch_command_tl {branch}
+       {
+        \prop_get:NVNTF \l_dhkbranch_lanes_prop
+          \l_dhkbranch_left_tl \l_tmpa_tl
+         {
+          \prop_get:NVNTF \l_dhkbranch_lanes_prop
+            \l_dhkbranch_right_tl \l_tmpb_tl
+           {
+            \bool_if:NTF \l_dhkbranch_horizontal_arrow_bool
+             {\draw[thin,-{Stealth[length=1.5mm]}]
+               (\l_tmpa_tl,-6.2mm) --
+               ([xshift=-2.5mm]\l_tmpb_tl,-6.2mm);}
+             {\draw[thin]
+               (\l_tmpa_tl,-6.2mm) --
+               ([xshift=-2.5mm]\l_tmpb_tl,-6.2mm);}
+           }{}
+         }{}
+       }
+      \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
+       {
+        \prop_get:NVNTF \l_dhkbranch_lanes_prop
+          \l_dhkbranch_left_tl \l_tmpa_tl
+         {
+          \prop_get:NVNTF \l_dhkbranch_lanes_prop
+            \l_dhkbranch_right_tl \l_tmpb_tl
+           {
+            \bool_if:NTF \l_dhkbranch_horizontal_arrow_bool
+             {\draw[thin,-{Stealth[length=1.5mm]}]
+               (\l_tmpa_tl,-6.2mm) --
+               ([xshift=-2.5mm]\l_tmpb_tl,-6.2mm);}
+             {\draw[thin]
+               (\l_tmpa_tl,-6.2mm) --
+               ([xshift=-2.5mm]\l_tmpb_tl,-6.2mm);}
+           }{}
+         }{}
+       }
+      % STEP = text in the interrupted column, ACTION = right of line.
+      % Branch caption is horizontally CENTERED on its own column,
+      % not offset to the right as an annotation.
+      \tl_if_blank:VF \l_dhkbranch_label_tl
+       {
+        \prop_get:NVNTF \l_dhkbranch_lanes_prop
+          \l_dhkbranch_label_slot_tl \l_tmpa_tl
+         {
+          \str_case:VnF \l_dhkbranch_command_tl
+           {
+            {branch}
+             {
+              % Always left-align the FIRST branch label at the fixed
+              % horizontal connector endpoint.  Longer text extends right,
+              % never into the main trunk.  The child spine stays fixed.
+              \node[anchor=west,inner~sep=0pt,fill=white,xshift=-1.5mm]
+                at (\l_tmpa_tl,-6.2mm)
+                {\box_use:N \l_dhkbranch_label_box};
+             }
+            {handoff}
+             {
+              % Always left-align the FIRST branch label at the fixed
+              % horizontal connector endpoint.  Longer text extends right,
+              % never into the main trunk.  The child spine stays fixed.
+              \node[anchor=west,inner~sep=0pt,fill=white,xshift=-1.5mm]
+                at (\l_tmpa_tl,-6.2mm)
+                {\box_use:N \l_dhkbranch_label_box};
+             }
+            {node}
+             {
+              \str_if_eq:VnTF \l_dhkbranch_left_tl {main}
+               {\node[anchor=west,inner~sep=0pt,fill=white,xshift=-6mm]
+                 at (\l_tmpa_tl,-0.5\l_dhkbranch_row_dim)
+                 {\box_use:N \l_dhkbranch_label_box};}
+               {
+               % Short follow-up stages center on the same child spine.
+               % Long labels extend right to keep them clear of main.
+               \dim_compare:nNnTF
+                 {\box_wd:N \l_dhkbranch_label_box} > {1.7\l_dhkbranch_gap_dim}
+                {\node[anchor=west,inner~sep=0pt,fill=white,xshift=-1.5mm]
+                  at (\l_tmpa_tl,-0.5\l_dhkbranch_row_dim)
+                  {\box_use:N \l_dhkbranch_label_box};}
+                {\node[anchor=center,inner~sep=0pt,fill=white]
+                  at (\l_tmpa_tl,-0.5\l_dhkbranch_row_dim)
+                  {\box_use:N \l_dhkbranch_label_box};}
+              }
+             }
+           }
+           {\node[anchor=west,inner~sep=0pt,xshift=3mm]
+              at (\l_tmpa_tl,-0.5\l_dhkbranch_row_dim)
+              {\box_use:N \l_dhkbranch_label_box};}
+         }{}
+       }
+      \end{scope}
+    \end{tikzpicture}
+    \hss
+   }
+  \par
+ }
+% ==================================================
+% 8.7 Parse and typeset one row
+% ==================================================
+\cs_new_protected:Npn \dhkbranch_draw:nn #1#2
+ {
+  \dhkbranch_decode:n {#1}
+  % Only the terminating node has no outgoing tail.  A following
+  % 'stop lane' or the end of the environment terminates that lane.
+  \bool_set_false:N \l_dhkbranch_terminal_node_bool
+  \str_if_eq:VnT \l_dhkbranch_command_tl {node}
+   {
+    \tl_set:Nx \l_tmpa_tl {#2}
+    \tl_trim_spaces:N \l_tmpa_tl
+    \tl_set:Nx \l_tmpb_tl {stop\c_space_tl\l_dhkbranch_left_tl}
+    \tl_if_eq:NNT \l_tmpa_tl \l_tmpb_tl
+     {\bool_set_true:N \l_dhkbranch_terminal_node_bool}
+    \tl_if_blank:VT \l_tmpa_tl
+     {\bool_set_true:N \l_dhkbranch_terminal_node_bool}
+   }
+  \tl_if_blank:VF \l_dhkbranch_command_tl
+   {
+    \str_if_eq:VnTF \l_dhkbranch_command_tl {stop}
+     {
+      % End a child without adding an unintended extra row or arrow.
+      \prop_get:NVNTF \l_dhkbranch_lanes_prop
+        \l_dhkbranch_left_tl \l_tmpa_tl
+       {
+        \str_if_eq:VnF \l_dhkbranch_left_tl {main}
+         {
+          \seq_put_right:NV \l_dhkbranch_free_seq \l_tmpa_tl
+          \prop_remove:NV \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl
+         }
+       }{}
+     }
+     {
+      \str_if_eq:VnT \l_dhkbranch_command_tl {branch}
+       {
+        \prop_get:NVNTF \l_dhkbranch_lanes_prop
+          \l_dhkbranch_left_tl \l_tmpa_tl
+         {
+          \prop_get:NVNTF \l_dhkbranch_lanes_prop
+            \l_dhkbranch_right_tl \l_tmpb_tl
+           {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+         }{}
+       }
+      \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
+       {
+        \prop_get:NVNTF \l_dhkbranch_lanes_prop
+          \l_dhkbranch_left_tl \l_tmpa_tl
+         {
+          \prop_get:NVNTF \l_dhkbranch_lanes_prop
+            \l_dhkbranch_right_tl \l_tmpb_tl
+           {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+         }{}
+       }
+      \dhkbranch_prepare_row:
+      \dhkbranch_picture:
+      \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
+       {\prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
+         {\str_if_eq:VnF \l_dhkbranch_left_tl {main}
+           {\seq_put_right:NV \l_dhkbranch_free_seq \l_tmpa_tl}
+          \prop_remove:NV \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl} {}}
+      \bool_set_false:N \l_dhkbranch_first_row_bool
+     }
+   }
+ }
+% ==================================================
+% 8.8 Main render; naturally page-breakable at row boundaries
+% ==================================================
+\cs_new_protected:Npn \dhkbranch_render:
+ {
+  \group_begin:
+  \int_zero:N \l_dhkbranch_max_int
+  \dhkbranch_reset:
+  \dim_set:Nn \l_dhkbranch_gap_dim {9mm}
+  \dim_zero:N \l_dhkbranch_indentation_dim
+  \tl_set_eq:NN \l_tmpa_tl \g_dhkbranch_option_tl
+  \tl_trim_spaces:N \l_tmpa_tl
+  \regex_extract_once:nVNTF
+    {\A in \s* = \s* ([0-9]+ (?: \. [0-9]+ )?) \Z}
+    \l_tmpa_tl \l_dhkbranch_option_match_seq
+   {
+    \dim_set:Nn \l_dhkbranch_indentation_dim
+     {\seq_item:Nn \l_dhkbranch_option_match_seq {2} em}
+   }
+   {
+    \tl_if_eq:VnTF \l_tmpa_tl {indent}
+     {\dim_set_eq:NN \l_dhkbranch_indentation_dim \g_dhkbranch_indent_amount_dim}
+     {\tl_if_blank:VF \l_tmpa_tl
+       {\PackageWarning{mynotes}{Unknown~dhkbranch~option;~use~[in=5]}}}
+   }
+  \seq_clear:N \l_dhkbranch_lines_seq
+  \ior_open:Nn \g_dhkbranch_source_ior {\jobname-dhkbranch.tmp}
+  \ior_str_map_inline:Nn \g_dhkbranch_source_ior
+   {
+    \tl_set:Nn \l_tmpa_tl {##1}
+    \tl_trim_spaces:N \l_tmpa_tl
+    \tl_if_blank:VF \l_tmpa_tl
+     {
+      \seq_put_right:NV \l_dhkbranch_lines_seq \l_tmpa_tl
+      \exp_args:NV \dhkbranch_scan:n \l_tmpa_tl
+     }
+   }
+  \ior_close:N \g_dhkbranch_source_ior
+  \dhkbranch_reset:
+  \par\addvspace{3mm}
+  \bool_set_true:N \l_dhkbranch_first_row_bool
+  \group_begin:
+  \parskip=0pt\parindent=0pt\baselineskip=0pt
+  \seq_map_indexed_inline:Nn \l_dhkbranch_lines_seq
+   {
+    \dhkbranch_draw:nn {##2}
+     {\seq_item:Nn \l_dhkbranch_lines_seq {\int_eval:n {##1+1}}}
+   }
+  \group_end:
+  \par\addvspace{3mm}
+  \group_end:
+ }
+\cs_new_eq:NN \dhkbranchrender \dhkbranch_render:
+\ExplSyntaxOff
+\newenvironment{dhkbranch}[1][]{%
+  \VerbatimEnvironment
+  \dhkbranchsetoption{#1}%
+  \dhkbranchverbatimstart%
+  \begin{VerbatimOut}{\jobname-dhkbranch.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhkbranchrender%
+}
+
+
+% ================================================================
+% 9. dhkdiagram v3: split/merge + line annotations + v2 compatibility
+% Add this entire block AFTER the current section 8 in mynotes.sty.
+% Nothing in dhkbranch, dhkdir, or dhksmry needs to change.
+%
+% Syntax (one instruction per physical line):
+%   node ID (row,col) :: visible label // optional second line
+%   edge A -> B :: straight    (A to B)
+%   edge A -> B :: HV          (horizontal, then vertical)
+%   edge A -> B :: VH          (vertical, then horizontal)
+%   edge A <- B :: HV          (B to A)
+%   edge A <-> B :: HV         (both arrows)
+%   edge A -- B :: HV          (plain line)
+%   edge A -> B :: CLI Command    (straight edge with annotation)
+%   edge A -> B :: VH // explanation (route and annotation)
+%   split parent -> a, b, c :: branch explanation
+%   merge a, b, c -> dest :: merge explanation
+% Notes: split and merge connect adjacent rows, with a shared horizontal rail.
+% Existing v2 edge/node syntax is supported without modifications.
+% Default edge shape: straight.  Row/column indexing starts at 1.
+% Use \dhkdiagramspacing{8mm}{3mm} to set global H/V gaps.
+% NOTE: :: and // are reserved delimiters inside labels.
+% ================================================================
+\RequirePackage{tikz}
+\RequirePackage{fancyvrb}
+\RequirePackage{adjustbox}
+\usetikzlibrary{arrows.meta,calc,backgrounds}
+\ExplSyntaxOn
+\ior_new:N \g_dhkdiagram_ior
+\seq_new:N \l_dhkdiagram_lines_seq
+\seq_new:N \l_dhkdiagram_ids_seq
+\seq_new:N \l_dhkdiagram_parts_seq
+\seq_new:N \l_dhkdiagram_matches_seq
+\seq_new:N \l_dhkdiagram_label_lines_seq
+\prop_new:N \l_dhkdiagram_row_prop
+\prop_new:N \l_dhkdiagram_col_prop
+\prop_new:N \l_dhkdiagram_label_prop
+\prop_new:N \l_dhkdiagram_rowheight_prop
+\prop_new:N \l_dhkdiagram_colwidth_prop
+\prop_new:N \l_dhkdiagram_x_prop
+\prop_new:N \l_dhkdiagram_y_prop
+\tl_new:N \l_dhkdiagram_left_tl
+\tl_new:N \l_dhkdiagram_right_tl
+\tl_new:N \l_dhkdiagram_id_tl
+\tl_new:N \l_dhkdiagram_label_tl
+\tl_new:N \l_dhkdiagram_src_tl
+\tl_new:N \l_dhkdiagram_dst_tl
+\tl_new:N \l_dhkdiagram_dir_tl
+\tl_new:N \l_dhkdiagram_route_tl
+\tl_new:N \l_dhkdiagram_srcrow_tl
+\tl_new:N \l_dhkdiagram_dstrow_tl
+\tl_new:N \l_dhkdiagram_srccol_tl
+\tl_new:N \l_dhkdiagram_dstcol_tl
+\tl_new:N \l_dhkdiagram_srcanchor_tl
+\tl_new:N \l_dhkdiagram_dstanchor_tl
+\int_new:N \l_dhkdiagram_row_int
+\int_new:N \l_dhkdiagram_col_int
+\int_new:N \l_dhkdiagram_maxrow_int
+\int_new:N \l_dhkdiagram_maxcol_int
+\dim_new:N \l_dhkdiagram_cursor_dim
+\dim_new:N \l_dhkdiagram_size_dim
+\dim_new:N \l_dhkdiagram_coord_dim
+\dim_new:N \g_dhkdiagram_hgap_dim
+\dim_new:N \g_dhkdiagram_vgap_dim
+\box_new:N \l_dhkdiagram_measure_box
+% v3 extension state; independent from existing node, edge, indent state.
+\prop_new:N \l_dhkdiagram_gapafter_prop
+\seq_new:N \l_dhkdiagram_group_seq
+\tl_new:N \l_dhkdiagram_annotation_tl
+\tl_new:N \l_dhkdiagram_annotation_pos_tl
+\tl_new:N \l_dhkdiagram_group_src_tl
+\tl_new:N \l_dhkdiagram_group_dst_tl
+\tl_new:N \l_dhkdiagram_group_left_tl
+\tl_new:N \l_dhkdiagram_group_right_tl
+\tl_new:N \l_dhkdiagram_group_row_tl
+\tl_new:N \l_dhkdiagram_group_dstrow_tl
+\tl_new:N \l_dhkdiagram_group_first_tl
+\tl_new:N \l_dhkdiagram_group_item_tl
+\bool_new:N \l_dhkdiagram_group_valid_bool
+\int_new:N \l_dhkdiagram_connector_serial_int
+\dim_new:N \l_dhkdiagram_requested_gap_dim
+\cs_generate_variant:Nn \prop_put:Nnn {NVn}
+
+\dim_gset:Nn \g_dhkdiagram_hgap_dim {8mm}
+\dim_gset:Nn \g_dhkdiagram_vgap_dim {3mm}
+\NewDocumentCommand{\dhkdiagramspacing}{mm}
+ {\dim_gset:Nn \g_dhkdiagram_hgap_dim {#1}
+  \dim_gset:Nn \g_dhkdiagram_vgap_dim {#2}}
+\cs_generate_variant:Nn \seq_set_split:Nnn {NnV,NVV}
+\cs_generate_variant:Nn \seq_put_right:Nn {NV}
+\cs_generate_variant:Nn \regex_extract_once:nnNTF {nVNTF}
+\cs_generate_variant:Nn \prop_put:Nnn {NVV,NVx,NnV}
+\cs_generate_variant:Nn \prop_get:NnNTF {NVNTF}
+\cs_generate_variant:Nn \prop_get:NnN {NVN}
+\cs_generate_variant:Nn \prop_if_in:NnTF {NVTF}
+
+% Print literal text as monospace; allow // inside a single node.
+% Replace visible -> with a real math arrow, without interpreting
+% arbitrary backslashes/underscores from filenames as TeX commands.
+\cs_new_protected:Npn \dhkdiagram_print_line:n #1
+ {
+  \tl_set:Nn \l_tmpa_tl {#1}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:Nnn \l_tmpa_tl {->} {\ensuremath{\rightarrow}}
+  \tl_use:N \l_tmpa_tl
+ }
+\cs_new_protected:Npn \dhkdiagram_print_label:n #1
+ {
+  \seq_set_split:Nnn \l_dhkdiagram_label_lines_seq {//} {#1}
+  \begin{tabular}{@{}l@{}}
+   \ttfamily\small
+   \seq_map_indexed_inline:Nn \l_dhkdiagram_label_lines_seq
+    {
+     \int_compare:nNnT {##1} > {1} {\tabularnewline}
+     \ttfamily\small\dhkdiagram_print_line:n {##2}
+    }
+  \end{tabular}
+ }
+
+\cs_new_protected:Npn \dhkdiagram_scan:n #1
+ {
+  \tl_set:Nn \l_dhkdiagram_left_tl {#1}
+  \tl_trim_spaces:N \l_dhkdiagram_left_tl
+  \tl_if_blank:VF \l_dhkdiagram_left_tl
+   {
+    \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {::}}
+    \seq_set_split:NVV \l_dhkdiagram_parts_seq \l_tmpa_tl \l_dhkdiagram_left_tl
+    \seq_pop_left:NN \l_dhkdiagram_parts_seq \l_dhkdiagram_left_tl
+    \tl_trim_spaces:N \l_dhkdiagram_left_tl
+    \seq_if_empty:NTF \l_dhkdiagram_parts_seq
+     {\tl_clear:N \l_dhkdiagram_right_tl}
+     {\seq_pop_left:NN \l_dhkdiagram_parts_seq \l_dhkdiagram_right_tl
+      \tl_trim_spaces:N \l_dhkdiagram_right_tl}
+    \regex_extract_once:nVNTF
+     {\A node \s+ ([A-Za-z_][-A-Za-z0-9_]*) \s* \( \s* ([1-9][0-9]*) \s* , \s* ([1-9][0-9]*) \s* \) \Z}
+     \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+     {
+      \tl_set:Nx \l_dhkdiagram_id_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+      \int_set:Nn \l_dhkdiagram_row_int {\seq_item:Nn \l_dhkdiagram_matches_seq {3}}
+      \int_set:Nn \l_dhkdiagram_col_int {\seq_item:Nn \l_dhkdiagram_matches_seq {4}}
+      \prop_if_in:NVTF \l_dhkdiagram_label_prop \l_dhkdiagram_id_tl
+       {\PackageWarning{mynotes}{Duplicate~dhkdiagram~node~\tl_use:N\l_dhkdiagram_id_tl}}
+       {
+        \seq_put_right:NV \l_dhkdiagram_ids_seq \l_dhkdiagram_id_tl
+        \prop_put:NVx \l_dhkdiagram_row_prop \l_dhkdiagram_id_tl {\int_use:N \l_dhkdiagram_row_int}
+        \prop_put:NVx \l_dhkdiagram_col_prop \l_dhkdiagram_id_tl {\int_use:N \l_dhkdiagram_col_int}
+        \prop_put:NVV \l_dhkdiagram_label_prop \l_dhkdiagram_id_tl \l_dhkdiagram_right_tl
+        \int_set:Nn \l_dhkdiagram_maxrow_int
+         {\int_max:nn {\l_dhkdiagram_maxrow_int}{\l_dhkdiagram_row_int}}
+        \int_set:Nn \l_dhkdiagram_maxcol_int
+         {\int_max:nn {\l_dhkdiagram_maxcol_int}{\l_dhkdiagram_col_int}}
+        \hbox_set:Nn \l_dhkdiagram_measure_box
+         {\exp_args:NV \dhkdiagram_print_label:n \l_dhkdiagram_right_tl}
+        \tl_set:Nx \l_tmpb_tl {\int_use:N \l_dhkdiagram_col_int}
+        \prop_get:NVNTF \l_dhkdiagram_colwidth_prop \l_tmpb_tl \l_tmpa_tl
+         {\dim_set:Nn \l_dhkdiagram_size_dim
+           {\dim_max:nn {\l_tmpa_tl}{\box_wd:N \l_dhkdiagram_measure_box}}}
+         {\dim_set:Nn \l_dhkdiagram_size_dim {\box_wd:N \l_dhkdiagram_measure_box}}
+        \prop_put:NVx \l_dhkdiagram_colwidth_prop \l_tmpb_tl
+         {\dim_use:N \l_dhkdiagram_size_dim}
+        \tl_set:Nx \l_tmpb_tl {\int_use:N \l_dhkdiagram_row_int}
+        \prop_get:NVNTF \l_dhkdiagram_rowheight_prop \l_tmpb_tl \l_tmpa_tl
+         {\dim_set:Nn \l_dhkdiagram_size_dim
+           {\dim_max:nn {\l_tmpa_tl}
+            {\box_ht:N\l_dhkdiagram_measure_box + \box_dp:N\l_dhkdiagram_measure_box}}}
+         {\dim_set:Nn \l_dhkdiagram_size_dim
+           {\box_ht:N\l_dhkdiagram_measure_box + \box_dp:N\l_dhkdiagram_measure_box}}
+        \prop_put:NVx \l_dhkdiagram_rowheight_prop \l_tmpb_tl
+         {\dim_use:N \l_dhkdiagram_size_dim}
+       }
+     }
+     {
+      \regex_match:nVTF {\A (edge|split|merge) \s+} \l_dhkdiagram_left_tl
+       {}{\PackageWarning{mynotes}{Ignoring~invalid~dhkdiagram~instruction}}
+     }
+   }
+ }
+\cs_generate_variant:Nn \regex_match:nnTF {nVTF}
+
+
+% A connector can require extra space in the gap AFTER its source row.
+% Unannotated legacy diagrams never touch this property (3mm stays 3mm).
+\cs_new_protected:Npn \dhkdiagram_reserve_gap:nn #1#2
+ {
+  \tl_set:Nx \l_tmpb_tl {\int_eval:n {#1}}
+  \prop_get:NVNTF \l_dhkdiagram_gapafter_prop \l_tmpb_tl \l_tmpa_tl
+   {\dim_set:Nn \l_dhkdiagram_requested_gap_dim
+     {\dim_max:nn {#2}{\l_tmpa_tl}}}
+   {\dim_set:Nn \l_dhkdiagram_requested_gap_dim {#2}}
+  \prop_put:NVx \l_dhkdiagram_gapafter_prop \l_tmpb_tl
+   {\dim_use:N \l_dhkdiagram_requested_gap_dim}
+ }
+\cs_new_protected:Npn \dhkdiagram_strip_connector:n #1
+ {
+  \tl_set:Nn \l_dhkdiagram_left_tl {#1}
+  \tl_trim_spaces:N \l_dhkdiagram_left_tl
+  \tl_clear:N \l_dhkdiagram_annotation_tl
+  \tl_clear:N \l_dhkdiagram_route_tl
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {::}}
+  \seq_set_split:NVV \l_dhkdiagram_parts_seq \l_tmpa_tl \l_dhkdiagram_left_tl
+  \seq_pop_left:NN \l_dhkdiagram_parts_seq \l_dhkdiagram_left_tl
+  \tl_trim_spaces:N \l_dhkdiagram_left_tl
+  \seq_if_empty:NF \l_dhkdiagram_parts_seq
+   {\seq_pop_left:NN \l_dhkdiagram_parts_seq \l_dhkdiagram_route_tl
+    \tl_trim_spaces:N \l_dhkdiagram_route_tl}
+  % For edges, ':: ROUTE // description', or ':: description'.
+  % For split/merge, the entire right side after :: is description.
+  \regex_match:nVTF {\A edge \s+} \l_dhkdiagram_left_tl
+   {
+    \seq_set_split:NnV \l_dhkdiagram_parts_seq {//} \l_dhkdiagram_route_tl
+    \seq_pop_left:NN \l_dhkdiagram_parts_seq \l_dhkdiagram_route_tl
+    \seq_if_empty:NF \l_dhkdiagram_parts_seq
+     {\seq_pop_left:NN \l_dhkdiagram_parts_seq \l_dhkdiagram_annotation_tl}
+    \tl_trim_spaces:N \l_dhkdiagram_route_tl
+    \tl_trim_spaces:N \l_dhkdiagram_annotation_tl
+    \str_case:VnF \l_dhkdiagram_route_tl
+     {{HV}{}{VH}{}{straight}{}}
+     {\tl_set_eq:NN \l_dhkdiagram_annotation_tl \l_dhkdiagram_route_tl
+      \tl_set:Nn \l_dhkdiagram_route_tl {straight}}
+    \tl_if_blank:VT \l_dhkdiagram_route_tl
+     {\tl_set:Nn \l_dhkdiagram_route_tl {straight}}
+   }
+   {\tl_set_eq:NN \l_dhkdiagram_annotation_tl \l_dhkdiagram_route_tl}
+ }
+% Reserve room only when needed for rail geometry or an edge caption.
+\cs_new_protected:Npn \dhkdiagram_scan_spacing:n #1
+ {
+  \dhkdiagram_strip_connector:n {#1}
+  \regex_extract_once:nVNTF
+    {\A split \s+ ([A-Za-z_][-A-Za-z0-9_]*) \s* -> \s* (.+) \Z}
+    \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+   {
+    \tl_set:Nx \l_dhkdiagram_group_src_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+    \prop_get:NVNTF \l_dhkdiagram_row_prop \l_dhkdiagram_group_src_tl \l_tmpa_tl
+     {\tl_if_blank:VTF \l_dhkdiagram_annotation_tl
+       {\dhkdiagram_reserve_gap:nn {\l_tmpa_tl} {9mm}}
+       {\dhkdiagram_reserve_gap:nn {\l_tmpa_tl} {14mm}}}{}
+   }
+   {
+    \regex_extract_once:nVNTF
+      {\A merge \s+ (.+) \s+ -> \s* ([A-Za-z_][-A-Za-z0-9_]*) \Z}
+      \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+     {
+      \seq_set_split:Nnx \l_dhkdiagram_group_seq {,}
+       {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+      \seq_pop_left:NN \l_dhkdiagram_group_seq \l_dhkdiagram_group_src_tl
+      \tl_trim_spaces:N \l_dhkdiagram_group_src_tl
+      \prop_get:NVNTF \l_dhkdiagram_row_prop \l_dhkdiagram_group_src_tl \l_tmpa_tl
+       {\tl_if_blank:VTF \l_dhkdiagram_annotation_tl
+         {\dhkdiagram_reserve_gap:nn {\l_tmpa_tl} {9mm}}
+         {\dhkdiagram_reserve_gap:nn {\l_tmpa_tl} {14mm}}}{}
+     }
+     {
+      \tl_if_blank:VF \l_dhkdiagram_annotation_tl
+       {
+        \regex_extract_once:nVNTF
+        {\A edge \s+ ([A-Za-z_][-A-Za-z0-9_]*) \s* (?:<->|->|<-|--) \s* ([A-Za-z_][-A-Za-z0-9_]*) \Z}
+        \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+        {
+         \tl_set:Nx \l_dhkdiagram_group_src_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+         \tl_set:Nx \l_dhkdiagram_group_dst_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {3}}
+         \prop_get:NVNTF \l_dhkdiagram_row_prop \l_dhkdiagram_group_src_tl \l_tmpa_tl
+          {\prop_get:NVNTF \l_dhkdiagram_row_prop \l_dhkdiagram_group_dst_tl \l_tmpb_tl
+           {\int_compare:nNnF {\l_tmpa_tl} = {\l_tmpb_tl}
+             {\dhkdiagram_reserve_gap:nn
+                {\int_min:nn {\l_tmpa_tl}{\l_tmpb_tl}} {10mm}}} {}}{}
+        }{}
+       }
+     }
+   }
+ }
+
+% Grid dimensions use actual maximum node width/height in each col/row.
+% All nodes in a column share an x center; all nodes in a row a y center.
+\cs_new_protected:Npn \dhkdiagram_positions:
+ {
+  \dim_zero:N \l_dhkdiagram_cursor_dim
+  \int_step_inline:nn {\l_dhkdiagram_maxcol_int}
+   {
+    \prop_get:NnNTF \l_dhkdiagram_colwidth_prop {##1} \l_tmpa_tl
+     {\dim_set:Nn \l_dhkdiagram_size_dim {\l_tmpa_tl}}
+     {\dim_zero:N \l_dhkdiagram_size_dim}
+    \dim_set:Nn \l_dhkdiagram_coord_dim
+     {\l_dhkdiagram_cursor_dim + 0.5\l_dhkdiagram_size_dim}
+    \prop_put:Nnx \l_dhkdiagram_x_prop {##1}
+     {\dim_use:N \l_dhkdiagram_coord_dim}
+    \dim_add:Nn \l_dhkdiagram_cursor_dim
+     {\l_dhkdiagram_size_dim + \g_dhkdiagram_hgap_dim}
+   }
+  \dim_zero:N \l_dhkdiagram_cursor_dim
+  \int_step_inline:nn {\l_dhkdiagram_maxrow_int}
+   {
+    \prop_get:NnNTF \l_dhkdiagram_rowheight_prop {##1} \l_tmpa_tl
+     {\dim_set:Nn \l_dhkdiagram_size_dim {\l_tmpa_tl}}
+     {\dim_zero:N \l_dhkdiagram_size_dim}
+    \dim_set:Nn \l_dhkdiagram_coord_dim
+     {-\l_dhkdiagram_cursor_dim - 0.5\l_dhkdiagram_size_dim}
+    \prop_put:Nnx \l_dhkdiagram_y_prop {##1}
+     {\dim_use:N \l_dhkdiagram_coord_dim}
+    \prop_get:NnNTF \l_dhkdiagram_gapafter_prop {##1} \l_tmpb_tl
+     {\dim_add:Nn \l_dhkdiagram_cursor_dim
+       {\l_dhkdiagram_size_dim + \dim_max:nn {\g_dhkdiagram_vgap_dim}{\l_tmpb_tl}}}
+     {\dim_add:Nn \l_dhkdiagram_cursor_dim
+       {\l_dhkdiagram_size_dim + \g_dhkdiagram_vgap_dim}}
+   }
+ }
+\cs_new_protected:Npn \dhkdiagram_draw_nodes:
+ {
+  \seq_map_inline:Nn \l_dhkdiagram_ids_seq
+   {
+    \tl_set:Nn \l_dhkdiagram_id_tl {##1}
+    \prop_get:NVN \l_dhkdiagram_row_prop \l_dhkdiagram_id_tl \l_tmpa_tl
+    \prop_get:NVN \l_dhkdiagram_col_prop \l_dhkdiagram_id_tl \l_tmpb_tl
+    \prop_get:NVN \l_dhkdiagram_label_prop \l_dhkdiagram_id_tl \l_dhkdiagram_label_tl
+    \prop_get:NVN \l_dhkdiagram_x_prop \l_tmpb_tl \l_dhkdiagram_left_tl
+    \prop_get:NVN \l_dhkdiagram_y_prop \l_tmpa_tl \l_dhkdiagram_right_tl
+    \node[anchor=center,inner~sep=0pt,outer~sep=0pt,fill=white]
+     (dhkdiag-\l_dhkdiagram_id_tl)
+     at (\l_dhkdiagram_left_tl,\l_dhkdiagram_right_tl)
+     {\exp_args:NV \dhkdiagram_print_label:n \l_dhkdiagram_label_tl};
+   }
+ }
+% v3: line notes. Vertical lines place annotation to their right;
+% horizontal lines place it above. A note does not replace the line.
+\cs_new_protected:Npn \dhkdiagram_styled_draw:n #1
+ {
+  \tl_if_blank:VTF \l_dhkdiagram_annotation_tl
+   {
+    \str_case:VnF \l_dhkdiagram_dir_tl
+     {{--}{\draw[thin] #1;}
+      {<->}{\draw[thin,{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}] #1;}}
+     {\draw[thin,-{Stealth[length=1.6mm]}] #1;}
+   }
+   {
+    \str_if_eq:VnTF \l_dhkdiagram_annotation_pos_tl {above}
+      {\dhkdiagram_styled_note:nn {#1} {above}}
+      {\dhkdiagram_styled_note:nn {#1} {right}}
+   }
+ }
+\cs_new_protected:Npn \dhkdiagram_styled_note:nn #1#2
+ {
+  \str_case:VnF \l_dhkdiagram_dir_tl
+    {
+     {--}{\draw[thin] #1 node[midway,#2=2mm,fill=white,inner~sep=0.5pt,
+                      font=\ttfamily\small] {\tl_use:N \l_dhkdiagram_annotation_tl};}
+     {<->}{\draw[thin,{Stealth[length=1.6mm]}-{Stealth[length=1.6mm]}]
+                   #1 node[midway,#2=2mm,fill=white,inner~sep=0.5pt,
+                      font=\ttfamily\small] {\tl_use:N \l_dhkdiagram_annotation_tl};}
+    }
+    {\draw[thin,-{Stealth[length=1.6mm]}]
+                  #1 node[midway,#2=2mm,fill=white,inner~sep=0.5pt,
+                      font=\ttfamily\small] {\tl_use:N \l_dhkdiagram_annotation_tl};}
+ }
+\cs_new_protected:Npn \dhkdiagram_draw_edge:n #1
+ {
+  \dhkdiagram_strip_connector:n {#1}
+  \regex_extract_once:nVNTF
+   {\A edge \s+ ([A-Za-z_][-A-Za-z0-9_]*) \s* (<->|->|<-|--) \s* ([A-Za-z_][-A-Za-z0-9_]*) \Z}
+   \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+   {
+    \tl_set:Nx \l_dhkdiagram_src_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+    \tl_set:Nx \l_dhkdiagram_dir_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {3}}
+    \tl_set:Nx \l_dhkdiagram_dst_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {4}}
+    \str_if_eq:VnT \l_dhkdiagram_dir_tl {<-}
+     {\tl_set_eq:NN \l_tmpa_tl \l_dhkdiagram_src_tl
+      \tl_set_eq:NN \l_dhkdiagram_src_tl \l_dhkdiagram_dst_tl
+      \tl_set_eq:NN \l_dhkdiagram_dst_tl \l_tmpa_tl}
+    \prop_if_in:NVTF \l_dhkdiagram_label_prop \l_dhkdiagram_src_tl
+     {
+      \prop_if_in:NVTF \l_dhkdiagram_label_prop \l_dhkdiagram_dst_tl
+       {
+        \prop_get:NVN \l_dhkdiagram_row_prop \l_dhkdiagram_src_tl \l_dhkdiagram_srcrow_tl
+        \prop_get:NVN \l_dhkdiagram_row_prop \l_dhkdiagram_dst_tl \l_dhkdiagram_dstrow_tl
+        \prop_get:NVN \l_dhkdiagram_col_prop \l_dhkdiagram_src_tl \l_dhkdiagram_srccol_tl
+        \prop_get:NVN \l_dhkdiagram_col_prop \l_dhkdiagram_dst_tl \l_dhkdiagram_dstcol_tl
+        \tl_set:Nn \l_dhkdiagram_annotation_pos_tl {right}
+        \bool_set_false:N \l_tmpa_bool
+        \int_compare:nNnT {\l_dhkdiagram_srcrow_tl} = {\l_dhkdiagram_dstrow_tl}
+         {\bool_set_true:N \l_tmpa_bool
+          \tl_set:Nn \l_dhkdiagram_annotation_pos_tl {above}}
+        \int_compare:nNnT {\l_dhkdiagram_srccol_tl} = {\l_dhkdiagram_dstcol_tl}
+         {\bool_set_true:N \l_tmpa_bool}
+        \bool_if:NT \l_tmpa_bool {\tl_set:Nn \l_dhkdiagram_route_tl {straight}}
+        \str_case:VnF \l_dhkdiagram_route_tl
+         {
+          {HV}
+           {
+            \int_compare:nNnTF {\l_dhkdiagram_srccol_tl} < {\l_dhkdiagram_dstcol_tl}
+             {\tl_set:Nn \l_dhkdiagram_srcanchor_tl {east}}
+             {\tl_set:Nn \l_dhkdiagram_srcanchor_tl {west}}
+            \int_compare:nNnTF {\l_dhkdiagram_srcrow_tl} < {\l_dhkdiagram_dstrow_tl}
+             {\tl_set:Nn \l_dhkdiagram_dstanchor_tl {north}}
+             {\tl_set:Nn \l_dhkdiagram_dstanchor_tl {south}}
+            \dhkdiagram_styled_draw:n
+             {(dhkdiag-\l_dhkdiagram_src_tl.\l_dhkdiagram_srcanchor_tl)
+              -| (dhkdiag-\l_dhkdiagram_dst_tl.\l_dhkdiagram_dstanchor_tl)}
+           }
+          {VH}
+           {
+            \tl_set:Nn \l_dhkdiagram_annotation_pos_tl {above}
+            \int_compare:nNnTF {\l_dhkdiagram_srcrow_tl} < {\l_dhkdiagram_dstrow_tl}
+             {\tl_set:Nn \l_dhkdiagram_srcanchor_tl {south}}
+             {\tl_set:Nn \l_dhkdiagram_srcanchor_tl {north}}
+            \int_compare:nNnTF {\l_dhkdiagram_srccol_tl} < {\l_dhkdiagram_dstcol_tl}
+             {\tl_set:Nn \l_dhkdiagram_dstanchor_tl {west}}
+             {\tl_set:Nn \l_dhkdiagram_dstanchor_tl {east}}
+            \dhkdiagram_styled_draw:n
+             {(dhkdiag-\l_dhkdiagram_src_tl.\l_dhkdiagram_srcanchor_tl)
+              |- (dhkdiag-\l_dhkdiagram_dst_tl.\l_dhkdiagram_dstanchor_tl)}
+           }
+          {straight}
+           {\dhkdiagram_styled_draw:n
+             {(dhkdiag-\l_dhkdiagram_src_tl) -- (dhkdiag-\l_dhkdiagram_dst_tl)}}
+         }
+         {\PackageWarning{mynotes}{Unknown~dhkdiagram~route~\tl_use:N\l_dhkdiagram_route_tl}}
+       }
+       {\PackageWarning{mynotes}{Unknown~dhkdiagram~target~\tl_use:N\l_dhkdiagram_dst_tl}}
+     }
+     {\PackageWarning{mynotes}{Unknown~dhkdiagram~source~\tl_use:N\l_dhkdiagram_src_tl}}
+   }
+   {}
+ }
+% Split: parent -> left, middle, right.  One centered rail in the gap.
+% Merge: left, middle, right -> child. Each may carry a shared-trunk note.
+\cs_new_protected:Npn \dhkdiagram_group_check_row:nn #1#2
+ {
+  \prop_if_in:NVTF \l_dhkdiagram_label_prop \l_dhkdiagram_group_item_tl
+   {\prop_get:NVN \l_dhkdiagram_row_prop \l_dhkdiagram_group_item_tl \l_tmpa_tl
+    \int_compare:nNnF {\l_tmpa_tl} = {#2}
+      {\bool_set_false:N \l_dhkdiagram_group_valid_bool}}
+   {\bool_set_false:N \l_dhkdiagram_group_valid_bool
+    \PackageWarning{mynotes}{Unknown~dhkdiagram~#1~node~\tl_use:N\l_dhkdiagram_group_item_tl}}
+ }
+\cs_new_protected:Npn \dhkdiagram_draw_group:n #1
+ {
+  \dhkdiagram_strip_connector:n {#1}
+  \tl_clear:N \l_dhkdiagram_group_src_tl
+  \tl_clear:N \l_dhkdiagram_group_dst_tl
+  \bool_set_true:N \l_dhkdiagram_group_valid_bool
+  \regex_extract_once:nVNTF
+    {\A split \s+ ([A-Za-z_][-A-Za-z0-9_]*) \s* -> \s* (.+) \Z}
+    \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+   {
+    \tl_set:Nn \l_dhkdiagram_dir_tl {split}
+    \tl_set:Nx \l_dhkdiagram_group_src_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+    \seq_set_split:Nnx \l_dhkdiagram_group_seq {,}
+     {\seq_item:Nn \l_dhkdiagram_matches_seq {3}}
+   }
+   {
+    \regex_extract_once:nVNTF
+      {\A merge \s+ (.+) \s+ -> \s* ([A-Za-z_][-A-Za-z0-9_]*) \Z}
+      \l_dhkdiagram_left_tl \l_dhkdiagram_matches_seq
+     {
+      \tl_set:Nn \l_dhkdiagram_dir_tl {merge}
+      \tl_set:Nx \l_dhkdiagram_group_dst_tl {\seq_item:Nn \l_dhkdiagram_matches_seq {3}}
+      \seq_set_split:Nnx \l_dhkdiagram_group_seq {,}
+       {\seq_item:Nn \l_dhkdiagram_matches_seq {2}}
+     }
+     {\bool_set_false:N \l_dhkdiagram_group_valid_bool}
+   }
+  \int_compare:nNnT {\seq_count:N \l_dhkdiagram_group_seq} < {2}
+   {\bool_set_false:N \l_dhkdiagram_group_valid_bool}
+  % First obtain the unique reference row, and require adjacent placement.
+  \bool_if:NT \l_dhkdiagram_group_valid_bool
+   {
+    \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+     {
+      \prop_get:NVNTF \l_dhkdiagram_row_prop \l_dhkdiagram_group_src_tl \l_dhkdiagram_group_row_tl
+       {\tl_set:Nx \l_dhkdiagram_group_dstrow_tl
+         {\int_eval:n {\l_dhkdiagram_group_row_tl + 1}}}
+       {\bool_set_false:N \l_dhkdiagram_group_valid_bool}
+     }
+     {
+      \prop_get:NVNTF \l_dhkdiagram_row_prop \l_dhkdiagram_group_dst_tl \l_dhkdiagram_group_dstrow_tl
+       {\tl_set:Nx \l_dhkdiagram_group_row_tl
+         {\int_eval:n {\l_dhkdiagram_group_dstrow_tl - 1}}}
+       {\bool_set_false:N \l_dhkdiagram_group_valid_bool}
+     }
+   }
+  \bool_if:NT \l_dhkdiagram_group_valid_bool
+   {
+    \seq_map_inline:Nn \l_dhkdiagram_group_seq
+     {\tl_set:Nn \l_dhkdiagram_group_item_tl {##1}
+      \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+      \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+       {\dhkdiagram_group_check_row:nn {split}{\l_dhkdiagram_group_dstrow_tl}}
+       {\dhkdiagram_group_check_row:nn {merge}{\l_dhkdiagram_group_row_tl}}
+     }
+   }
+  \bool_if:NTF \l_dhkdiagram_group_valid_bool
+   {\dhkdiagram_draw_group_valid:}
+   {\regex_match:nVTF {\A (split|merge) \s+} \l_dhkdiagram_left_tl
+      {\PackageWarning{mynotes}{Invalid~split/merge:~requires~defined~nodes~on~adjacent~rows}}
+      {}}
+ }
+\cs_new_protected:Npn \dhkdiagram_draw_group_valid:
+ {
+  \int_incr:N \l_dhkdiagram_connector_serial_int
+  \tl_set:Nx \l_dhkdiagram_group_first_tl {\seq_item:Nn \l_dhkdiagram_group_seq {1}}
+  \tl_trim_spaces:N \l_dhkdiagram_group_first_tl
+  \tl_set_eq:NN \l_dhkdiagram_group_left_tl \l_dhkdiagram_group_first_tl
+  \tl_set_eq:NN \l_dhkdiagram_group_right_tl \l_dhkdiagram_group_first_tl
+  \seq_map_inline:Nn \l_dhkdiagram_group_seq
+   {
+    \tl_set:Nn \l_dhkdiagram_group_item_tl {##1}
+    \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+    \prop_get:NVN \l_dhkdiagram_col_prop \l_dhkdiagram_group_item_tl \l_tmpa_tl
+    \prop_get:NVN \l_dhkdiagram_col_prop \l_dhkdiagram_group_left_tl \l_tmpb_tl
+    \int_compare:nNnT {\l_tmpa_tl} < {\l_tmpb_tl}
+     {\tl_set_eq:NN \l_dhkdiagram_group_left_tl \l_dhkdiagram_group_item_tl}
+    \prop_get:NVN \l_dhkdiagram_col_prop \l_dhkdiagram_group_right_tl \l_tmpb_tl
+    \int_compare:nNnT {\l_tmpa_tl} > {\l_tmpb_tl}
+     {\tl_set_eq:NN \l_dhkdiagram_group_right_tl \l_dhkdiagram_group_item_tl}
+   }
+  \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+   {\coordinate (dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)
+     at ($(dhkdiag-\l_dhkdiagram_group_src_tl.south)!0.5!
+        (dhkdiag-\l_dhkdiagram_group_src_tl.south |-
+         dhkdiag-\l_dhkdiagram_group_first_tl.north)$);
+    \draw[thin]
+      (dhkdiag-\l_dhkdiagram_group_src_tl.south) --
+      (dhkdiag-\l_dhkdiagram_group_src_tl.south |-
+       dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int);
+   }
+   {\coordinate (dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)
+     at ($(dhkdiag-\l_dhkdiagram_group_dst_tl.north)!0.5!
+        (dhkdiag-\l_dhkdiagram_group_dst_tl.north |-
+         dhkdiag-\l_dhkdiagram_group_first_tl.south)$);
+   }
+  \draw[thin]
+   (dhkdiag-\l_dhkdiagram_group_left_tl.center |-
+    dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)
+     --
+   (dhkdiag-\l_dhkdiagram_group_right_tl.center |-
+    dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int);
+  \seq_map_inline:Nn \l_dhkdiagram_group_seq
+   {
+    \tl_set:Nn \l_dhkdiagram_group_item_tl {##1}
+    \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+    \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+     {\draw[thin,-{Stealth[length=1.6mm]}]
+       (dhkdiag-\l_dhkdiagram_group_item_tl.north |-
+        dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)
+       -- (dhkdiag-\l_dhkdiagram_group_item_tl.north);}
+     {\draw[thin]
+       (dhkdiag-\l_dhkdiagram_group_item_tl.south) --
+       (dhkdiag-\l_dhkdiagram_group_item_tl.south |-
+        dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int);}
+   }
+  \str_if_eq:VnT \l_dhkdiagram_dir_tl {merge}
+   {\draw[thin,-{Stealth[length=1.6mm]}]
+      (dhkdiag-\l_dhkdiagram_group_dst_tl.north |-
+       dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)
+       -- (dhkdiag-\l_dhkdiagram_group_dst_tl.north);}
+  % Label on the common vertical trunk, not three repeated captions.
+  \tl_if_blank:VF \l_dhkdiagram_annotation_tl
+   {\str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+     {\node[anchor=west,xshift=2mm,fill=white,inner~sep=0.5pt,
+         font=\ttfamily\small] at
+       ($(dhkdiag-\l_dhkdiagram_group_src_tl.south)!0.5!
+         (dhkdiag-\l_dhkdiagram_group_src_tl.south |-
+          dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)$)
+        {\tl_use:N \l_dhkdiagram_annotation_tl};}
+     {\node[anchor=west,xshift=2mm,fill=white,inner~sep=0.5pt,
+         font=\ttfamily\small] at
+       ($(dhkdiag-\l_dhkdiagram_group_dst_tl.north)!0.5!
+         (dhkdiag-\l_dhkdiagram_group_dst_tl.north |-
+          dhkdiag-junction-\int_use:N \l_dhkdiagram_connector_serial_int)$)
+        {\tl_use:N \l_dhkdiagram_annotation_tl};}
+   }
+ }
+\cs_new_protected:Npn \dhkdiagram_draw_connector:n #1
+ {
+  \tl_set:Nn \l_dhkdiagram_left_tl {#1}
+  \tl_trim_spaces:N \l_dhkdiagram_left_tl
+  \regex_match:nVTF {\A edge \s+} \l_dhkdiagram_left_tl
+   {\dhkdiagram_draw_edge:n {#1}}
+   {\dhkdiagram_draw_group:n {#1}}
+ }
+\ExplSyntaxOff
+% The adjustbox key contains a literal space; define it with
+% normal category codes rather than inside ExplSyntaxOn.
+\newcommand{\dhkdiagramfitbegin}[1]{\begin{adjustbox}{max width=#1}}
+\newcommand{\dhkdiagramfitend}{\end{adjustbox}}
+\ExplSyntaxOn
+\cs_new_protected:Npn \dhkdiagram_render:
+ {
+  \group_begin:
+  \exp_args:NV \dhkvisual_set_indent:n \g_dhkdiagram_option_tl
+  \seq_clear:N \l_dhkdiagram_lines_seq
+  \seq_clear:N \l_dhkdiagram_ids_seq
+  \prop_clear:N \l_dhkdiagram_row_prop
+  \prop_clear:N \l_dhkdiagram_col_prop
+  \prop_clear:N \l_dhkdiagram_label_prop
+  \prop_clear:N \l_dhkdiagram_rowheight_prop
+  \prop_clear:N \l_dhkdiagram_colwidth_prop
+  \prop_clear:N \l_dhkdiagram_x_prop
+  \prop_clear:N \l_dhkdiagram_y_prop
+  \prop_clear:N \l_dhkdiagram_gapafter_prop
+  \int_zero:N \l_dhkdiagram_connector_serial_int
+  \int_zero:N \l_dhkdiagram_maxrow_int
+  \int_zero:N \l_dhkdiagram_maxcol_int
+  \ior_open:Nn \g_dhkdiagram_ior {\jobname-dhkdiagram.tmp}
+  \ior_str_map_inline:Nn \g_dhkdiagram_ior
+   {\tl_set:Nn \l_tmpa_tl {##1}
+    \tl_trim_spaces:N \l_tmpa_tl
+    \tl_if_blank:VF \l_tmpa_tl
+     {\seq_put_right:NV \l_dhkdiagram_lines_seq \l_tmpa_tl
+      \exp_args:NV \dhkdiagram_scan:n \l_tmpa_tl}}
+  \ior_close:N \g_dhkdiagram_ior
+  \seq_map_inline:Nn \l_dhkdiagram_lines_seq
+   {\dhkdiagram_scan_spacing:n {##1}}
+  \dhkdiagram_positions:
+  \par\smallskip\noindent
+  \hspace*{\l_dhkvisual_indent_dim}%
+  \dhkdiagramfitbegin{\dim_eval:n {\linewidth - \l_dhkvisual_indent_dim}}
+  \begin{tikzpicture}[>=Stealth]
+    \dhkdiagram_draw_nodes:
+    \begin{scope}[on~background~layer]
+     \seq_map_inline:Nn \l_dhkdiagram_lines_seq
+      {\dhkdiagram_draw_connector:n {##1}}
+    \end{scope}
+  \end{tikzpicture}
+  \dhkdiagramfitend
+  \par\smallskip
+  \group_end:
+ }
+\cs_new_eq:NN \dhkdiagramrender \dhkdiagram_render:
+\ExplSyntaxOff
+\newenvironment{dhkdiagram}[1][]{%
+ \VerbatimEnvironment
+ \dhkdiagramsetoption{#1}%
+ \dhkvisualverbatimstart%
+ \begin{VerbatimOut}{\jobname-dhkdiagram.tmp}%
+}{%
+ \end{VerbatimOut}%
+ \dhkdiagramrender%
+}
+
+% ================================================================
+% 10. dhkgraph v7 — nested groups, preserving v6 features
+% Requires earlier mynotes.sty definitions and xelatex.
+% ================================================================
+\RequirePackage{tikz}
+\RequirePackage{adjustbox}
+\RequirePackage{fancyvrb}
+\RequirePackage{tcolorbox}
+\usetikzlibrary{fit,calc,arrows.meta,backgrounds,positioning}
+\definecolor{dhkgraphteal}{RGB}{18,131,125}
+\definecolor{dhkgraphgray}{RGB}{125,138,153}
+\tikzset{dhkg-measure/.style={overlay,opacity=0},dhkg-normal/.style={}}
+\ExplSyntaxOn
+\ior_new:N \g_dhkgraph_ior
+\tl_new:N \g_dhkgraph_option_tl
+\tl_new:N \l_dhkgraph_line_tl
+\tl_new:N \l_dhkgraph_id_tl
+\tl_new:N \l_dhkgraph_label_tl
+\tl_new:N \l_dhkgraph_style_tl
+\tl_new:N \l_dhkgraph_fit_tl
+\tl_new:N \l_dhkgraph_group_bg_tl
+\tl_new:N \l_dhkgraph_text_tl
+\tl_new:N \l_dhkgraph_caption_tl
+% v6: separate prose description and optional markers.
+\tl_new:N \l_dhkgraph_explain_tl
+\bool_new:N \l_dhkgraph_explain_bool
+\tl_new:N \l_dhkgraph_marker_tl
+\prop_new:N \l_dhkgraph_node_markers_prop
+\prop_new:N \l_dhkgraph_group_markers_prop
+\prop_new:N \l_dhkgraph_group_marker_members_prop
+\tl_new:N \l_dhkgraph_frame_tl
+\tl_new:N \l_dhkgraph_bg_tl
+\tl_new:N \l_dhkgraph_shape_tl
+\tl_new:N \l_dhkgraph_width_tl
+\tl_new:N \l_dhkgraph_a_tl
+\tl_new:N \l_dhkgraph_b_tl
+\tl_new:N \l_dhkgraph_direction_tl
+\tl_new:N \l_dhkgraph_route_tl
+\tl_new:N \l_dhkgraph_tmp_tl
+\seq_new:N \l_dhkgraph_nodes_seq
+\seq_new:N \l_dhkgraph_groups_seq
+\seq_new:N \l_dhkgraph_edges_seq
+\seq_new:N \l_dhkgraph_parts_seq
+\seq_new:N \l_dhkgraph_matches_seq
+\seq_new:N \l_dhkgraph_members_seq
+\seq_new:N \l_dhkgraph_text_lines_seq
+\prop_new:N \l_dhkgraph_rows_prop
+\prop_new:N \l_dhkgraph_cols_prop
+\dim_new:N \l_dhkgraph_col_dim
+\dim_new:N \l_dhkgraph_row_dim
+\dim_new:N \l_dhkgraph_indent_dim
+\bool_new:N \l_dhkgraph_caption_bool
+\int_new:N \l_dhkgraph_conn_int
+\dim_new:N \l_dhkgraph_x_dim
+\dim_new:N \l_dhkgraph_y_dim
+\tl_new:N \l_dhkgraph_measure_style_tl
+\dim_new:N \l_dhkgraph_auto_width_dim
+\dim_new:N \l_dhkgraph_measured_w_dim
+\dim_new:N \l_dhkgraph_measured_h_dim
+\dim_new:N \l_dhkgraph_last_dim
+\dim_new:N \l_dhkgraph_next_dim
+\dim_new:N \l_dhkgraph_prev_dim
+\dim_new:N \l_dhkgraph_current_dim
+\dim_new:N \l_dhkgraph_col_gap_dim
+\dim_new:N \l_dhkgraph_row_gap_dim
+\bool_new:N \l_dhkgraph_measuring_bool
+\bool_new:N \l_dhkgraph_explicit_spacing_bool
+\bool_new:N \l_dhkgraph_uniform_bool
+\dim_new:N \l_dhkgraph_uniform_width_dim
+\int_new:N \l_dhkgraph_max_col_int
+\int_new:N \l_dhkgraph_max_row_int
+\seq_new:N \l_dhkgraph_width_lines_seq
+\prop_new:N \l_dhkgraph_col_width_prop
+\prop_new:N \l_dhkgraph_row_height_prop
+\prop_new:N \l_dhkgraph_col_x_prop
+\prop_new:N \l_dhkgraph_row_y_prop
+\prop_new:N \l_dhkgraph_group_members_prop
+% v7: nested group dependency graph and required leaf-node clearance.
+\prop_new:N \l_dhkgraph_nested_members_prop
+\prop_new:N \l_dhkgraph_group_depth_prop
+\prop_new:N \l_dhkgraph_node_depth_prop
+\prop_new:N \l_dhkgraph_rendered_ids_prop
+\seq_new:N \l_dhkgraph_pending_groups_seq
+\seq_new:N \l_dhkgraph_next_groups_seq
+\bool_new:N \l_dhkgraph_group_ready_bool
+\tl_new:N \l_dhkgraph_nested_id_tl
+\tl_new:N \l_dhkgraph_nested_members_tl
+\tl_new:N \l_dhkgraph_nested_depth_tl
+\cs_generate_variant:Nn \tl_replace_all:Nnn {NVn}
+\cs_generate_variant:Nn \prop_item:Nn {NV}
+\cs_generate_variant:Nn \prop_if_in:NnT {NVT}
+\cs_generate_variant:Nn \prop_if_in:NnF {NVF}
+\cs_generate_variant:Nn \prop_get:NnNTF {NVNTF}
+\cs_generate_variant:Nn \prop_get:NnNT {NVNT}
+\cs_generate_variant:Nn \prop_put:Nnn {NVV}
+\cs_new_protected:Npn \dhkgraph_set_option:n #1
+  {\tl_gset:Nn \g_dhkgraph_option_tl {#1}}
+\cs_new_eq:NN \dhkgraphsetoption \dhkgraph_set_option:n
+% TeX command names encoded as literal characters in source data:
+% translate them into actual arrows, while leaving all other symbols literal.
+\cs_new_protected:Npn \dhkgraph_show_text:n #1
+ {
+  \tl_set:Nn \l_dhkgraph_text_tl {#1}
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {\ra}}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:NVn \l_dhkgraph_text_tl \l_tmpa_tl {\ensuremath{\rightarrow}}
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {\la}}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:NVn \l_dhkgraph_text_tl \l_tmpa_tl {\ensuremath{\leftarrow}}
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {\ua}}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:NVn \l_dhkgraph_text_tl \l_tmpa_tl {\ensuremath{\uparrow}}
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {\da}}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:NVn \l_dhkgraph_text_tl \l_tmpa_tl {\ensuremath{\downarrow}}
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {\lra}}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:NVn \l_dhkgraph_text_tl \l_tmpa_tl {\ensuremath{\leftrightarrow}}
+  \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {\uda}}
+  \tl_trim_spaces:N \l_tmpa_tl
+  \tl_replace_all:NVn \l_dhkgraph_text_tl \l_tmpa_tl {\ensuremath{\updownarrow}}
+  % ASCII arrows are supported in node labels, including group members.
+  % Replace longest pattern first; preserve existing \ra, \la, etc.
+  \tl_replace_all:Nnn \l_dhkgraph_text_tl {<->} {\ensuremath{\leftrightarrow}}
+  \tl_replace_all:Nnn \l_dhkgraph_text_tl {->} {\ensuremath{\rightarrow}}
+  \tl_replace_all:Nnn \l_dhkgraph_text_tl {<-} {\ensuremath{\leftarrow}}
+  \seq_set_split:NnV \l_dhkgraph_text_lines_seq {//} \l_dhkgraph_text_tl
+  \seq_map_indexed_inline:Nn \l_dhkgraph_text_lines_seq
+   {
+    \int_compare:nNnT {##1} > {1} {\par}
+    \tl_trim_spaces:n {##2}
+   }
+ }
+\cs_new_protected:Npn \dhkgraph_prepare:
+ {
+  \seq_clear:N \l_dhkgraph_nodes_seq
+  \seq_clear:N \l_dhkgraph_groups_seq
+  \seq_clear:N \l_dhkgraph_edges_seq
+  \prop_clear:N \l_dhkgraph_rows_prop
+  \prop_clear:N \l_dhkgraph_cols_prop
+  \prop_clear:N \l_dhkgraph_col_width_prop
+  \prop_clear:N \l_dhkgraph_row_height_prop
+  \prop_clear:N \l_dhkgraph_col_x_prop
+  \prop_clear:N \l_dhkgraph_row_y_prop
+  \prop_clear:N \l_dhkgraph_group_members_prop
+\prop_clear:N \l_dhkgraph_nested_members_prop
+\prop_clear:N \l_dhkgraph_group_depth_prop
+\prop_clear:N \l_dhkgraph_node_depth_prop
+\prop_clear:N \l_dhkgraph_rendered_ids_prop
+\seq_clear:N \l_dhkgraph_pending_groups_seq
+\seq_clear:N \l_dhkgraph_next_groups_seq
+  \prop_clear:N \l_dhkgraph_node_markers_prop
+  \prop_clear:N \l_dhkgraph_group_markers_prop
+  \prop_clear:N \l_dhkgraph_group_marker_members_prop
+  \bool_set_false:N \l_dhkgraph_explicit_spacing_bool
+  \bool_set_false:N \l_dhkgraph_measuring_bool
+  \bool_set_false:N \l_dhkgraph_uniform_bool
+  \dim_set:Nn \l_dhkgraph_uniform_width_dim {13mm}
+  \int_zero:N \l_dhkgraph_max_col_int
+  \int_zero:N \l_dhkgraph_max_row_int
+  \dim_set:Nn \l_dhkgraph_col_gap_dim {11mm}
+  \dim_set:Nn \l_dhkgraph_row_gap_dim {10mm}
+  \dim_set:Nn \l_dhkgraph_col_dim {55mm}
+  \dim_set:Nn \l_dhkgraph_row_dim {28mm}
+  \dim_zero:N \l_dhkgraph_indent_dim
+  \tl_clear:N \l_dhkgraph_caption_tl
+  \tl_clear:N \l_dhkgraph_explain_tl
+  \bool_set_false:N \l_dhkgraph_explain_bool
+  \bool_set_false:N \l_dhkgraph_caption_bool
+  \int_zero:N \l_dhkgraph_conn_int
+  \tl_set_eq:NN \l_dhkgraph_tmp_tl \g_dhkgraph_option_tl
+  \tl_trim_spaces:N \l_dhkgraph_tmp_tl
+  \regex_match:nVT {\A\s*uniform\s*\Z|\A\s*uniform\s*,|,\s*uniform\s*\Z|,\s*uniform\s*,}
+    \l_dhkgraph_tmp_tl
+    {\bool_set_true:N \l_dhkgraph_uniform_bool}
+  \regex_extract_once:nVNT
+   {(?:\A|,)\s*in\s*=\s*([0-9]+(?:\.[0-9]+)?)(?:,|\Z)}
+   \l_dhkgraph_tmp_tl \l_dhkgraph_matches_seq
+   {\dim_set:Nn \l_dhkgraph_indent_dim
+      {\seq_item:Nn \l_dhkgraph_matches_seq {2} em}}
+ }
+\cs_new_protected:Npn \dhkgraph_read_line:n #1
+ {
+  \tl_set:Nn \l_dhkgraph_line_tl {#1}
+  \tl_trim_spaces:N \l_dhkgraph_line_tl
+  \tl_if_blank:VF \l_dhkgraph_line_tl
+   {
+    \regex_match:nVTF {\A node\s+} \l_dhkgraph_line_tl
+     {
+      \regex_match:nVTF {\A node\s+size\s*::\s*uniform\s*\Z} \l_dhkgraph_line_tl
+       {\bool_set_true:N \l_dhkgraph_uniform_bool}
+       {\seq_put_right:NV \l_dhkgraph_nodes_seq \l_dhkgraph_line_tl}
+     }
+     {
+      \regex_match:nVTF {\A group\s+} \l_dhkgraph_line_tl
+       {\seq_put_right:NV \l_dhkgraph_groups_seq \l_dhkgraph_line_tl}
+       {
+        \regex_match:nVTF {\A (edge|split|merge)\s+} \l_dhkgraph_line_tl
+         {\seq_put_right:NV \l_dhkgraph_edges_seq \l_dhkgraph_line_tl}
+         {
+          \regex_extract_once:nVNTF
+            {\A caption\s*::\s*(.*)\Z}
+             \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+           {\tl_set:Nx \l_dhkgraph_caption_tl
+             {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+            \bool_set_true:N \l_dhkgraph_caption_bool}
+           {
+            \regex_extract_once:nVNTF
+             {\A spacing\s*::\s*([0-9.]+mm)\s*,\s*([0-9.]+mm)\Z}
+              \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+             {\bool_set_true:N \l_dhkgraph_explicit_spacing_bool
+              \dim_set:Nn \l_dhkgraph_col_dim
+                 {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+              \dim_set:Nn \l_dhkgraph_row_dim
+                 {\seq_item:Nn \l_dhkgraph_matches_seq {3}}}
+             {
+              \regex_extract_once:nVNTF
+               {\A (?:explain|description)\s*::\s*(.*)\Z}
+               \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+               {\tl_set:Nx \l_dhkgraph_explain_tl
+                 {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+                \bool_set_true:N \l_dhkgraph_explain_bool}
+               {\PackageWarning{mynotes}{dhkgraph~unknown~line~\tl_use:N\l_dhkgraph_line_tl}}
+             }
+           }
+         }
+       }
+     }
+   }
+ }
+% Automatic content width: longest // segment is measured at the actual text font.
+% Short labels stay compact; long labels wrap at a readable upper bound.
+\cs_new_protected:Npn \dhkgraph_auto_width:n #1
+ {
+  \dim_zero:N \l_dhkgraph_auto_width_dim
+  \seq_set_split:Nnn \l_dhkgraph_width_lines_seq {//} {#1}
+  \seq_map_inline:Nn \l_dhkgraph_width_lines_seq
+   {
+    % Measure natural text extent inside an actual TikZ node: TikZ uses
+    % nullfont outside nodes, so measuring in an ordinary \hbox is wrong.
+    \node[dhkg-measure,font=\small,inner~sep=0pt,outer~sep=0pt]
+       (dhkg-text-measure) at (0,0)
+       {\dhkgraph_show_text:n {##1}};
+    \pgfextractx{\l_tmpa_dim}
+       {\pgfpointanchor{dhkg-text-measure}{east}}
+    \pgfextractx{\l_tmpb_dim}
+       {\pgfpointanchor{dhkg-text-measure}{west}}
+    \dim_set:Nn \l_dhkgraph_auto_width_dim
+       {\dim_max:nn {\l_dhkgraph_auto_width_dim}
+          {\l_tmpa_dim - \l_tmpb_dim}}
+   }
+  % Match v1's familiar baseline: compact one-line nodes, roomier
+  % multi-line nodes.  Grow until the 57mm wrapping threshold.
+  \int_compare:nNnTF {\seq_count:N \l_dhkgraph_width_lines_seq} > {2}
+   {\dim_set:Nn \l_dhkgraph_measured_w_dim {43mm}}
+   {\int_compare:nNnTF {\seq_count:N \l_dhkgraph_width_lines_seq} > {1}
+     {\dim_set:Nn \l_dhkgraph_measured_w_dim {34mm}}
+     {\dim_set:Nn \l_dhkgraph_measured_w_dim {13mm}}}
+  \dim_set:Nn \l_dhkgraph_auto_width_dim
+    {\dim_min:nn {57mm}
+       {\dim_max:nn {\l_dhkgraph_measured_w_dim}
+          {\l_dhkgraph_auto_width_dim + 3mm}}}
+ }
+% Uniform mode: // always means an explicit line break.
+% Every individual line is measured at its natural width and protected
+% from automatic wrapping. All nodes use the widest individual line.
+% adjustbox scales the complete diagram to the printable page width.
+\cs_new_protected:Npn \dhkgraph_show_uniform_text:n #1
+ {
+  \seq_set_split:Nnn \l_dhkgraph_width_lines_seq {//} {#1}
+  \seq_map_indexed_inline:Nn \l_dhkgraph_width_lines_seq
+   {
+    \int_compare:nNnT {##1} > {1} {\par}
+    \mbox{\dhkgraph_show_text:n {##2}}
+   }
+ }
+\cs_new_protected:Npn \dhkgraph_scan_uniform_width:
+ {
+  \dim_set:Nn \l_dhkgraph_uniform_width_dim {13mm}
+  \seq_map_inline:Nn \l_dhkgraph_nodes_seq
+   {
+    \regex_extract_once:nnNT {\A (.*?) \s* :: \s* (.*) \Z}
+     {##1} \l_dhkgraph_matches_seq
+     {
+      \tl_set:Nx \l_dhkgraph_label_tl
+       {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+      \tl_trim_spaces:N \l_dhkgraph_label_tl
+      \seq_set_split:NnV \l_dhkgraph_width_lines_seq {//} \l_dhkgraph_label_tl
+      \seq_map_inline:Nn \l_dhkgraph_width_lines_seq
+       {
+        \node[dhkg-measure,font=\small,inner~sep=0pt,outer~sep=0pt]
+         (dhkg-uniform-measure) at (0,0)
+         {\mbox{\dhkgraph_show_text:n {####1}}};
+        \pgfextractx{\l_tmpa_dim}
+         {\pgfpointanchor{dhkg-uniform-measure}{east}}
+        \pgfextractx{\l_tmpb_dim}
+         {\pgfpointanchor{dhkg-uniform-measure}{west}}
+        \dim_set:Nn \l_dhkgraph_uniform_width_dim
+         {\dim_max:nn {\l_dhkgraph_uniform_width_dim}
+          {\l_tmpa_dim - \l_tmpb_dim + 3mm}}
+       }
+     }
+   }
+ }
+% v6: optional <1>, <A>, etc. in node/group declarations.
+% Strip only the declaration-side marker before applying the v5 grammar.
+\cs_new_protected:Npn \dhkgraph_extract_marker:
+ {
+  \tl_clear:N \l_dhkgraph_marker_tl
+  \regex_extract_once:nVNT
+    {<\s*([^<>]+?)\s*>} \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+    {
+     \tl_set:Nx \l_dhkgraph_marker_tl
+       {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+     \tl_trim_spaces:N \l_dhkgraph_marker_tl
+     \regex_replace_once:nnN {\s*<[^<>]+>} {} \l_dhkgraph_line_tl
+     \tl_trim_spaces:N \l_dhkgraph_line_tl
+    }
+ }
+
+% v6: Number/symbol at the left of each marked node or group.
+\cs_new_protected:Npn \dhkgraph_draw_marker:nn #1#2
+ {
+  \tl_if_blank:nF {#2}
+   {
+    \tl_set:Nn \l_dhkgraph_marker_tl {#2}
+    \regex_match:nVF {\.\s*\Z} \l_dhkgraph_marker_tl
+       {\tl_put_right:Nn \l_dhkgraph_marker_tl {.}}
+    \node[font=\bfseries\small,anchor=east,fill=white,
+          inner~xsep=.8mm,inner~ysep=.35mm,outer~sep=0pt]
+      at ([xshift=-7mm]dhkg-#1.west)
+      {\exp_args:NV \dhkgraph_show_text:n \l_dhkgraph_marker_tl};
+   }
+ }
+
+% v7: scan direct members, register group dependencies and calculate how
+% many nested frames each leaf node requires. Existing one-level layouts
+% retain the v6 reserve (14mm wide / 25mm tall per grouped node).
+\cs_new_protected:Npn \dhkgraph_scan_groups:
+ {
+  \seq_map_inline:Nn \l_dhkgraph_groups_seq
+   {
+    \tl_set:Nn \l_dhkgraph_line_tl {##1}
+    \dhkgraph_extract_marker:
+    \tl_set:Nx \l_dhkgraph_clean_tl {\l_dhkgraph_marker_tl}
+    \regex_extract_once:nVNT
+     {\A group\s+([A-Za-z_][A-Za-z_0-9-]*)\s*\(([^)]*)\)}
+     \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+     {
+      \tl_set:Nx \l_dhkgraph_nested_id_tl
+       {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+      \tl_set:Nx \l_dhkgraph_nested_members_tl
+       {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+      \prop_put:NVV \l_dhkgraph_nested_members_prop
+       \l_dhkgraph_nested_id_tl \l_dhkgraph_nested_members_tl
+      \prop_put:NVn \l_dhkgraph_group_depth_prop
+       \l_dhkgraph_nested_id_tl {1}
+      \seq_set_split:NnV \l_dhkgraph_members_seq {,}
+       \l_dhkgraph_nested_members_tl
+      \seq_map_inline:Nn \l_dhkgraph_members_seq
+       {
+        \tl_set:Nn \l_tmpa_tl {####1}
+        \tl_trim_spaces:N \l_tmpa_tl
+        \prop_put:NVn \l_dhkgraph_group_members_prop \l_tmpa_tl {1}
+        \tl_if_blank:VF \l_dhkgraph_clean_tl
+         {\prop_put:NVn \l_dhkgraph_group_marker_members_prop
+          \l_tmpa_tl {1}}
+       }
+     }
+   }
+  % Propagate outer-to-inner nesting depth (max ancestor count).
+  \int_step_inline:nn {\seq_count:N \l_dhkgraph_groups_seq}
+   {
+    \prop_map_inline:Nn \l_dhkgraph_nested_members_prop
+     {
+      \tl_set:Nn \l_dhkgraph_nested_depth_tl
+       {\prop_item:Nn \l_dhkgraph_group_depth_prop {####1}}
+      \seq_set_split:Nnn \l_dhkgraph_members_seq {,} {####2}
+      \seq_map_inline:Nn \l_dhkgraph_members_seq
+       {
+        \tl_set:Nn \l_tmpa_tl {########1}
+        \tl_trim_spaces:N \l_tmpa_tl
+        \prop_if_in:NVT \l_dhkgraph_nested_members_prop \l_tmpa_tl
+         {
+          \prop_get:NVN \l_dhkgraph_group_depth_prop
+            \l_tmpa_tl \l_tmpb_tl
+          \int_compare:nNnT
+           {\l_dhkgraph_nested_depth_tl + 1} > {\l_tmpb_tl}
+           {\prop_put:NVx \l_dhkgraph_group_depth_prop
+             \l_tmpa_tl
+             {\int_eval:n {\l_dhkgraph_nested_depth_tl + 1}}}
+         }
+       }
+     }
+   }
+  % Convert group depths into per-node reserves.
+  \prop_map_inline:Nn \l_dhkgraph_nested_members_prop
+   {
+    \tl_set:Nn \l_dhkgraph_nested_depth_tl
+     {\prop_item:Nn \l_dhkgraph_group_depth_prop {##1}}
+    \seq_set_split:Nnn \l_dhkgraph_members_seq {,} {##2}
+    \seq_map_inline:Nn \l_dhkgraph_members_seq
+     {
+      \tl_set:Nn \l_tmpa_tl {####1}
+      \tl_trim_spaces:N \l_tmpa_tl
+      \prop_if_in:NVF \l_dhkgraph_nested_members_prop \l_tmpa_tl
+       {
+        \prop_get:NVNTF \l_dhkgraph_node_depth_prop \l_tmpa_tl
+         \l_tmpb_tl
+         {
+          \int_compare:nNnT {\l_dhkgraph_nested_depth_tl} > {\l_tmpb_tl}
+           {\prop_put:NVV \l_dhkgraph_node_depth_prop
+             \l_tmpa_tl \l_dhkgraph_nested_depth_tl}
+         }
+         {\prop_put:NVV \l_dhkgraph_node_depth_prop
+           \l_tmpa_tl \l_dhkgraph_nested_depth_tl}
+       }
+     }
+   }
+ }
+
+\cs_new_protected:Npn \dhkgraph_update_max:Nnn #1#2#3
+ {
+  \prop_get:NnNTF #1 {#2} \l_tmpa_tl
+    {\dim_compare:nNnT {#3} > {\l_tmpa_tl}
+      {\prop_put:Nnx #1 {#2} {\dim_eval:n {#3}}}}
+    {\prop_put:Nnx #1 {#2} {\dim_eval:n {#3}}}
+ }
+% Convert measured per-column widths and row heights into grid centers.
+\cs_new_protected:Npn \dhkgraph_build_grid:
+ {
+  \dim_zero:N \l_dhkgraph_last_dim
+  \dim_zero:N \l_dhkgraph_x_dim
+  \int_step_inline:nn {\l_dhkgraph_max_col_int}
+   {
+    \prop_get:NnNTF \l_dhkgraph_col_width_prop {##1} \l_tmpa_tl
+      {\dim_set:Nn \l_dhkgraph_current_dim {\l_tmpa_tl}}
+      {\dim_set:Nn \l_dhkgraph_current_dim {15mm}}
+    \int_compare:nNnT {##1} > {1}
+     {
+      \dim_set:Nn \l_dhkgraph_next_dim
+        {(\l_dhkgraph_last_dim + \l_dhkgraph_current_dim)/2
+           + \l_dhkgraph_col_gap_dim}
+      \bool_if:NT \l_dhkgraph_explicit_spacing_bool
+       {\dim_set:Nn \l_dhkgraph_next_dim
+         {\dim_max:nn {\l_dhkgraph_next_dim}{\l_dhkgraph_col_dim}}}
+      \dim_add:Nn \l_dhkgraph_x_dim {\l_dhkgraph_next_dim}
+     }
+    \prop_put:Nnx \l_dhkgraph_col_x_prop {##1}
+      {\dim_use:N \l_dhkgraph_x_dim}
+    \dim_set:Nn \l_dhkgraph_last_dim {\l_dhkgraph_current_dim}
+   }
+  \dim_zero:N \l_dhkgraph_last_dim
+  \dim_zero:N \l_dhkgraph_y_dim
+  \int_step_inline:nn {\l_dhkgraph_max_row_int}
+   {
+    \prop_get:NnNTF \l_dhkgraph_row_height_prop {##1} \l_tmpa_tl
+      {\dim_set:Nn \l_dhkgraph_current_dim {\l_tmpa_tl}}
+      {\dim_set:Nn \l_dhkgraph_current_dim {10mm}}
+    \int_compare:nNnT {##1} > {1}
+     {
+      \dim_set:Nn \l_dhkgraph_next_dim
+        {(\l_dhkgraph_last_dim + \l_dhkgraph_current_dim)/2
+           + \l_dhkgraph_row_gap_dim}
+      \bool_if:NT \l_dhkgraph_explicit_spacing_bool
+       {\dim_set:Nn \l_dhkgraph_next_dim
+         {\dim_max:nn {\l_dhkgraph_next_dim}{\l_dhkgraph_row_dim}}}
+      \dim_sub:Nn \l_dhkgraph_y_dim {\l_dhkgraph_next_dim}
+     }
+    \prop_put:Nnx \l_dhkgraph_row_y_prop {##1}
+      {\dim_use:N \l_dhkgraph_y_dim}
+    \dim_set:Nn \l_dhkgraph_last_dim {\l_dhkgraph_current_dim}
+   }
+ }
+\cs_new_protected:Npn \dhkgraph_style:n #1
+ {
+  \tl_set:Nn \l_dhkgraph_style_tl {#1}
+  \tl_set:Nn \l_dhkgraph_frame_tl {dhkgraphgray}
+  \tl_set:Nn \l_dhkgraph_bg_tl {black!1.5}
+  \tl_set:Nn \l_dhkgraph_shape_tl {rectangle}
+  \tl_clear:N \l_dhkgraph_width_tl
+  \regex_match:nVT {accent} \l_dhkgraph_style_tl
+   {\tl_set:Nn \l_dhkgraph_frame_tl {dhkgraphteal}
+    \tl_set:Nn \l_dhkgraph_bg_tl {dhkgraphteal!5}}
+  \regex_match:nVT {circle} \l_dhkgraph_style_tl
+   {\tl_set:Nn \l_dhkgraph_shape_tl {circle}}
+  \regex_extract_once:nVNT
+   {w\s*=\s*([0-9]+(?:\.[0-9]+)?mm)}
+    \l_dhkgraph_style_tl \l_dhkgraph_matches_seq
+   {\tl_set:Nx \l_dhkgraph_width_tl
+      {\seq_item:Nn \l_dhkgraph_matches_seq {2}}}
+ }
+\cs_new_protected:Npn \dhkgraph_draw_node:n #1
+ {
+  \regex_extract_once:nnNTF {\A (.*?) \s* :: \s* (.*) \Z}
+    {#1} \l_dhkgraph_matches_seq
+   {\tl_set:Nx \l_dhkgraph_line_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_set:Nx \l_dhkgraph_label_tl {\seq_item:Nn \l_dhkgraph_matches_seq {3}}}
+   {\tl_set:Nn \l_dhkgraph_line_tl {#1} \tl_clear:N \l_dhkgraph_label_tl}
+  \tl_trim_spaces:N \l_dhkgraph_line_tl
+  \tl_trim_spaces:N \l_dhkgraph_label_tl
+  \dhkgraph_extract_marker:
+  \regex_extract_once:nVNTF
+   {\A node\s+([A-Za-z_][A-Za-z_0-9-]*)\s*\(\s*([0-9]+)\s*,\s*([0-9]+)\s*\)\s*(?:\[(.*)\])?\s*\Z}
+    \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+   {
+    \tl_set:Nx \l_dhkgraph_id_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_if_blank:VF \l_dhkgraph_marker_tl
+      {\prop_put:NVV \l_dhkgraph_node_markers_prop
+        \l_dhkgraph_id_tl \l_dhkgraph_marker_tl}
+    \prop_put:NVx \l_dhkgraph_rows_prop \l_dhkgraph_id_tl
+      {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+    \prop_put:NVx \l_dhkgraph_cols_prop \l_dhkgraph_id_tl
+      {\seq_item:Nn \l_dhkgraph_matches_seq {4}}
+    \exp_args:Ne \dhkgraph_style:n {\seq_item:Nn \l_dhkgraph_matches_seq {5}}
+    \bool_if:NTF \l_dhkgraph_uniform_bool
+     {\tl_set:Nx \l_dhkgraph_width_tl
+       {\dim_use:N \l_dhkgraph_uniform_width_dim}}
+     {\tl_if_blank:VT \l_dhkgraph_width_tl
+       {\exp_args:NV \dhkgraph_auto_width:n \l_dhkgraph_label_tl
+        \tl_set:Nx \l_dhkgraph_width_tl
+         {\dim_use:N \l_dhkgraph_auto_width_dim}}}
+    \int_set:Nn \l_dhkgraph_max_row_int
+      {\int_max:nn {\l_dhkgraph_max_row_int}
+        {\prop_item:NV \l_dhkgraph_rows_prop \l_dhkgraph_id_tl}}
+    \int_set:Nn \l_dhkgraph_max_col_int
+      {\int_max:nn {\l_dhkgraph_max_col_int}
+        {\prop_item:NV \l_dhkgraph_cols_prop \l_dhkgraph_id_tl}}
+    \prop_get:NVN \l_dhkgraph_rows_prop \l_dhkgraph_id_tl \l_tmpa_tl
+    \prop_get:NVN \l_dhkgraph_cols_prop \l_dhkgraph_id_tl \l_tmpb_tl
+    \bool_if:NTF \l_dhkgraph_measuring_bool
+     {\dim_zero:N \l_dhkgraph_x_dim
+      \dim_zero:N \l_dhkgraph_y_dim
+      \tl_set:Nx \l_dhkgraph_tmp_tl
+        {dhkg-measure-\l_dhkgraph_id_tl}
+      \tl_set:Nn \l_dhkgraph_measure_style_tl {dhkg-measure}}
+     {\prop_get:NVN \l_dhkgraph_col_x_prop \l_tmpb_tl \l_tmpc_tl
+      \dim_set:Nn \l_dhkgraph_x_dim {\l_tmpc_tl}
+      \prop_get:NVN \l_dhkgraph_row_y_prop \l_tmpa_tl \l_tmpc_tl
+      \dim_set:Nn \l_dhkgraph_y_dim {\l_tmpc_tl}
+      \tl_set:Nx \l_dhkgraph_tmp_tl
+        {dhkg-\l_dhkgraph_id_tl}
+      \tl_set:Nn \l_dhkgraph_measure_style_tl {dhkg-normal}}
+    \node[\l_dhkgraph_measure_style_tl,draw=\l_dhkgraph_frame_tl,
+      fill=\l_dhkgraph_bg_tl,thick,
+      shape=\l_dhkgraph_shape_tl,
+      rounded~corners=2.7mm,align=center,
+      text~width=\l_dhkgraph_width_tl,
+      font=\small,inner~xsep=3mm,inner~ysep=3mm]
+      (\l_dhkgraph_tmp_tl)
+      at (\l_dhkgraph_x_dim,\l_dhkgraph_y_dim)
+      {\bool_if:NTF \l_dhkgraph_uniform_bool
+        {\exp_args:NV \dhkgraph_show_uniform_text:n \l_dhkgraph_label_tl}
+        {\exp_args:NV \dhkgraph_show_text:n \l_dhkgraph_label_tl}};
+    \bool_if:NT \l_dhkgraph_measuring_bool
+     {
+      \pgfextractx{\l_tmpa_dim}
+        {\pgfpointanchor{\l_dhkgraph_tmp_tl}{east}}
+      \pgfextractx{\l_tmpb_dim}
+        {\pgfpointanchor{\l_dhkgraph_tmp_tl}{west}}
+      \dim_set:Nn \l_dhkgraph_measured_w_dim
+        {\l_tmpa_dim - \l_tmpb_dim}
+      \pgfextracty{\l_tmpa_dim}
+        {\pgfpointanchor{\l_dhkgraph_tmp_tl}{north}}
+      \pgfextracty{\l_tmpb_dim}
+        {\pgfpointanchor{\l_dhkgraph_tmp_tl}{south}}
+      \dim_set:Nn \l_dhkgraph_measured_h_dim
+        {\l_tmpa_dim - \l_tmpb_dim}
+      \prop_if_in:NVT \l_dhkgraph_group_members_prop
+           \l_dhkgraph_id_tl
+       {\dim_add:Nn \l_dhkgraph_measured_w_dim {14mm}
+        \dim_add:Nn \l_dhkgraph_measured_h_dim {25mm}}
+      % Nested frames need clearance beyond the original one-level group.
+     \prop_get:NVNT \l_dhkgraph_node_depth_prop
+      \l_dhkgraph_id_tl \l_tmpc_tl
+      {
+       \int_compare:nNnT {\l_tmpc_tl} > {1}
+        {
+         \prg_replicate:nn {\int_eval:n {\l_tmpc_tl - 1}}
+          {
+           \dim_add:Nn \l_dhkgraph_measured_w_dim {14mm}
+           \dim_add:Nn \l_dhkgraph_measured_h_dim {25mm}
+          }
+        }
+      }
+
+      % Only labeled boxes allocate extra width; v5 unlabeled layout unchanged.
+      \prop_if_in:NVT \l_dhkgraph_node_markers_prop \l_dhkgraph_id_tl
+        {\dim_add:Nn \l_dhkgraph_measured_w_dim {16mm}}
+      \prop_if_in:NVT \l_dhkgraph_group_marker_members_prop \l_dhkgraph_id_tl
+        {\dim_add:Nn \l_dhkgraph_measured_w_dim {16mm}}
+      \prop_get:NVN \l_dhkgraph_cols_prop \l_dhkgraph_id_tl \l_tmpc_tl
+      \exp_args:NNV \dhkgraph_update_max:Nnn
+        \l_dhkgraph_col_width_prop \l_tmpc_tl
+        {\l_dhkgraph_measured_w_dim}
+      \prop_get:NVN \l_dhkgraph_rows_prop \l_dhkgraph_id_tl \l_tmpc_tl
+      \exp_args:NNV \dhkgraph_update_max:Nnn
+        \l_dhkgraph_row_height_prop \l_tmpc_tl
+        {\l_dhkgraph_measured_h_dim}
+     }
+   }
+   {\PackageWarning{mynotes}{dhkgraph~bad~node~declaration}}
+ }
+\cs_new_protected:Npn \dhkgraph_draw_group:n #1
+ {
+  \regex_extract_once:nnNTF {\A (.*?) \s* :: \s* (.*) \Z}
+    {#1} \l_dhkgraph_matches_seq
+   {\tl_set:Nx \l_dhkgraph_line_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_set:Nx \l_dhkgraph_label_tl {\seq_item:Nn \l_dhkgraph_matches_seq {3}}}
+   {\tl_set:Nn \l_dhkgraph_line_tl {#1} \tl_clear:N \l_dhkgraph_label_tl}
+  \tl_trim_spaces:N \l_dhkgraph_line_tl
+  \tl_trim_spaces:N \l_dhkgraph_label_tl
+  \dhkgraph_extract_marker:
+  \regex_extract_once:nVNTF
+   {\A group\s+([A-Za-z_][A-Za-z_0-9-]*)\s*\(([^)]*)\)\s*(?:\[(.*)\])?\s*\Z}
+    \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+   {
+    \tl_set:Nx \l_dhkgraph_id_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_if_blank:VF \l_dhkgraph_marker_tl
+      {\prop_put:NVV \l_dhkgraph_group_markers_prop
+        \l_dhkgraph_id_tl \l_dhkgraph_marker_tl}
+    \tl_set:Nx \l_dhkgraph_tmp_tl {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+    \exp_args:Ne \dhkgraph_style:n {\seq_item:Nn \l_dhkgraph_matches_seq {4}}
+    \seq_set_split:NnV \l_dhkgraph_members_seq {,} \l_dhkgraph_tmp_tl
+    \tl_clear:N \l_dhkgraph_fit_tl
+   \tl_set_eq:NN \l_dhkgraph_group_bg_tl \l_dhkgraph_bg_tl
+    \seq_map_inline:Nn \l_dhkgraph_members_seq
+     {\tl_set:Nn \l_tmpa_tl {##1}
+      \tl_trim_spaces:N \l_tmpa_tl
+     \prop_if_in:NVT \l_dhkgraph_nested_members_prop \l_tmpa_tl
+       {\tl_set:Nn \l_dhkgraph_group_bg_tl {none}}
+      \tl_put_right:Nx \l_dhkgraph_fit_tl
+        {(dhkg-\l_tmpa_tl)}}
+    \begin{scope}[on~background~layer]
+    \node[\l_dhkgraph_measure_style_tl,draw=\l_dhkgraph_frame_tl,fill=\l_dhkgraph_group_bg_tl,
+      thick,rounded~corners=3mm,
+      fit=\l_dhkgraph_fit_tl,inner~xsep=6mm,inner~ysep=12mm]
+      (dhkg-\l_dhkgraph_id_tl) {};
+    \end{scope}
+    \node[anchor=north,align=center,font=\bfseries\small,
+       inner~sep=0pt,yshift=-2.5mm]
+      at (dhkg-\l_dhkgraph_id_tl.north)
+      {\exp_args:NV \dhkgraph_show_text:n \l_dhkgraph_label_tl};
+   }
+   {\PackageWarning{mynotes}{dhkgraph~bad~group~declaration}}
+ }
+% ---- v5: optional connector labels, without changing existing paths ----
+\cs_generate_variant:Nn \regex_split:nnN {nVN}
+\tl_new:N \l_dhkgraph_edge_source_tl
+\tl_new:N \l_dhkgraph_edge_target_tl
+\tl_new:N \l_dhkgraph_conn_label_tl
+\tl_new:N \l_dhkgraph_common_label_tl
+\tl_new:N \l_dhkgraph_clean_tl
+\tl_new:N \l_dhkgraph_side_tl
+\tl_new:N \l_dhkgraph_target_tl
+\seq_new:N \l_dhkgraph_targets_seq
+\seq_new:N \l_dhkgraph_labels_seq
+\seq_new:N \l_dhkgraph_segments_seq
+\bool_new:N \l_dhkgraph_any_branch_label_bool
+
+% Tiny white-backed label; appended after lines. Node/edge coordinates are unchanged,
+% and the label is included in the picture width for adjustbox scaling.
+\cs_new_protected:Npn \dhkgraph_path_label:n #1
+ {
+  \tl_if_blank:VF \l_dhkgraph_conn_label_tl
+   {
+    node[midway,#1,font=\scriptsize,text=black!70,
+         fill=white,inner~sep=.7mm,outer~sep=0pt]
+      {\exp_args:NV \dhkgraph_show_text:n \l_dhkgraph_conn_label_tl}
+   }
+ }
+
+% Label an edge along the same anchors as the existing edge function.
+% Vertical: right of line; horizontal: above line; diagonal: right.
+\cs_new_protected:Npn \dhkgraph_label_edge:nn #1#2
+ {
+  \tl_if_blank:VF \l_dhkgraph_conn_label_tl
+   {
+    \prop_get:NnNTF \l_dhkgraph_rows_prop {#1} \l_tmpa_tl
+     {
+      \prop_get:NnNTF \l_dhkgraph_rows_prop {#2} \l_tmpb_tl
+       {
+        \prop_get:NnN \l_dhkgraph_cols_prop {#1} \l_dhkgraph_a_tl
+        \prop_get:NnN \l_dhkgraph_cols_prop {#2} \l_dhkgraph_b_tl
+        \int_compare:nNnTF {\l_tmpa_tl} = {\l_tmpb_tl}
+         {
+          \int_compare:nNnTF {\l_dhkgraph_a_tl} < {\l_dhkgraph_b_tl}
+           {\path (dhkg-#1.east) -- (dhkg-#2.west)
+                \dhkgraph_path_label:n {above=1mm};}
+           {\path (dhkg-#1.west) -- (dhkg-#2.east)
+                \dhkgraph_path_label:n {above=1mm};}
+         }
+         {
+          \int_compare:nNnTF {\l_dhkgraph_a_tl} = {\l_dhkgraph_b_tl}
+           {
+            \int_compare:nNnTF {\l_tmpa_tl} < {\l_tmpb_tl}
+             {\path (dhkg-#1.south)--(dhkg-#2.north)
+                \dhkgraph_path_label:n {right=1.5mm};}
+             {\path (dhkg-#1.north)--(dhkg-#2.south)
+                \dhkgraph_path_label:n {right=1.5mm};}
+           }
+           {\path (dhkg-#1)--(dhkg-#2)
+                \dhkgraph_path_label:n {right=1.5mm};}
+         }
+       }
+       {\path (dhkg-#1)--(dhkg-#2)
+          \dhkgraph_path_label:n {right=1.5mm};}
+     }
+     {\path (dhkg-#1)--(dhkg-#2)
+        \dhkgraph_path_label:n {right=1.5mm};}
+   }
+ }
+
+% Parse an individual split/merge member, e.g. a :: 설명.
+% Store the target and label in parallel sequences.
+\cs_new_protected:Npn \dhkgraph_parse_member:n #1
+ {
+  \regex_split:nnN {::} {#1} \l_dhkgraph_segments_seq
+  \tl_set:Nx \l_dhkgraph_target_tl
+   {\seq_item:Nn \l_dhkgraph_segments_seq {1}}
+  \tl_trim_spaces:N \l_dhkgraph_target_tl
+  \tl_clear:N \l_dhkgraph_conn_label_tl
+  \int_compare:nNnT {\seq_count:N \l_dhkgraph_segments_seq} > {1}
+   {
+    \tl_set:Nx \l_dhkgraph_conn_label_tl
+     {\seq_item:Nn \l_dhkgraph_segments_seq {2}}
+    \tl_trim_spaces:N \l_dhkgraph_conn_label_tl
+    \bool_set_true:N \l_dhkgraph_any_branch_label_bool
+   }
+  \seq_put_right:NV \l_dhkgraph_targets_seq \l_dhkgraph_target_tl
+  \seq_put_right:NV \l_dhkgraph_labels_seq \l_dhkgraph_conn_label_tl
+ }
+
+% Draw labels on existing split/merge vertical legs; labels never move
+% or redraw the original rail. For 3+ branches, leftmost label goes left.
+\cs_new_protected:Npn \dhkgraph_label_rail_members:n #1
+ {
+  \int_step_inline:nn {\seq_count:N \l_dhkgraph_targets_seq}
+   {
+    \tl_set:Nx \l_dhkgraph_target_tl
+     {\seq_item:Nn \l_dhkgraph_targets_seq {##1}}
+    \tl_set:Nx \l_dhkgraph_conn_label_tl
+     {\seq_item:Nn \l_dhkgraph_labels_seq {##1}}
+    \tl_set:Nn \l_dhkgraph_side_tl {right=1.5mm}
+    \int_compare:nNnT {\seq_count:N \l_dhkgraph_targets_seq} > {2}
+     {
+      \int_compare:nNnT {##1} = {1}
+       {\tl_set:Nn \l_dhkgraph_side_tl {left=1.5mm}}
+     }
+    \str_if_eq:nnTF {#1} {split}
+     {
+      \path (dhkg-\l_dhkgraph_target_tl.north |- dhkg-rail-\int_use:N\l_dhkgraph_conn_int)
+          -- (dhkg-\l_dhkgraph_target_tl.north)
+          \exp_args:NV \dhkgraph_path_label:n \l_dhkgraph_side_tl ;
+     }
+     {
+      \path (dhkg-\l_dhkgraph_target_tl.south)
+          -- (dhkg-\l_dhkgraph_target_tl.south |- dhkg-rail-\int_use:N\l_dhkgraph_conn_int)
+          \exp_args:NV \dhkgraph_path_label:n \l_dhkgraph_side_tl ;
+     }
+   }
+ }
+
+% `split root -> a,b,c :: 공통` puts one label on the stem.
+% `split root -> a :: A,b :: B,c :: C` labels each branch.
+% Merge has symmetrical syntax.
+\cs_new_protected:Npn \dhkgraph_labeled_shared:n #1
+ {
+  \seq_clear:N \l_dhkgraph_targets_seq
+  \seq_clear:N \l_dhkgraph_labels_seq
+  \bool_set_false:N \l_dhkgraph_any_branch_label_bool
+  \tl_clear:N \l_dhkgraph_common_label_tl
+  \regex_match:nnTF {\A\s*split\s+} {#1}
+   {
+    \regex_extract_once:nnNTF
+     {\A\s*split\s+([A-Za-z_][A-Za-z_0-9-]*)\s*->\s*(.+)\Z}
+     {#1} \l_dhkgraph_matches_seq
+     {
+      \tl_set:Nx \l_dhkgraph_id_tl
+       {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+      \tl_set:Nx \l_dhkgraph_tmp_tl
+       {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+      \seq_set_split:NnV \l_dhkgraph_members_seq {,} \l_dhkgraph_tmp_tl
+      \seq_map_inline:Nn \l_dhkgraph_members_seq
+       {\dhkgraph_parse_member:n {##1}}
+      % Last-only label with multiple branches is the common-stem label.
+      \int_compare:nNnT {\seq_count:N \l_dhkgraph_targets_seq} > {1}
+       {
+        \bool_set_false:N \l_tmpa_bool
+        \int_step_inline:nn
+         {\int_eval:n {\seq_count:N \l_dhkgraph_targets_seq - 1}}
+         {
+          \tl_set:Nx \l_tmpa_tl
+           {\seq_item:Nn \l_dhkgraph_labels_seq {##1}}
+          \tl_if_blank:VF \l_tmpa_tl {\bool_set_true:N \l_tmpa_bool}
+         }
+        \bool_if:NF \l_tmpa_bool
+         {
+          \tl_set:Nx \l_dhkgraph_common_label_tl
+           {\seq_item:Nn \l_dhkgraph_labels_seq {-1}}
+          \seq_pop_right:NN \l_dhkgraph_labels_seq \l_tmpa_tl
+          \seq_put_right:Nn \l_dhkgraph_labels_seq {}
+         }
+       }
+      \tl_set:Nx \l_dhkgraph_line_tl
+       {split~\l_dhkgraph_id_tl~->~\seq_use:Nn \l_dhkgraph_targets_seq {,~}}
+      \dhkgraph_shared_rail:n {split}
+      \dhkgraph_label_rail_members:n {split}
+      \tl_set_eq:NN \l_dhkgraph_conn_label_tl \l_dhkgraph_common_label_tl
+      \path (dhkg-\l_dhkgraph_id_tl.south)
+        -- (dhkg-\l_dhkgraph_id_tl.south |- dhkg-rail-\int_use:N\l_dhkgraph_conn_int)
+        \dhkgraph_path_label:n {right=1.5mm};
+     }
+     {\PackageWarning{mynotes}{dhkgraph~bad~labeled~split}}
+   }
+   {
+    \seq_set_split:Nnn \l_dhkgraph_parts_seq {->} {#1}
+    \int_compare:nNnTF {\seq_count:N \l_dhkgraph_parts_seq} = {2}
+     {
+      \tl_set:Nx \l_dhkgraph_tmp_tl
+       {\seq_item:Nn \l_dhkgraph_parts_seq {1}}
+      \regex_replace_once:nnN {\A\s*merge\s+} {} \l_dhkgraph_tmp_tl
+      \seq_set_split:NnV \l_dhkgraph_members_seq {,} \l_dhkgraph_tmp_tl
+      \seq_map_inline:Nn \l_dhkgraph_members_seq
+       {\dhkgraph_parse_member:n {##1}}
+      \tl_set:Nx \l_dhkgraph_tmp_tl
+       {\seq_item:Nn \l_dhkgraph_parts_seq {2}}
+      \regex_split:nVN {::} \l_dhkgraph_tmp_tl \l_dhkgraph_segments_seq
+      \tl_set:Nx \l_dhkgraph_id_tl
+       {\seq_item:Nn \l_dhkgraph_segments_seq {1}}
+      \tl_trim_spaces:N \l_dhkgraph_id_tl
+      \int_compare:nNnT {\seq_count:N \l_dhkgraph_segments_seq} > {1}
+       {
+        \tl_set:Nx \l_dhkgraph_common_label_tl
+         {\seq_item:Nn \l_dhkgraph_segments_seq {2}}
+        \tl_trim_spaces:N \l_dhkgraph_common_label_tl
+       }
+      \tl_set:Nx \l_dhkgraph_line_tl
+       {merge~\seq_use:Nn \l_dhkgraph_targets_seq {,~}~->~\l_dhkgraph_id_tl}
+      \dhkgraph_shared_rail:n {merge}
+      \dhkgraph_label_rail_members:n {merge}
+      \tl_set_eq:NN \l_dhkgraph_conn_label_tl \l_dhkgraph_common_label_tl
+      \path (dhkg-\l_dhkgraph_id_tl.north |- dhkg-rail-\int_use:N\l_dhkgraph_conn_int)
+        -- (dhkg-\l_dhkgraph_id_tl.north)
+        \dhkgraph_path_label:n {right=1.5mm};
+     }
+     {\PackageWarning{mynotes}{dhkgraph~bad~labeled~merge}}
+   }
+ }
+
+\cs_new_protected:Npn \dhkgraph_draw_edge:nnn #1#2#3
+ {
+  \prop_get:NnNTF \l_dhkgraph_rows_prop {#1} \l_tmpa_tl
+   {\prop_get:NnNTF \l_dhkgraph_rows_prop {#3} \l_tmpb_tl
+    {\prop_get:NnN \l_dhkgraph_cols_prop {#1} \l_dhkgraph_a_tl
+     \prop_get:NnN \l_dhkgraph_cols_prop {#3} \l_dhkgraph_b_tl
+     \int_compare:nNnTF {\l_tmpa_tl} = {\l_tmpb_tl}
+       {\int_compare:nNnTF {\l_dhkgraph_a_tl} < {\l_dhkgraph_b_tl}
+        {\draw[#2] (dhkg-#1.east)--(dhkg-#3.west);}
+        {\draw[#2] (dhkg-#1.west)--(dhkg-#3.east);}}
+       {\int_compare:nNnTF {\l_dhkgraph_a_tl} = {\l_dhkgraph_b_tl}
+        {\int_compare:nNnTF {\l_tmpa_tl} < {\l_tmpb_tl}
+         {\draw[#2] (dhkg-#1.south)--(dhkg-#3.north);}
+         {\draw[#2] (dhkg-#1.north)--(dhkg-#3.south);}}
+        {\draw[#2] (dhkg-#1)--(dhkg-#3);}}}
+    {\draw[#2] (dhkg-#1)--(dhkg-#3);}}
+   {\draw[#2] (dhkg-#1)--(dhkg-#3);}
+ }
+\cs_new_protected:Npn \dhkgraph_draw_connector:n #1
+ {
+  \regex_split:nnN {::} {#1} \l_dhkgraph_parts_seq
+  \tl_set:Nx \l_dhkgraph_line_tl {\seq_item:Nn \l_dhkgraph_parts_seq {1}}
+  \tl_trim_spaces:N \l_dhkgraph_line_tl
+  \tl_clear:N \l_dhkgraph_conn_label_tl
+  \int_compare:nNnT {\seq_count:N \l_dhkgraph_parts_seq} > {1}
+   {
+    \tl_set:Nx \l_dhkgraph_conn_label_tl
+     {\seq_item:Nn \l_dhkgraph_parts_seq {2}}
+    \tl_trim_spaces:N \l_dhkgraph_conn_label_tl
+   }
+  \regex_extract_once:nVNTF
+   {\A edge\s+([A-Za-z_][A-Za-z_0-9-]*)\s*(<->|->|<-|--)\s*([A-Za-z_][A-Za-z_0-9-]*)\Z}
+   \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+   {
+    \tl_set:Nx \l_dhkgraph_a_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_set:Nx \l_dhkgraph_direction_tl {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+    \tl_set:Nx \l_dhkgraph_b_tl {\seq_item:Nn \l_dhkgraph_matches_seq {4}}
+    \tl_set:Nx \l_dhkgraph_edge_source_tl {\l_dhkgraph_a_tl}
+    \tl_set:Nx \l_dhkgraph_edge_target_tl {\l_dhkgraph_b_tl}
+    \str_case:VnF \l_dhkgraph_direction_tl
+     {
+      {->} {\exp_args:NVV \dhkgraph_forward:nn \l_dhkgraph_a_tl \l_dhkgraph_b_tl}
+      {<-} {\exp_args:NVV \dhkgraph_forward:nn \l_dhkgraph_b_tl \l_dhkgraph_a_tl}
+      {<->} {\exp_args:NVV \dhkgraph_both:nn \l_dhkgraph_a_tl \l_dhkgraph_b_tl}
+      {--} {\exp_args:NVV \dhkgraph_plain:nn \l_dhkgraph_a_tl \l_dhkgraph_b_tl}
+     }{}
+    \exp_args:NVV \dhkgraph_label_edge:nn \l_dhkgraph_edge_source_tl \l_dhkgraph_edge_target_tl
+   }
+   {
+    \regex_match:nVTF {\A (split|merge)\s+} \l_dhkgraph_line_tl
+     {\dhkgraph_labeled_shared:n {#1}}
+     {\PackageWarning{mynotes}{dhkgraph~bad~connector~declaration}}
+   }
+ }
+
+\cs_new_protected:Npn \dhkgraph_forward:nn #1#2
+ {\dhkgraph_draw_edge:nnn {#1} {line~width=.7pt,-{Stealth[length=2.3mm]}} {#2}}
+\cs_new_protected:Npn \dhkgraph_plain:nn #1#2
+ {\dhkgraph_draw_edge:nnn {#1} {line~width=.7pt} {#2}}
+\cs_new_protected:Npn \dhkgraph_both:nn #1#2
+ {\dhkgraph_draw_edge:nnn {#1} {line~width=.7pt,{Stealth[length=2.3mm]}-{Stealth[length=2.3mm]}} {#2}}
+% Shared spine split/merge.  Children should be on a common row.
+\cs_new_protected:Npn \dhkgraph_shared_rail:n #1
+ {
+  \regex_extract_once:nVNTF
+   {\A split\s+([A-Za-z_][A-Za-z_0-9-]*)\s*->\s*(.+)\Z}
+    \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+   {\tl_set:Nx \l_dhkgraph_id_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_set:Nx \l_dhkgraph_tmp_tl {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+    \tl_set:Nn \l_dhkgraph_direction_tl {split}}
+   {
+    \regex_extract_once:nVNTF
+     {\A merge\s+(.+)\s+->\s*([A-Za-z_][A-Za-z_0-9-]*)\Z}
+      \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+     {\tl_set:Nx \l_dhkgraph_tmp_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+      \tl_set:Nx \l_dhkgraph_id_tl {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+      \tl_set:Nn \l_dhkgraph_direction_tl {merge}}
+     {\tl_clear:N \l_dhkgraph_tmp_tl}
+   }
+  \seq_set_split:NnV \l_dhkgraph_members_seq {,} \l_dhkgraph_tmp_tl
+  \int_incr:N \l_dhkgraph_conn_int
+  \tl_set:Nx \l_dhkgraph_a_tl {\seq_item:Nn \l_dhkgraph_members_seq {1}}
+  \tl_trim_spaces:N \l_dhkgraph_a_tl
+  \str_if_eq:VnTF \l_dhkgraph_direction_tl {split}
+   {\coordinate (dhkg-rail-\int_use:N \l_dhkgraph_conn_int)
+       at ($(dhkg-\l_dhkgraph_id_tl.south)!0.5!(dhkg-\l_dhkgraph_a_tl.north)$);
+    \draw[line~width=.7pt]
+     (dhkg-\l_dhkgraph_id_tl.south)--
+     (dhkg-\l_dhkgraph_id_tl.south |- dhkg-rail-\int_use:N \l_dhkgraph_conn_int);
+    \seq_map_inline:Nn \l_dhkgraph_members_seq
+     {\tl_set:Nn \l_tmpa_tl {##1}\tl_trim_spaces:N \l_tmpa_tl
+      \draw[line~width=.7pt,-{Stealth[length=2.3mm]}]
+       (dhkg-\l_tmpa_tl.north |- dhkg-rail-\int_use:N \l_dhkgraph_conn_int)--
+       (dhkg-\l_tmpa_tl.north);}
+   }
+   {\coordinate (dhkg-rail-\int_use:N \l_dhkgraph_conn_int)
+       at ($(dhkg-\l_dhkgraph_a_tl.south)!0.5!(dhkg-\l_dhkgraph_id_tl.north)$);
+    \seq_map_inline:Nn \l_dhkgraph_members_seq
+     {\tl_set:Nn \l_tmpa_tl {##1}\tl_trim_spaces:N \l_tmpa_tl
+      \draw[line~width=.7pt]
+       (dhkg-\l_tmpa_tl.south)--
+       (dhkg-\l_tmpa_tl.south |- dhkg-rail-\int_use:N \l_dhkgraph_conn_int);}
+    \draw[line~width=.7pt,-{Stealth[length=2.3mm]}]
+      (dhkg-\l_dhkgraph_id_tl.north |- dhkg-rail-\int_use:N \l_dhkgraph_conn_int)--
+      (dhkg-\l_dhkgraph_id_tl.north);
+   }
+  % rail from first to last node, assuming nodes ordered left-to-right
+  \tl_set:Nx \l_dhkgraph_b_tl {\seq_item:Nn \l_dhkgraph_members_seq {-1}}
+  \tl_trim_spaces:N \l_dhkgraph_b_tl
+  \draw[line~width=.7pt]
+    (dhkg-\l_dhkgraph_a_tl.center |- dhkg-rail-\int_use:N \l_dhkgraph_conn_int)--
+    (dhkg-\l_dhkgraph_b_tl.center |- dhkg-rail-\int_use:N \l_dhkgraph_conn_int);
+ }
+% v7: Draw a group only when all of its direct members have been
+% drawn. This is a stable topological pass: unrelated groups retain order;
+% an outer group may be declared before its inner group.
+\cs_new_protected:Npn \dhkgraph_try_nested_group:n #1
+ {
+  \tl_set:Nn \l_dhkgraph_line_tl {#1}
+  \dhkgraph_extract_marker:
+  \regex_extract_once:nVNTF
+   {\A group\s+([A-Za-z_][A-Za-z_0-9-]*)\s*\(([^)]*)\)}
+   \l_dhkgraph_line_tl \l_dhkgraph_matches_seq
+   {
+    \tl_set:Nx \l_dhkgraph_nested_id_tl
+     {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+    \tl_set:Nx \l_dhkgraph_nested_members_tl
+     {\seq_item:Nn \l_dhkgraph_matches_seq {3}}
+    \bool_set_true:N \l_dhkgraph_group_ready_bool
+    \tl_if_blank:VT \l_dhkgraph_nested_members_tl
+      {\bool_set_false:N \l_dhkgraph_group_ready_bool}
+    \prop_if_in:NVT \l_dhkgraph_rendered_ids_prop
+      \l_dhkgraph_nested_id_tl
+      {\bool_set_false:N \l_dhkgraph_group_ready_bool}
+    \seq_set_split:NnV \l_dhkgraph_members_seq {,}
+      \l_dhkgraph_nested_members_tl
+    \seq_map_inline:Nn \l_dhkgraph_members_seq
+     {
+      \tl_set:Nn \l_tmpa_tl {##1}
+      \tl_trim_spaces:N \l_tmpa_tl
+      \prop_if_in:NVF \l_dhkgraph_rendered_ids_prop \l_tmpa_tl
+       {\bool_set_false:N \l_dhkgraph_group_ready_bool}
+     }
+    \bool_if:NTF \l_dhkgraph_group_ready_bool
+     {
+      \dhkgraph_draw_group:n {#1}
+      \prop_put:NVn \l_dhkgraph_rendered_ids_prop
+        \l_dhkgraph_nested_id_tl {1}
+     }
+     {\seq_put_right:Nn \l_dhkgraph_next_groups_seq {#1}}
+   }
+   {\PackageWarning{mynotes}{dhkgraph~bad~group~declaration}}
+ }
+\cs_new_protected:Npn \dhkgraph_render_nested_groups:
+ {
+  \prop_clear:N \l_dhkgraph_rendered_ids_prop
+  \seq_map_inline:Nn \l_dhkgraph_nodes_seq
+   {
+    \regex_extract_once:nnNT
+     {\A node\s+([A-Za-z_][A-Za-z_0-9-]*)\s*\(}
+     {##1} \l_dhkgraph_matches_seq
+     {
+      \tl_set:Nx \l_tmpa_tl {\seq_item:Nn \l_dhkgraph_matches_seq {2}}
+      \prop_put:NVn \l_dhkgraph_rendered_ids_prop \l_tmpa_tl {1}
+     }
+   }
+  \seq_set_eq:NN \l_dhkgraph_pending_groups_seq \l_dhkgraph_groups_seq
+  \int_step_inline:nn {\seq_count:N \l_dhkgraph_groups_seq}
+   {
+    \seq_clear:N \l_dhkgraph_next_groups_seq
+    \seq_map_inline:Nn \l_dhkgraph_pending_groups_seq
+      {\dhkgraph_try_nested_group:n {####1}}
+    \seq_set_eq:NN \l_dhkgraph_pending_groups_seq
+       \l_dhkgraph_next_groups_seq
+   }
+  \seq_map_inline:Nn \l_dhkgraph_pending_groups_seq
+   {
+    \PackageWarning{mynotes}
+      {dhkgraph~unresolved~group:~missing~member,~duplicate~ID~or~cycle}
+   }
+ }
+
+\cs_new_protected:Npn \dhkgraph_render:
+ {
+  \group_begin:
+  \dhkgraph_prepare:
+  \ior_open:Nn \g_dhkgraph_ior {\jobname-dhkgraph.tmp}
+  \ior_str_map_inline:Nn \g_dhkgraph_ior {\dhkgraph_read_line:n {##1}}
+  \ior_close:N \g_dhkgraph_ior
+  \par\addvspace{2mm}
+  \noindent\hspace*{\l_dhkgraph_indent_dim}%
+  \begin{minipage}{\dim_eval:n{\linewidth-\l_dhkgraph_indent_dim}}
+  \begin{tcolorbox}[width=\linewidth,
+    colback=white,colframe=black!24,boxrule=.55pt,arc=3mm,
+    left=3mm,right=3mm,top=4mm,bottom=3mm,
+    before~skip=1mm,after~skip=2mm]
+   \centering
+   \begin{adjustbox}{max~width=\dim_eval:n{\linewidth-1mm}}
+    \begin{tikzpicture}[>=Stealth,baseline=(current~bounding~box.center)]
+     \dhkgraph_scan_groups:
+     \bool_if:NT \l_dhkgraph_uniform_bool
+       {\dhkgraph_scan_uniform_width:}
+     \bool_set_true:N \l_dhkgraph_measuring_bool
+     \seq_map_inline:Nn \l_dhkgraph_nodes_seq {\dhkgraph_draw_node:n {##1}}
+     \bool_set_false:N \l_dhkgraph_measuring_bool
+     \dhkgraph_build_grid:
+     \seq_map_inline:Nn \l_dhkgraph_nodes_seq {\dhkgraph_draw_node:n {##1}}
+     \dhkgraph_render_nested_groups:
+     \seq_map_inline:Nn \l_dhkgraph_edges_seq {\dhkgraph_draw_connector:n {##1}}
+     % v6: draw markers last. Their white backing keeps crossing edges
+     % from running through the numbering. Only marked boxes are affected.
+     \prop_map_inline:Nn \l_dhkgraph_node_markers_prop
+        {\dhkgraph_draw_marker:nn {##1} {##2}}
+     \prop_map_inline:Nn \l_dhkgraph_group_markers_prop
+        {\dhkgraph_draw_marker:nn {##1} {##2}}
+    \end{tikzpicture}
+   \end{adjustbox}
+   % v6: explanation is visually separate from the muted caption.
+   \bool_if:NT \l_dhkgraph_explain_bool
+    {\par\vspace{4mm}
+     {\centering\small\bfseries
+       \exp_args:NV \dhkgraph_show_text:n \l_dhkgraph_explain_tl\par}}
+   \bool_if:NT \l_dhkgraph_caption_bool
+    {\par\vspace{2mm}
+     {\raggedright\color{black!60}\footnotesize
+          \exp_args:NV \dhkgraph_show_text:n \l_dhkgraph_caption_tl\par}}
+  \end{tcolorbox}
+  \end{minipage}
+  \par\addvspace{2mm}
+  \group_end:
+ }
+\cs_new_eq:NN \dhkgraphrender \dhkgraph_render:
+\ExplSyntaxOff
+\newenvironment{dhkgraph}[1][]{%
+  \VerbatimEnvironment
+  \dhkgraphsetoption{#1}%
+  \dhkvisualverbatimstart%
+  \begin{VerbatimOut}{\jobname-dhkgraph.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhkgraphrender%
+}
+
+
+% END OF mynotes.sty

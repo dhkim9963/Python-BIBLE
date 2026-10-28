@@ -1,0 +1,11 @@
+/*
+!/.gitignore
+!/mynotes.sty
+!/pyproject.toml
+!/template.tex
+!/vscode_pygments.py
+!/.vscode/
+
+.DS_Store
+__pycache__/
+*.pyc

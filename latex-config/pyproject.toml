@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vscode-minted-theme"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = ["Pygments>=2.16"]
+
+[project.entry-points."pygments.lexers"]
+vscodepython = "vscode_pygments:VSCodePythonLexer"
+
+[project.entry-points."pygments.styles"]
+vscode-notes = "vscode_pygments:VSCodeNotesStyle"
+
+[tool.setuptools]
+py-modules = ["vscode_pygments"]
