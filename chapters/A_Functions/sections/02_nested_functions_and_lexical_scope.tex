@@ -1,0 +1,995 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.2. 중첩 함수와 Lexical Scope
+% ==================================================
+
+\subsection{중첩 함수와 Lexical Scope}
+
+Nested Functions · Lexical Scoping · Function Definition, Execution
+
+\subsubsection{이전 내용과의 연결}
+
+\zsh{A.1}에서는 Python의 함수가 단순한 코드 블록이 아니라
+
+\zsh{실제로 생성되고 참조되는 함수 객체(Function Object)}라는 사실을 학습했다.
+
+특히 다음 네 가지를 구분하였다.
+
+\begin{dhksmry}
+    1. def 문장의 실행은 함수 객체를 생성하고 이름을 바인딩한다.
+
+    2. func은 함수 객체를 참조하지만, func()은 그 객체를 호출한다.
+
+    3. 함수 객체는 다른 함수의 인수로 전달하거나 반환할 수 있다.
+
+    4. 함수 호출 시 인수 객체가 매개변수에 바인딩되며, 
+    
+       return은 호출 결과를 반환한다.
+\end{dhksmry}
+
+이번에는 이 원리들을 함수 내부에서 또 다른 함수를 정의하는 경우로 확장할 것이다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    return inner
+
+f = outer()
+
+print(f())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+10
+\end{dhkzsh}
+
+여기에는 중요한 질문이 숨어 있다.
+
+\zsh{outer()}의 호출은 이미 끝났는데, 왜 나중에 호출한 \zsh{inner()}는 \zsh{outer()} 내부에서 정의한 \zsh{x}에 접근할 수 있을까?
+
+이 현상을 설명하려면 다음 개념을 구분해야 한다.
+
+\begin{dhksmry}
+    - 함수가 어디에서 정의되었는가?
+
+    - 함수 객체는 언제 생성되는가?
+
+    - 함수 본문은 언제 실행되는가?
+
+    - 함수 내부의 이름은 어떤 스코프를 기준으로 탐색되는가?
+
+    - 외부 함수의 실행이 종료되면 그 지역 변수의 바인딩은 어떻게 되는가?
+\end{dhksmry}
+
+마지막 질문은 \zsh{A.4}의 클로저와 직접 연결된다.
+
+이번 \zsh{A.2}에서는 그에 앞서 중첩 함수의 정의 구조와 Lexical Scope의 원리를 확립할 것이다.
+
+\subsubsection{중첩 함수(Nested Function)의 정의}
+
+중첩 함수란 다른 함수의 본문 내부에서 정의되는 함수를 말한다.
+
+가장 기본적인 구조는 다음과 같다.
+
+\begin{dhkcode}
+def outer():
+
+    def inner():
+        return "Hello"
+
+    return inner()
+\end{dhkcode}
+
+여기서 \zsh{outer}는 외부 함수(Outer Function), \zsh{inner}는 내부 함수(Inner Function)이다.
+
+하지만 이 용어가 두 함수 사이에 특별한 상속 관계가 있다는 의미는 아니다.
+
+\zsh{outer}와 \zsh{inner}는 각각 독립적인 함수 객체로 생성될 수 있다.
+
+두 함수 사이의 중요한 관계는 정의된 위치에 따른 렉시컬 스코프의 중첩이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+중첩 함수의 기본 구조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdir}[in=6]
+모듈 스코프(Module Scope)
+> outer 함수 정의
+>> outer 함수의 본문
+>>> 지역 변수 x
+>>> inner 함수 정의
+>>>> inner 함수의 본문
+\end{dhkdir}
+
+여기서 주의할 점이 있다.
+
+위 그림은 함수의 소스 코드상 정의 위치를 나타내는 것이지, 함수 객체가 모두 동시에 생성되어 있다는 뜻은 아니다.
+
+이 둘을 구별하는 것이 이번 단원의 첫 번째 핵심이다.
+
+\subsubsection{중첩 함수의 생성 시점}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    print("outer 실행 시작")
+
+    def inner():
+        print("inner 실행")
+        return 10
+
+    print("inner 정의 완료")
+
+    return inner
+
+print("모듈 코드 실행")
+
+f = outer()
+
+print("outer 호출 완료")
+
+result = f()
+
+print(result)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+모듈 코드 실행
+outer 실행 시작
+inner 정의 완료
+outer 호출 완료
+inner 실행
+10
+\end{dhkzsh}
+
+이 결과를 정확히 이해하려면 함수 객체 생성과 함수 본문 실행을 순서대로 추적해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. outer 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+Python이 다음 정의문을 실행한다.
+
+\begin{dhkcode}
+def outer():
+    ...
+\end{dhkcode}
+
+이때 \zsh{outer} 함수 객체가 생성되고 모듈 네임스페이스의 \zsh{outer}라는 이름에 바인딩된다.
+
+그러나 \zsh{outer} 본문은 실행되지 않는다.
+
+따라서 이 시점에는 \zsh{outer} 본문에 있는 \zsh{def inner} 문장도 실행되지 않았다.
+
+여기서 중요한 구분이 있다.
+
+Python은 소스 코드를 컴파일하는 과정에서 중첩 함수의 코드 객체를 준비할 수 있다.
+
+하지만 그것이 곧 실행 시점의 \zsh{inner} 함수 객체가 생성되었다는 의미는 아니다.
+
+코드 객체(Code Object)와 함수 객체(Function Object)는 서로 다른 객체다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. outer() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+f = outer()
+\end{dhkcode}
+
+이제 \zsh{outer} 함수 객체가 호출된다.
+
+일반적인 Python 함수 호출에서는 해당 호출을 위한 실행 프레임(Frame)이 생성되고, 매개변수와 지역 이름을 관리하는 실행 환경이 마련된다.
+
+이 프레임에서 다음 문장이 실행된다.
+
+\begin{dhkcode}
+print("outer 실행 시작")
+\end{dhkcode}
+
+첫 번째 함수 내부 출력이 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. inner 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+이어서 다음 정의문에 도달한다.
+
+\begin{dhkcode}
+def inner():
+    print("inner 실행")
+    return 10
+\end{dhkcode}
+
+이때 새로운 함수 객체가 생성된다.
+
+그리고 \zsh{outer()} 호출의 지역 스코프에서 \zsh{inner}라는 이름이 그 객체에 바인딩된다.
+
+그러나 \zsh{inner} 함수 본문은 아직 실행되지 않았다.
+
+즉, 현재 상태는 다음과 같다.
+
+\begin{dhkdir}[in=6]
+모듈 네임스페이스
+> outer -> outer 함수 객체
+\end{dhkdir}
+
+\begin{dhkdir}[in=6]
+outer() 실행 환경
+> inner -> inner 함수 객체
+\end{dhkdir}
+
+여기서 두 함수 객체는 서로 다른 객체다.
+
+\begin{dhkcode}
+type(outer)
+type(inner)
+\end{dhkcode}
+
+두 객체 모두 일반적인 사용자 정의 함수라면 타입은 \zsh{function}이지만, \zsh{inner}라는 지역 이름은 현재 \zsh{outer()} 실행 환경에서만 직접 접근할 수 있다.
+
+따라서 모듈 수준에서 곧바로 \zsh{inner}를 참조하려고 하면 
+
+일반적으로 \zsh{NameError}가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. inner 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+return inner
+\end{dhkcode}
+
+여기서 \zsh{inner()}가 아니라 \zsh{inner}를 반환한다는 점에 주목해야 한다.
+
+\zsh{inner}가 참조하는 함수 객체 자체를 반환하는 것이다.
+
+따라서 다음 문장의 실행이 완료되면
+
+\begin{dhkcode}
+f = outer()
+\end{dhkcode}
+
+모듈 네임스페이스의 \zsh{f}가 반환된 함수 객체를 참조하게 된다.
+
+\begin{dhkdir}[in=6]
+모듈 네임스페이스
+> outer -> outer 함수 객체
+> f -> inner 함수 객체
+\end{dhkdir}
+
+이후 \zsh{outer()} 호출은 종료된다.
+
+그러나 반환된 \zsh{inner} 함수 객체는 \zsh{f}가 참조하고 있으므로 계속 존재할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. 반환된 함수 객체 호출
+\end{dhksmry}
+\end{dhknote}
+
+마지막으로 다음 문장이 실행된다.
+
+\begin{dhkcode}
+result = f()
+\end{dhkcode}
+
+\zsh{f}는 \zsh{inner} 함수 객체를 참조하고 있다.
+
+따라서 \zsh{inner} 함수 본문이 실행되고 10을 반환한다.
+
+이 결과가 \zsh{result}에 바인딩되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+핵심 구분
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|사건|	발생 시점|
+|:---|:---|
+|outer 함수 객체 생성|	모듈에서 def outer 실행 시|
+|inner 함수 객체 생성|	outer() 실행 중 def inner에 도달할 때|
+|outer 함수 본문 실행|	outer() 호출 시|
+|inner 함수 본문 실행|	inner() 또는 f() 호출 시|
+|inner 함수 객체 반환|	outer()의 return inner 실행 시|
+\end{dhktable}
+
+여기까지가 중첩 함수의 기본 실행 구조다.
+
+\subsubsection{중첩 함수는 호출할 때마다 새로 생성되는가?}
+
+이제 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+
+    def inner():
+        return 10
+
+    return inner
+
+
+f1 = outer()
+f2 = outer()
+
+print(f1 is f2)
+
+print(f1.__code__ is f2.__code__)
+\end{dhkcode}
+
+일반적인 CPython 실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+왜 이런 차이가 발생할까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+함수 객체의 식별성
+\end{dhksmry}
+\end{dhknote}
+
+먼저 다음 두 호출을 살펴보자.
+
+\begin{dhkcode}
+f1 = outer()
+f2 = outer()
+\end{dhkcode}
+
+첫 번째 \zsh{outer()} 호출에서 \zsh{def inner} 문장이 실행되면서 함수 객체가 생성된다.
+
+두 번째 \zsh{outer()} 호출에서도 같은 정의문이 다시 실행되므로 새로운 함수 객체가 생성된다.
+
+따라서 두 함수 객체는 동일한 객체가 아니다.
+
+\begin{dhkcode}
+f1 is f2
+\end{dhkcode}
+
+결과는 \zsh{False}가 된다.
+
+그러데 두 함수의 코드 객체는 어떨까?
+
+\begin{dhkcode}
+f1.__code__ is f2.__code__
+\end{dhkcode}
+
+일반적인 CPython에서는 두 함수 객체가 동일한 코드 객체를 참조한다.
+
+왜냐하면 같은 함수 정의에 대응하는 컴파일된 코드 객체를 재사용하면서 서로 다른 함수 객체를 생성할 수 있기 때문이다.
+
+다만 코드 객체의 \zsh{is} 동일성은 Python 언어 차원에서 모든 구현에 보장되는 일반 규칙으로 취급하면 안 된다.
+
+여기서 확실하게 구분해야 하는 것은 다음이다.
+
+동일한 함수 정의에서 생성된 함수 객체라고 해서 반드시 동일한 함수 객체인 것은 아니다.
+
+반면 같은 함수 객체를 여러 이름에 바인딩하는 것은 새로운 함수 객체 생성과 다르다.
+
+\begin{dhkcode}
+f1 = outer()
+f2 = f1
+
+print(f1 is f2)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+이 경우에는 함수 객체를 새로 생성하지 않고 기존 객체에 이름을 추가로 바인딩했기 때문이다.
+
+이 차이는 \zsh{A.4}에서 여러 클로저 인스턴스가 서로 독립적인 상태를 유지하는 원리를 이해할 때 중요해진다.
+
+\subsubsection{Lexical Scope란 무엇인가?}
+
+이제 이번 학습의 중심 개념으로 넘어가 보자.
+
+\zsh{Lexical Scope(렉시컬 스코프)}란 함수 내부에서 사용한 이름이 어떤 외부 스코프와 연결되는지가 소스 코드상 함수의 정의 위치에 따라 결정되는 규칙이다.
+
+이를 정적 스코프(Static Scope)라고도 부른다.
+
+여기서 중요한 것은 함수가 어디에서 호출되었는가가 아니라 어디에서 정의되었는가이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+x = "Global"
+
+def outer():
+    x = "Outer"
+
+    def inner():
+        print(x)
+
+    return inner
+
+def caller(func):
+    x = "Caller"
+    func()
+
+f = outer()
+
+caller(f)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+Outer
+\end{dhkzsh}
+
+이 결과는 매우 중요하다.
+
+왜 \zsh{"Caller"}가 아니라 \zsh{"Outer"}가 출력될까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+먼저 모듈 스코프에 다음 이름이 바인딩된다.
+
+\begin{dhkcode}
+x = "Global"
+\end{dhkcode}
+
+그다음 \zsh{outer}와 \zsh{caller} 함수 객체가 생성된다.
+
+이후 다음 표현식이 실행된다.
+
+\begin{dhkcode}
+f = outer()
+\end{dhkcode}
+
+\zsh{outer()} 내부에서는 지역 이름 \zsh{x}가 문자열 \zsh{"Outer"}를 참조하게 된다.
+
+그리고 \zsh{inner} 함수 객체가 생성된ㄷ.
+
+이때 \zsh{inner} 함수는 소스 코드상 \zsh{outer} 내부에 정의되어 있다.
+
+따라서 \zsh{inner}의 렉시컬 외부 스코프는 \zsh{outer}의 지역 스코프다.
+
+이후 \zsh{inner} 함수 객체가 반환되어 \zsh{f}에 바인딩된다.
+
+이제 다음 호출을 살펴보자.
+
+\begin{dhkcode}
+caller(f)
+\end{dhkcode}
+
+\zsh{caller()}의 매개변수 \zsh{func}는 \zsh{f}가 참조하는 \zsh{inner} 함수 객체를 참조하게 된다.
+
+\zsh{caller()} 내부에서는 다음 문장이 실행된다.
+
+\begin{dhkcode}
+x = "Caller"
+\end{dhkcode}
+
+그러나 이 \zsh{x}는 \zsh{caller()} 호출의 지역 이름이다.
+
+\zsh{inner} 함수가 정의된 렉시컬 구조에는 \zsh{caller}의 지역 스코프가 포함되어 있지 않다.
+
+따라서 다음 호출에서
+
+\begin{dhkcode}
+func()
+\end{dhkcode}
+
+\zsh{inner}가 실행되더라도 \zsh{caller}의 지역 변수 \zsh{x}를 탐색하지 않는다.
+
+\zsh{inner}는 자신이 정의된 외부 함수 \zsh{outer}의 바인딩을 사용한다.
+
+그래서 \zsh{"Outer"}가 출력되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Lexical Scope와 Dynamic Scope 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|구분|	Lexical Scope|	Dynamic Scope|
+|:---|:---|:---|
+|이름 탐색의 기준|	함수가 정의된 코드 구조|	함수 호출의 동적 경로|
+|외부 이름의 연결|	렉시컬 외부 스코프|	호출자 측 실행 환경|
+|Python의 일반적인 함수 이름 탐색|	사용|	사용하지 않음|
+|위 예제의 x|	"Outer"|	가상의 동적 스코프라면 "Caller"가 될 수 있음|
+\end{dhktable}
+
+Python은 일반적인 함수 이름 탐색에 Lexical Scope를 사용한다.
+
+따라서 함수 객체를 다른 함수에 전달하거나 다른 위치에서 호출한다고 해서 그 함수의 렉시컬 외부 스코프가 변경되지는 않는다.
+
+이것이 Lexical Scope의 핵심이다.
+
+\subsubsection{정의 위치와 호출 위치는 왜 구분해야 할까?}
+
+앞의 예제를 조금 변형해 보자.
+
+\begin{dhkcode}
+x = 100
+
+def outer():
+    x = 200
+
+    def inner():
+        return x
+
+    return inner
+
+f = outer()
+
+def execute():
+    x = 300
+    return f()
+
+print(execute())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+200
+\end{dhkzsh}
+
+여기서 \zsh{inner} 함수는 \zsh{execute()} 내부에서 호출되고 있다.
+
+하지만 \zsh{execute()}의 지역 변수 \zsh{x=300}은 \zsh{inner}의 이름 탐색에 영향을 주지 않는다.
+
+또한 모듈 스코프에는 \zsh{x=100}이 존재하지만, \zsh{inner}는 자신을 감싸는 \zsh{outer}의 \zsh{x}를 사용한다.
+
+이 관계를 렉시컬 구조로 나타내면 다음과 같다.
+
+\begin{dhkdir}[in=6]
+Global Scope
+> x = 100
+> outer
+>> x = 200
+>> inner
+>>> return x
+> execute
+>> x = 300
+>> f()
+\end{dhkdir}
+
+\zsh{inner}가 참조하는 \zsh{x}의 탐색 관계는 다음과 같다.
+
+\begin{dhksmry}[centered]
+inner의 Local
+\da
+outer의 Enclosing
+\da
+Global
+\da
+Builtins
+\end{dhksmry}
+
+여기서는 \zsh{outer}의 \zsh{x}를 찾으므로 그 값을 사용한다.
+
+반면 \zsh{execute}는 \zsh{inner}의 렉시컬 외부 스코프에 포함되지 않는다.
+
+함수 호출 관계(Call Relationship)와 렉시컬 스코프 관계(Lexical Scope Relationship)는 서로 다른 구조라는 사실을 기억해야 한다.
+
+이것은 이후 클로저와 데코레이터에서 매우 중요해진다.
+
+\subsubsection{중첩 함수는 외부 함수의 모든 지역 변수를 사용할 수 있는가?}
+
+중첩 함수는 자신을 감싸는 외부 함수의 지역 이름을 참조할 수 있다.
+
+하지만 모든 이름이 자동으로 클로저에 저장되는 것은 아니다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+    y = 20
+
+    def inner():
+        return x
+
+    return inner
+
+f = outer()
+
+print(f())
+print(f.__code__.co_freevars)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+10
+('x',)
+\end{dhkzsh}
+
+여기서 \zsh{inner}는 \zsh{x}만 참조하고 있다.
+
+\zsh{y}는 \zsh{outer}의 지역 변수이지만 \zsh{inner}에서 사용되지 않는다.
+
+따라서 \zsh{inner}의 자유 변수(Free Variable) 목록에는 \zsh{x}만 나타난다.
+
+여기서 자유 변수란 현재 함수의 지역 스코프에서 바인딩되지 않았지만, 렉시컬 외부 함수 스코프의 바인딩을 사용하는 이름을 말한다.
+
+\zsh{co_freevars}는 코드 객체가 어떤 자유 변수 이름을 사용하는지 확인하는 데 유용하다.
+
+다만 지금은 자유 변수가 존재한다는 사실만 확인하면 충분하다.
+
+자유 변수가 실제로 어떤 셀 객체와 연결되고, 외부 함수 호출이 종료된 뒤에도 어떻게 유지되는지는 \zsh{A.4}에서 자세히 분석할 것이다.
+
+\subsubsection{외부 함수의 지역 변수는 언제 결정되는가?}
+
+Lexical Scope를 학습할 때 자주 발생하는 오해가 있다.
+
+함수의 정의 위치가 이름 탐색의 스코프를 결정한다는 사실과, 그 이름에 바인딩된 객체가 함수 정의 시점에 고정된다는 것은 서로 다른 이야기다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    x = 20
+
+    return inner
+
+f = outer()
+
+print(f())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+20
+\end{dhkzsh}
+
+왜 10이 아니라 20일까?
+
+\zsh{inner} 함수 객체가 생성되는 시점에는 \zsh{x}가 10을 참조하고 있다.
+
+하지만 \zsh{inner}는 단순히 그 시점의 정수 객체 10을 복사해서 보관하는 것이 아니다.
+
+\zsh{inner}가 사용하는 외부 이름 \zsh{x}는 외부 함수의 바인딩과 연결된다.
+
+따라서 이후 다음 문장이 실행되면
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+외부 함수의 \zsh{x} 바인딩이 새로운 정수 객체 20을 참조하도록 변경된다.
+
+그리고 \zsh{inner}를 호출하면 현재 연결된 바인딩을 통해 20을 얻는 것이다.
+
+이것이 이후 클로저를 학습할 때 중요한 출발점이 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+더 극단적인 사례
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+
+    def inner():
+        return x
+
+    x = 100
+
+    return inner
+
+f = outer()
+
+print(f())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+100
+\end{dhkzsh}
+
+\zsh{inner}가 정의되는 순간에는 아직 \zsh{x = 100}이 실행되지 않았다.
+
+그런데도 \zsh{inner()}는 정상적으로 100을 반환한다.
+
+왜냐하면 이름의 렉시컬 연결과 실제 값의 조회 시점이 다르기 때문이다.
+
+단, 이 예제에서 \zsh{x = 100}이 실행되기 전에 \zsh{inner()}를 호출하면 바인딩되지 않은 자유 변수를 읽으려 하므로 \zsh{NameError}가 발생할 수 있다.
+
+이 오류는 \zsh{A.3}에서 지역 변수의 정적 판정과 함께 분석할 것이다.
+
+\subsubsection{중첩 함수와 일반 함수의 차이}
+
+지금까지의 내용을 비교해 보자.
+
+\begin{dhkcode}
+x = 10
+
+def normal():
+    return x
+
+def outer():
+    x = 20
+
+    def inner():
+        return x
+
+    return inner
+
+f = outer()
+
+print(normal())
+print(f())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+10
+20
+\end{dhkzsh}
+
+두 함수 모두 본문에서 \zsh{x}라는 이름을 사용한다.
+
+하지만 \zsh{normal}은 모듈 스코프에서 정의되었고, \zsh{inner}는 \zsh{outer} 내부에서 정의되었다.
+
+따라서 이름 탐색 경로가 다르다.
+
+\begin{dhktable}
+|구분|normal|inner|
+|:---|:---|:---|
+|정의 위치|모듈 스코프|outer 내부|
+|x의 종류|전역 이름|자유 변수|
+|외부 탐색 대상|모듈 전역 네임스페이스|outer의 렉시컬 스코프|
+|반환값|10|20|
+\end{dhktable}
+
+이 차이는 단순히 중첩 함수가 특별한 문법을 사용하기 때문에 발생하는 것이 아니다.
+
+함수가 정의된 렉시컬 환경에 따라 이름 탐색의 대상이 달라지기 때문이다.
+
+\subsubsection{중첩 함수와 클래스 메서드의 차이}
+
+이제 기존 클래스 객체 모델과 연결해 보자.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Example:
+    x = 100
+
+    def method(self):
+        return x
+
+obj = Example()
+\end{dhkcode}
+
+여기서 \zsh{method()} 내부의 \zsh{x}는 클래스 네임스페이스에 있는 \zsh{Example.x}를 자동으로 참조할까?
+
+그렇지 않다.
+
+일반적인 메서드의 함수 본문에서 이름을 탐색할 때 클래스 네임스페이스가 자동으로 Enclosing 함수 스코프처럼 취급되는 것은 아니다.
+
+따라서 모듈 수준에 \zsh{x}가 정의되어 있지 않다면 다음 호출은 \zsh{NameError}를 발생시킨다.
+
+\begin{dhkcode}
+obj.method()
+\end{dhkcode}
+
+반면 다음 코드는 정상적으로 동작한다.
+
+\begin{dhkcode}
+class Example:
+    x = 100
+
+    def method(self):
+        return self.x
+
+obj = Example()
+
+print(obj.method())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+100
+\end{dhkzsh}
+
+여기서는 이름 탐색과 속성 탐색을 구분해야 한다.
+
+\begin{dhkcode}
+return x
+\end{dhkcode}
+
+는 이름 탐색(Name Resolution)이다.
+
+반면
+
+\begin{dhkcode}
+return self.x
+\end{dhkcode}
+
+는 먼저 \zsh{self}라는 이름을 탐색한 뒤, 그 객체의 \zsh{x}속성을 탐색하는 표현식이다.
+
+따라서 \zsh{self.x}는 기존에 배운 인스턴스·클래스 숙성 탐색 규칙에 따라 처리된다.
+
+이것은 Lexical Scope와 객체의 속성 탐색이 서로 다른 메커니즘이라는 사실을 보여준다.
+
+단, 클래스 본문 안에서 정의된 모든 중첩 함수가 클래스 네임스페이스를 절대 참조할 수 없다는 뜻은 아니다.
+
+특히 클래스 본문에서 직접 실행되는 표현식, 컴프리헨션, \zsh{__class__} 셀과 관련된 특수한 규칙은 별도로 존재한다.
+
+이번 학습에서는 일반적인 인스턴스 메서드의 이름 탐색과 \zsh{self}를 통한 속성 탐색이 다르다는 점을 확립하면 된다.
+
+\subsubsection{실제 응용 - 함수 생성기(Function Factory)}
+
+중첩 함수의 실용적인 활용을 살펴보자.
+
+\begin{dhkcode}
+def make_multiplier(factor):
+
+    def multiply(value):
+        return factor * value
+
+    return multiply
+
+
+double = make_multiplier(2)
+triple = make_multiplier(3)
+
+print(double(10))
+print(triple(10))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+20
+30
+\end{dhkzsh}
+
+이 코드는 함수 객체를 생성하여 반환하는 함수 생성기(Function Factory)의 예제다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+double = make_multiplier(2)
+\end{dhkcode}
+
+\zsh{make_multiplier()}가 호출되면서 \zsh{factor}에 정수 객체 2가 바인딩된다.
+
+그 호출 중 \zsh{multiply} 함수 객체가 생성된다.
+
+이 함수 객체는 외부 함수의 \zsh{factor} 바인딩을 참조하는 구조를 가진다.
+
+이후 \zsh{multiply} 함수 객체가 반환되고 \zsh{double}에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+triple = make_mulitplier(3)
+\end{dhkcode}
+
+이번에는 별도의 \zsh{make_muliplier()} 호출이 발생한다.
+
+새로운 실행 환경에서 \zsh{factor}에 3이 바인딩되고, 새로운 \zsh{multiply} 함수 객체가 생성된다.
+
+따라서 \zsh{double}과 \zsh{triple}은 서로 다른 함수 객체다.
+
+\begin{dhkcode}
+print(double is triple)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+각 함수는 서로 다른 외부 함수 호출에서 형성된 바인딩을 참조하므로 서로 다른 결과를 반환할 수 있다.
+
+여기까지 이해했다면 다음 질문이 자연스럽게 발생할 것이다.
+
+외부 함수 호출이 끝났는데도 \zsh{factor}에 대한 바인딩이 어떻게 유지되는가?
+
+이 질문이 바로 \zsh{A.4}에서 다룰 클로저의 핵심이다.
+
+현재는 함수가 정의된 렉시컬 환경과 실제 호출 시점이 분리될 수 있다는 사실에 집중한다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서 가장 중요한 것은 다음 다섯 가지다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 중첩 함수는 함수 내부에서 정의되는 함수다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    def inner():
+        pass
+\end{dhkcode}
+
+두 함수는 서로 다른 함수 객체가 될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 함수 객체 생성과 함수 본문 실행은 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{outer()}가 호출되어 \zsh{def inner} 문장에 도달하면 \zsh{inner} 함수 객체가 생성된다.
+
+그러나 \zsh{inner} 본문은 \zsh{inner()}가 호출될 때 실행된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. Lexical Scope는 정의 위치를 기준으로 한다.
+\end{dhksmry}
+\end{dhknote}
+
+함수가 어디에서 호출되는지가 아니라 어디에서 정의되었는지가 렉시컬 외부 스코프를 결정한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 이름의 탐색 대상과 바인딩된 값은 구분해야 한다.
+\end{dhksmry}
+\end{dhknote}
+
+함수가 외부 이름을 참조한다고 해서 함수 정의 시점의 값을 반드시 복사하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. 함수 호출 관계와 스코프 관계는 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+다른 함수가 중첩 함수를 호출하더라도 호출자의 지역ㄷ 스코프가 그 중첩 함수의 Enclosing Scope가 되는 것은 아니다.

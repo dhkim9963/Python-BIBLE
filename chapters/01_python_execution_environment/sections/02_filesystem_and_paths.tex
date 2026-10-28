@@ -1,0 +1,1301 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.2. 파일 시스템 
+% ==================================================
+
+\subsection{파일 시스템}
+
+\subsubsection{파일 시스템이란 무엇인가?}
+
+컴퓨터 저장장치에 아래와 같은 파일들이 있다고 가정해보자.
+
+\begin{dhkzsh}
+사진.jpg
+train.py
+data.csv
+requirements.txt
+model.pt
+\end{dhkzsh}
+
+파일이 수십만 개가 되면 한곳에 다 넣을 수 없다.
+
+그래서 디렉터리(directory)를 이용해서 계층적으로 정리한다.
+
+예를 들어:
+
+\begin{dhkdir}[in=8]
+project
+>data
+>>train.csv
+>>test.csv
+>model
+>>model.pt
+>src
+>>train.py
+>>model.py
+>README.md
+\end{dhkdir}
+
+이것이 우리가 앞으로 계속 보게 될 \textbf{파일 시스템의 트리 구조}다.
+
+여기서:
+
+\begin{dhksmry}[centered]
+project \ra 디렉터리
+
+data \ra 디렉터리
+
+train.csv \ra 파일
+
+src \ra 디렉터리
+
+train.py \ra 파일
+\end{dhksmry}
+
+이며, 디렉터리 안에 다른 디렉터리가 들어갈 수 있기 때문에 트리 구조가 만들어진다.
+
+\subsubsection{경로(Path)는 트리를 따라가는 방법이다}
+
+위 구조에서 \texttt{train.csv}가 어디 있는지를 설명하고 싶다고 해보자.
+
+그러면 위치를 이렇게 표현할 수 있다.
+
+\begin{dhkzsh}
+project/data/train.csv
+\end{dhkzsh}
+
+이것이 \zsh{path(경로)}다.
+
+즉,
+
+\begin{dhksmry}[centered]
+project
+\da
+data
+\da
+train.csv
+\end{dhksmry}
+
+라는 파일 시스템의 이동 경로를 문자열 형태로 표현한 것이다.
+
+그래서 처음에는 이렇게 생각해도 좋다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Path = 파일 시스템 트리에서 어떤 위치까지 찾아가는 주소
+\end{dhksmry}
+\end{dhknote}
+
+단, 메모리의 주소값(address)과는 다른 개념임을 주의하자.
+
+\subsubsection{그런데 어디서 출발하느냐가 문제가 된다}
+
+서울에서 누군가에게
+
+\begin{dhksmry}[centered]
+"우리집은 오른쪽으로 가서 두 번째 골목이에요."
+\end{dhksmry}
+
+라고 하면 이상하다.
+
+반면,
+
+\begin{dhksmry}[centered]
+"서울특별시 \ra ○○구 \ra ○○동 \ra ..."
+\end{dhksmry}
+
+처럼 처음부터 위치를 지정하면 출발 위치와 관계없이 찾아갈 수 있다.
+
+파일 시스템도 똑같아서 경로에는 크게 두 종류가 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+절대 경로 (absolute path)
+
+상대 경로 (relative path)
+\end{dhksmry}    
+\end{dhknote}
+
+\subsubsection{절대 경로 Absolute Path}
+
+절대 경로는 \textbf{파일 시스템의 출발점부터 목적지까지 전부 적은 경로}다.
+
+Mac/Linux라면 예를 들어:
+
+\begin{dhkzsh}
+/Users/user/Desktop/python/project/data/train.csv
+\end{dhkzsh}
+
+Windows 라면:
+
+\begin{dhkzsh}
+C:\Users\user\Desktop\python\project\data\train.csv
+\end{dhkzsh}
+
+이런 식이다.
+
+Mac의 것을 구조화하면:
+
+\begin{dhkdir}
+/
+>Users
+>>user
+>>>Desktop
+>>>>python
+>>>>>project
+>>>>>>data
+>>>>>>>train.csv
+\end{dhkdir}
+
+따라서:
+
+\begin{dhkzsh}
+/Users/user/Desktop/python/project/data/train.csv
+\end{dhkzsh}
+
+의 뜻은 다음과 같다.
+
+\begin{dhksmry}[centered]
+파일 시스템의 맨 위에서부터 train.csv까지 찾아가라.
+\end{dhksmry}
+
+\subsubsection{맨 앞의 /는 특별하다}
+
+Mac/Linux에서 / 는 단순한 구분자가 아니다.
+
+파일 시스템의 최상위 디렉터리인 \textbf{root directory}를 의미한다.
+
+그래서:
+
+\begin{dhkcode}
+/Users/user/Desktop
+\end{dhkcode}
+
+를 해석하면:
+
+\begin{dhksmry}[centered]
+/
+\da
+Users
+\da
+user
+\da
+Desktop
+\end{dhksmry}
+
+이다.
+
+여기서 root를 흔히 이렇게 그린다.
+
+\begin{dhkdir}
+/
+>Applications
+>Library
+>System
+>Users
+>...
+\end{dhkdir}
+
+Mac을 사용하다보면 \zsh{/Users/...} 같은 경로를 자주 보게 되는 이유다.
+
+\subsubsection{Windows는 조금 다르다}
+
+Windows는 흔히 드라이브가 먼저 등장한다:
+
+\begin{dhkcode}
+C:\Users\user\Desktop
+\end{dhkcode}
+
+\subsubsection{상대 경로 Relative Path}
+
+현재 내가 있는 위치가:
+
+\begin{dhkcode}
+project/
+\end{dhkcode}
+
+라고 하자.
+
+구조는:
+
+\begin{dhkdir}
+project
+>data
+>>train.csv
+>src
+>>train.py
+\end{dhkdir}
+
+현재 위치가 \zsh{project}라면 \zsh{train.csv}를 굳이:
+
+\begin{dhkcode}
+/Users/user/Desktop/python/project/data/train.csv
+\end{dhkcode}
+
+라고 전부 적을 필요가 없이:
+
+\begin{dhkcode}
+data/train.csv
+\end{dhkcode}
+
+라고 적으면 된다.
+
+왜냐하면 출발점이 이미 \zsh{project}이기 때문이다.
+
+이것이 \textbf{상대 경로}다.
+
+\subsubsection{그러면 "현재 위치"가 대체 무엇인가?}
+
+여기가 Python에서 굉장히 중요하다.
+
+이것을:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Current Working Directory, CWD
+\end{dhksmry}
+\end{dhknote}
+
+라고 한다.
+
+한국어로는 \textbf{현재 작업 디렉터리}정도로 번역이 된다.
+
+예를 들어 터미널이:
+
+\begin{dhkzsh}
+~/Desktop/python/project %
+\end{dhkzsh}
+
+라고 되어 있다면 현재 작업 디렉터리가 대략:
+
+\begin{dhkzsh}
+/Users/user/Desktop/python/project
+\end{dhkzsh}
+
+라고 생각할 수 있다.
+
+Python에서도 확인할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+print(Path.cwd())
+\end{dhkcode}
+
+예를 들어:
+
+\begin{dhkzsh}
+/Users/user/Desktop/python/project
+\end{dhkzsh}
+
+가 출력된다.
+
+\subsubsection{상대 경로는 CWD를 기준으로 해석한다}
+
+이 원칙이 정말 중요하다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+p = Path("data/train.csv")
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+은 상대 경로다.
+
+만약:
+
+\begin{dhkcode}
+Path.cwd()
+\end{dhkcode}
+
+가:
+
+\begin{dhkzsh}
+/users/user/Desktop/python/project
+\end{dhkzsh}
+
+라면 실질적으로 가리키는 곳은:
+
+\begin{dhksmry}[centered]
+/users/user/Desktop/python/project
++
+data/train.csv
+\end{dhksmry}
+
+즉:
+
+\begin{dhkzsh}
+/users/user/Desktop/python/project/data/train.csv
+\end{dhkzsh}
+
+이다.
+
+\begin{dhkdir}
+/Users/user/Desktop/python/@project (CWD)
+>data
+>>train.csv
+\end{dhkdir}
+
+이 원리를 잡으면 나중에 Pandas에서 발생하는 수많은 파일 경로 오류를 이해할 수 있다.
+
+\subsubsection{. 은 "현재 디렉터리"다}
+
+경로에서 이것도 많이 본다.
+
+\begin{dhkzsh}
+.
+\end{dhkzsh}
+
+점 하나는:
+
+\begin{dhksmry}[centered]
+현재 디렉터리
+\end{dhksmry}
+
+를 의미한다.
+
+따라서:
+
+\begin{dhkzsh}
+./data/train.csv
+\end{dhkzsh}
+
+는:
+
+\begin{dhksmry}[centered]
+현재 디렉터리
+\da
+data
+\da
+train.csv
+\end{dhksmry}
+
+라는 뜻이다.
+
+그래서:
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+와
+
+\begin{dhkzsh}
+./data/train.csv
+\end{dhkzsh}
+
+는 이 상황에서는 사실상 같은 위치를 나타낸다.
+
+\subsubsection{.. 는 부모 디렉터리다}
+
+점 두 개:
+
+\begin{dhkzsh}
+..
+\end{dhkzsh}
+
+는:
+
+\begin{dhksmry}[centered]
+현재 디렉터리의 한 단계 위
+\end{dhksmry}
+
+를 의미한다.
+
+예를 들어 위치가:
+
+\begin{dhkzsh}
+project/src
+\end{dhkzsh}
+
+라고 하자.
+
+구조는:
+
+\begin{dhkdir}
+project
+>data
+>>train.csv
+>src
+>>train.py
+\end{dhkdir}
+
+현재 위치:
+
+\begin{dhkzsh}
+project/src
+\end{dhkzsh}
+
+에서:
+
+\begin{dhkzsh}
+..
+\end{dhkzsh}
+
+하면 \zsh{project}로 올라간다.
+
+그러므로:
+
+\begin{dhkzsh}
+../data/train.csv
+\end{dhkzsh}
+
+는:
+
+\begin{dhkbranch}[in=14]
+node main :: src
+arrow main :: ..
+node main :: project
+arrow main :: data
+node main :: data
+arrow main
+node main :: train.csv
+\end{dhkbranch}
+
+는 뜻이다.
+
+즉,
+
+\begin{dhksmry}[centered]
+src \ra 한 단계 위 \ra data \ra train.csv
+\end{dhksmry}
+
+\subsubsection{여러 번 올라갈 수도 있다}
+
+예를 들어:
+
+\begin{dhkdir}
+project/
+>src/
+>>models/
+>>>transformer/
+\end{dhkdir}
+
+현재 위치가:
+
+\begin{dhkzsh}
+project/src/models/transformer
+\end{dhkzsh}
+
+라고 하자.
+
+그러면:
+
+\begin{dhkzsh}
+..
+\end{dhkzsh}
+
+는:
+
+\begin{dhkzsh}
+project/src/models
+\end{dhkzsh}
+
+이고,
+
+\begin{dhkzsh}
+../..
+\end{dhkzsh}
+
+는:
+
+\begin{dhkzsh}
+project/src
+\end{dhkzsh}
+
+이고,
+
+\begin{dhkzsh}
+../../..
+\end{dhkzsh}
+
+는:
+
+\begin{dhkzsh}
+project
+\end{dhkzsh}
+
+이다.
+
+따라서:
+
+\begin{dhkzsh}
+../../../data/train.csv
+\end{dhkzsh}
+
+같은 것도 가능하다.
+
+하지만 실제 프로젝트에서 이런 경로가 난무하기 시작하면 구조를 다시 생각해볼 필요가 있다.
+
+\subsubsection{~ 는 또 다른 의미다}
+
+Mac/Linux 터미널에서 자주 보는:
+
+\begin{dhkzsh}
+~ 
+\end{dhkzsh}
+
+는 보통 사용자의 \textbf{home directory}를 의미한다.
+
+Mac 계정 이름을 예시로 dhk 라고 하면:
+
+\begin{dhkzsh}
+~
+\end{dhkzsh}
+
+가 대략:
+
+\begin{dhkzsh}
+/Users/dhk
+\end{dhkzsh}
+
+를 의미한다.
+
+그래서:
+
+\begin{dhkzsh}
+~/Desktop
+\end{dhkzsh}
+
+은:
+
+\begin{dhkzsh}
+/Users/dhk/Desktop
+\end{dhkzsh}
+
+같은 의미가 된다.
+
+Windows에도 사용자 홈 개념이 있고 Python의 pathlib으로 운영체제에 맞게 처리할 수 있다.
+
+예를 들어:
+
+\begin{dhkcode}
+from pathlib import Path
+print(Path.home())
+\end{dhkcode}
+
+이라고 하면 사용자 홈 디렉터리를 얻을 수 있다.
+
+\subsubsection{여기서 중요한 함정}
+
+다음 파일이 있다고 해보자.
+\begin{dhkdir}
+project
+>data
+>>train.csv
+>src
+>>train.py
+\end{dhkdir}
+
+\zsh{train.py}에:
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.read_csv("../data/train.csv")
+\end{dhkcode}
+
+라고 작성했다.
+
+많은 사람이 이렇게 생각한다.
+\begin{dhksmry}[centered]
+train.py가 src안에 있으니까 .. 하면 project겠네.
+\end{dhksmry}
+
+\textbf{항상 그런 것은 아니다}.
+
+상대 경로의 기본 기준은 \textbf{Python 파일이 위치한 디렉터리가 아니라 현재 작업 디렉터리(CWD)다}.
+
+이게 처음 파일 경로를 배울 때 가장 많이 혼동하는 부분 중 하나다.
+
+\subsubsection{실행하는 위치가 중요하다}
+
+예를 들어 터미널에서:
+
+\begin{dhkzsh}
+project/src %
+\end{dhkzsh}
+
+인 상태에서:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+를 실행했다고 하자.
+
+CWD:
+
+\begin{dhkzsh}
+project/src
+\end{dhkzsh}
+
+따라서:
+
+\begin{dhkzsh}
+../data/train.csv
+\end{dhkzsh}
+
+는:
+\begin{dhkbranch}[in=10]
+node main :: project/src
+arrow main :: ..
+node main :: project
+arrow main :: data
+node main :: project/data/train.csv
+\end{dhkbranch}
+
+
+가 되며 잘 작동한다.
+
+그런데 이번에는:
+
+\begin{dhkzsh}
+project %
+\end{dhkzsh}
+
+에서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+를 실행했다고 해보자.
+
+\zsh{train.py} 파일은 여전히:
+
+\begin{dhkzsh}
+project/src/train.py
+\end{dhkzsh}
+
+에 있다.
+
+하지만 CWD는 \zsh{project}다.
+
+따라서:
+
+\begin{dhkzsh}
+../data/train.csv
+\end{dhkzsh}
+
+를 해석하면:
+
+\begin{dhksmry}[centered]
+project
+\da
+project의 부모
+\da
+data/train.csv
+\end{dhksmry}
+
+를 찾게 된다.
+
+\subsubsection{이것 때문에 파일은 분명히 있는데 못찾는 경우가 발생한다}
+
+아마 Python이나 ML을 하면서 \zsh{FileNotFoundError}를 본적이 있을 것이다.
+
+파일이 정말 없는 경우도 있지만 상당히 흔한 상황은:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+내가 생각한 기준 디렉터리 $\neq$ Python의 현재 작업 디렉터리
+\end{dhksmry}
+\end{dhknote}
+
+인 것이다.
+
+그래서 파일을 못 찾을 때 가장 먼저:
+
+\begin{dhkcode}
+from pathlib import Path
+
+print(Path.cwd())
+\end{dhkcode}
+
+를 찍어보는 습관이 상당히 유용하다.
+
+\subsubsection{이제 \zsh{pathlib.Path}를 사용해보자}
+
+예전 Python 코드에서는:
+
+\begin{dhkcode}
+import os
+\end{dhkcode}
+
+와 문자열 경로 조작이 굉장히 많았다.
+
+현재는 경로 자체를 다룰 때 \zsh{pathlib}이 매우 편하다.
+
+\begin{dhkcode}
+from pathlib import Path
+\end{dhkcode}
+
+그리고:
+
+\begin{dhkcode}
+p = Path("data/train.csv")
+\end{dhkcode}
+
+라고 할 수 있다.
+
+여기서 중요한 사고방식이 있다.
+
+\begin{dhkzsh}
+"data/train.csv"
+\end{dhkzsh}
+
+는 그냥 문자열이다.
+
+반면:
+
+\begin{dhkcode}
+Path("data/train.csv")
+\end{dhkcode}
+
+는 경로를 표현하고 조작하기 위한 Path 객체다.
+
+\subsubsection{문자열과 \zsh{Path} 객체의 차이}
+
+문자열:
+
+\begin{dhkcode}
+p = "data/train.csv"
+\end{dhkcode}
+
+Python 입장에서는 그냥 문자들의 나열이다.
+
+\begin{dhkzsh}
+    d a t a / t r a i n . c s v
+\end{dhkzsh}
+
+그 이상을 특별히 알 필요가 없다.
+
+반면:
+
+\begin{dhkcode}
+p = Path("data/train.csv")
+\end{dhkcode}
+
+라고 하면 경로 관련 기능을 사용할 수 있다.
+
+예를 들어:
+
+\begin{dhkcode}
+p.exist()
+\end{dhkcode}
+
+파일이 실제 존재하는지 확인한다.
+
+\begin{dhkcode}
+p.is_file()
+\end{dhkcode}
+
+파일인지 확인한다.
+
+\begin{dhkcode}
+p.is_dir()
+\end{dhkcode}
+
+디렉터리인지 확인한다.
+
+\begin{dhkcode}
+p.name
+\end{dhkcode}
+
+이라면:
+
+\begin{dhkzsh}
+train.csv
+\end{dhkzsh}
+
+를 얻는다.
+
+\subsubsection{경로를 / 로 조립할 수도 있다}
+
+\zsh{pathlib}의 편한 기능이다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+project = Path("/Users/user/Desktop/project")
+
+data = project / "data"
+train = data / "train.csv"
+\end{dhkcode}
+
+결과적으로:
+
+\begin{dhkzsh}
+/Users/user/Desktop/project/data/train.csv
+\end{dhkzsh}
+
+라는 경로가 만들어진다.
+
+처음 보면:
+
+\begin{dhkcode}
+project / "data"
+\end{dhkcode}
+
+가 이상할 수 있다.
+
+숫자 나눗셈이 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+\zsh{Path}객체가 / 연산자를 \textbf{경로 연결이라는 의미로 정의해 놓은 것}이다.
+\end{dhksmry}
+\end{dhknote}
+
+그래서:
+
+\begin{dhkcode}
+Path("data") / "train.csv"
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+라는 경로가 된다.
+
+\subsubsection{절대 경로인지 확인할 수도 있다}
+
+\begin{dhkcode}
+from pathlib import Path
+
+a = Path("/Users/user/Desktop/data.csv")
+b = Path("data/data.csv")
+
+print(a.is_absolute())
+print(b.is_absolute())
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+True
+False
+\end{dhkzsh}
+
+왜냐하면:
+
+\begin{dhksmry}
+/Users/user/Desktop/data.csv
+\ua
+\zsh{root}부터 시작
+\end{dhksmry}
+
+하지만:
+
+\begin{dhkzsh}
+data/data.csv
+\end{dhkzsh}
+
+는 출발점이 없다.
+
+따라서 \zsh{CWD}가 필요하다.
+
+\subsubsection{상대 경로를 절대 경로로 확인해보자}
+
+\begin{dhkcode}
+from pathlib import Path
+
+p = Path("data/train.csv")
+
+print(p)
+print(p.resolve())
+\end{dhkcode}
+
+예를 들어 \zsh{CWD}가:
+
+\begin{dhkzsh}
+/Users/user/Desktop/project
+\end{dhkzsh}
+
+라면:
+
+\begin{dhkcode}
+print(p)
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+이고,
+
+\begin{dhkcode}
+print(p.resolve())
+\end{dhkcode}
+
+는 대략:
+
+\begin{dhkzsh}
+/Users/user/Desktop/project/data/train.csv
+\end{dhkzsh}
+
+가 된다.
+
+즉 \zsh{resolve()}를 사용하면:
+\begin{dhksmry}[centered]
+"이 상대 경로가 결국 실제로 어디를 가리키는 거야?"
+\end{dhksmry}
+
+를 확인하기 좋다.
+
+\subsubsection{실제 ML 프로젝트를 하나 만들어보자}
+
+앞으로 이 예제를 확장해보자
+
+\begin{dhkdir}[in=10]
+my_ml_proect/
+>data/
+>>train.csv
+>>test.csv
+>models/
+>notebooks/
+>>experiment.ipynb
+>src/
+>>train.py
+>>utils.py
+>README.md
+\end{dhkdir}
+
+터미널에서:
+
+\begin{dhkzsh}
+my_ml_project %
+\end{dhkzsh}
+
+에 있다고 하자.
+
+즉, \zsh{CWD}:
+
+\begin{dhkzsh}
+my_ml_project
+\end{dhkzsh}
+
+이다.
+
+그러면 Python에서:
+
+\begin{dhkcode}
+from pathlib import Path
+
+cwd = Path.cwd()
+print(cwd)
+\end{dhkcode}
+
+대략:
+
+\begin{dhkzsh}
+/Users/user/.../my_ml_project
+\end{dhkzsh}
+
+이다.
+
+그리고:
+
+\begin{dhkcode}
+data_dir = cwd / "data"
+train_file = data_dir / "train.csv"
+\end{dhkcode}
+
+그러면:
+
+\begin{dhkzsh}
+my_ml_project/data/train.csv
+\end{dhkzsh}
+
+를 가리키게 된다.
+
+\subsubsection{Pandas와도 바로 연결된다}
+
+\zsh{Path}객체는 Pandas같은 현대 Python 라이브러리에 바로 사용할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+import pandas as pd
+
+data_path = Path("data") / "train.csv"
+
+df = pd.read_csv(data_path)
+\end{dhkcode}
+
+이제 코드의 의미를 완전히 분해할 수 있다.
+
+\begin{dhkcode}
+Path("data")
+\end{dhkcode}
+
+현재 작업 디렉터리를 기준으로 \zsh{data}라는 경로를 나타내고,
+
+\begin{dhkcode}
+/ "train.csv"
+\end{dhkcode}
+
+를 통해 그 아래의 파일 경로를 만들고,
+
+\begin{dhkcode}
+pd.read_csv(data_path)
+\end{dhkcode}
+
+가 해당 위치의 csv를 읽는다.
+
+\subsubsection{디렉터리도 만들 수 있다}
+
+예를 들어 학습된 모델을:
+
+\begin{dhkzsh}
+models/
+\end{dhkzsh}
+
+에 저장하고 싶다고 하자.
+
+\begin{dhkcode}
+from pathlib import Path
+
+model_dir = Path("models")
+model_dir.mkdir()
+\end{dhkcode}
+
+그러면 디렉터리를 만들 수 있다.
+
+이미 존재할 가능성이 있다면:
+
+\begin{dhkcode}
+model_dir.mkdir(exist_ok=True)
+\end{dhkcode}
+
+를 사용할 수 있다.
+
+더 깊은 구조:
+
+\begin{dhkzsh}
+outputs/models/checkpoints
+\end{dhkzsh}
+
+를 한 번에 만들고 싶다면:
+
+\begin{dhkcode}
+path = Path("outputs/models/checkpoints")
+path.mkdir(parens=True, exist_ok=True)
+\end{dhkcode}
+
+같은 식으로 사용할 수 있다.
+
+이런 패턴은 ML/DL 프로젝트에서 굉장히 흔하다.
+
+\subsubsection{이제 파일 경로와 URL을 절대로 섞지 말자}
+
+이것도 앞으로 매우 중요하다.
+
+다음은 \textbf{로컬 파일 경로}다.
+
+\begin{dhkzsh}
+/users/user/project/data/train.csv
+\end{dhkzsh}
+
+또는:
+
+\begin{dhkzsh}
+C:\Users\user\project\data\train.csv
+\end{dhkzsh}
+
+컴퓨터의 파일 시스템에서 위치를 찾는다.
+
+반면:
+
+\begin{dhkzsh}
+https://example.com/data/train.csv
+\end{dhkzsh}
+
+는 URL이다.
+
+이것은:
+
+\begin{dhksmry}[centered]
+내 SSD
+\da
+디렉터리 탐색
+\end{dhksmry}
+
+의 문제가 아니다.
+
+대략적으로:
+
+\begin{dhksmry}[centered]
+URL
+\da
+네트워트
+\da
+서버
+\da
+HTTP 요청
+\da
+응답
+\end{dhksmry}
+
+의 세계다.
+
+따라서 나중에 우리가 \zsh{Path}와 \zsh{URL}을 명확히 분리해서 배울 것이다.
+
+\subsubsection{지금까지의 개념을 하나의 그림으로 합치자}
+
+파일 시스템이:
+
+\begin{dhkdir}
+/
+>Users
+>>user
+>>>Desktop
+>>>>my_ml_project
+>>>>>data
+>>>>>>train.csv
+>>>>>models
+>>>>>src
+>>>>>>train.py
+\end{dhkdir}
+
+라고 하자.
+
+현재 작업 디렉터리:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+이라면:
+
+\begin{dhkzsh}
+절대 경로
+/Users/user/Desktop/my_ml_project/data/train.csv
+\end{dhkzsh}
+
+와:
+
+\begin{dhkzsh}
+상대 경로
+data/train.csv
+\end{dhkzsh}
+
+는 같은 파일을 가리킬 수 있다.
+
+그리고:
+
+\begin{dhkzsh}
+.
+\end{dhkzsh}
+
+는:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+를 의미하므로:
+
+\begin{dhkzsh}
+./data/train.csv
+\end{dhkzsh}
+
+도 같은 파일이다.
+
+반면:
+
+\begin{dhkzsh}
+..
+\end{dhkzsh}
+
+는:
+
+\begin{dhkzsh}
+/Users/user/Desktop
+\end{dhkzsh}
+
+을 의미한다.
+
+\subsubsection{여기까지에서 가장 중요한 사고방식}
+
+위 내용들을 단순히 기호로 외우면 안된다.
+
+다음 구조를 머릿속에 만드는 것이 목표다.
+
+\begin{dhksmry}[centered]
+컴퓨터 저장장치
+\da
+파일 시스템
+\da
+디렉터리의 계층적 트리
+\da
+트리상의 위치를 표현
+\da
+Path
+\end{dhksmry}
+
+\begin{dhkdir}
+Path
+> 상대 경로 - CWD 기준 . / ..
+> 절대 경로 - root 기준
+\end{dhkdir}
+
+그리고 Python에서는:
+
+\begin{dhksmry}[centered]
+Path.cwd()
+\da
+현재 작업 디렉터리
+
+Path("data/train.csv")
+\da
+상대 경로
+
+Path("/Users/.../train.csv")
+\da
+절대 경로
+
+.resolve()
+\da
+최종적으로 어디를 가리키는지 확인
+\end{dhksmry}
+
+이렇게 연결된다.
+
+\subsubsection{다음 단계가 특히 중요하다}
+
+바로 \zsh{sys}로 가지 않고 \textbf{경로에서 가장 많이 혼동하는 세 가지 기준점}을 분리하는 게 좋다.
+
+\begin{dhknote}
+\begin{dhksmry}
+1. 현재 작업 디렉터리 \ra Path.cwd()
+
+2. 실행 중인 .py 파일의 위치 \ra __file__
+
+3. Python이 import 대상을 찾는 위치 \ra sys.path
+\end{dhksmry}
+\end{dhknote}
+
+셋 다 화면에는 \zsh{/Users/...} 같은 경로가 나오기 때문에 같은 종류처럼 보이지만, 실제 의미는 완전히 다르다.
+
+여기까지 분리되면 그 다음 \zsh{sys.argv}를 배울 때
+
+\begin{dhkzsh}
+python src/train.py --data data/trian.csv
+\end{dhkzsh}
+
+에서 \textbf{shell $\rightarrow$ Python interpreter $\rightarrow$ .py 파일 $\rightarrow$ Path $\rightarrow$ 실제 파일}이 한번에 연결되기 시작한다.
+
+
+

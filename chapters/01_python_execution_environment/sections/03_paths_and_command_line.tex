@@ -1,0 +1,3571 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.3. sys.path, pathlib
+% ==================================================
+
+\subsection{\zsh{sys.path, pathlib}}
+
+Python에서 "경로"라는 값이 보인다고 해서 모두 같은 목적의 경로는 아니다.
+
+무엇을 찾기 위한 경로인지 구분해야 한다.
+
+\subsubsection{먼저 실습용 프로젝트를 하나로 고정한다}
+
+앞으로 이 구조를 계속 사용한다.
+
+\begin{dhkdir}[in=9]
+my_ml_project/
+>data/
+>>train.csv
+>>test.csv
+>model/
+>notebooks/
+>>experiment.ipynb
+>src/
+>>train.py
+>>uitls.py
+>README.md
+\end{dhkdir}
+
+
+
+Mac에서 실제 프로젝트 위치가 다음이라고 가정하자.
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+따라서 \zsh{train.py}의 절대 경로는
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkzsh}
+
+이다.
+
+이제 세 가지를 보자
+
+\begin{dhksmry}[centered]
+Path.cwd()
+
+__file__
+
+sys.path
+\end{dhksmry}
+
+겉으로는 셋 다 \zsh{/Users/...}같은 경로가 튀어나올 수 있다.
+
+하지만 질문 자체가 다르다
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Path.cwd()
+지금 어디에서 작업 중인가?
+
+
+__file__
+지금 실행하는 이 파일은 어디 있는가?
+
+
+sys.path
+mport 할 때 Python이 어디를 검색하는가?
+\end{dhksmry}
+\end{dhknote}
+
+\subsubsection{\zsh{Path.cwd()} - 나는 지금 어디서 작업하고 있는가?}
+
+\begin{dhkcode}
+from pathlib import Path
+
+print(Path.cwd())
+\end{dhkcode}
+
+\zsh{CWD}는 \zsh{Current Working Directory}, 즉 \textbf{현재 작업 디렉터리}다.
+
+터미널에서:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project %
+\end{dhkzsh}
+
+인 상태에서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+를 실행했다고 하자.
+
+그러면 보통:
+
+\begin{dhkcode}
+Path.cwd()
+\end{dhkcode}
+
+결과는:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+이다.
+
+\zsh{train.py}는 여기 있다.
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkzsh}
+
+그런데 \zsh{CWD}는:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+이며, 둘은 다르다.
+
+\subsubsection{\zsh{__file__} - 이 Python 파일 자체는 어디 있는가?}
+
+\zsh{train.py}안에 다음 코드를 넣어보자.
+
+\begin{dhkcode}
+print(__file__)
+\end{dhkcode}
+
+그러면 실행 중인 \textbf{해당 Python 파일의 경로}를 알 수 있다.
+
+더 확실하게 절대 경로 형태로 보고 싶다면:
+
+\begin{dhkcode}
+from pathlib import Path
+
+print(Path(__file__).resolve())
+\end{dhkcode}
+
+결과는:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkzsh}
+
+같은 식이다.
+
+따라서:
+
+\begin{dhkcode}
+Path.cwd()
+
+/Users/user/Desktop/my_ml_project
+\end{dhkcode}
+
+와:
+
+\begin{dhkcode}
+Path(__file__).resolve()
+
+/Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkcode}
+
+는 전혀 다른 것을 말하고 있다.
+
+\subsubsection{이 차이를 그림으로 보면 간단하다}
+
+현재:
+
+\begin{dhkdir}
+/
+>Users/
+>>user/
+>>>Desktop/
+>>>>my_ml_project - CWD
+\end{dhkdir}
+
+여기에서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+를 실행했다.
+
+그러면:
+
+\begin{dhkdir}
+my_ml_project <- Path.cwd()
+>data/
+>src/
+>>train.py  <- __file__
+\end{dhkdir}
+
+즉:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+CWD
+내가 프로그램을 실행하고 있는 작업 기준 위치
+
+__file__
+실행되는 이 Python 파일 자체의 위치
+\end{dhksmry}
+\end{dhknote}
+
+이다.
+
+\subsubsection{그래서 \zsh{__file__}을 이용하면 파일 기준 경로를 만들 수 있다}
+
+이 패턴은 실제 프로젝트에서 매우 유용하다
+
+\zsh{train.py}가:
+
+\begin{dhkzsh}
+my_ml_project/src/train.py
+\end{dhkzsh}
+
+에 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+current_file = Path(__file__).resolve()
+
+print(current_file)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkzsh}
+
+그런데 우리는 파일이 아니라 src 디렉터리를 원한다고 해보자.
+
+\begin{dhkcode}
+current_dir = current_file.parent
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src
+\end{dhkzsh}
+
+한 번 더:
+
+\begin{dhkcode}
+project_root = current_file.parent.parent
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+가 된다.
+
+따라서:
+
+\begin{dhkcode}
+data_path = project_root / "data" / "train.csv"
+\end{dhkcode}
+
+하면:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/data/train.csv
+\end{dhkzsh}
+
+가 된다.
+
+전체 코드:
+
+\begin{dhkcode}
+from pathlib import Path
+
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+data_path = project_root / "data" / "train.csv"
+print(data_path)
+\end{dhkcode}
+
+이 코드는 \zsh{CWD}에 덜 의존한다.
+
+\subsubsection{왜 그런지 살펴보자}
+
+\zsh{train.py}를 다음처럼 작성하자.
+
+\begin{dhkcode}
+from pathlib import Path
+
+print("CWD :", Path.cwd())
+print("FILE:", Path(__file__).resolve())
+\end{dhkcode}
+
+프로젝트:
+
+\begin{dhkdir}
+my_ml_project/
+>src/
+>>train.py
+\end{dhkdir}
+
+
+이제 실행 방법을 바꿔보자.
+
+\subsubsection{실험 A - 프로젝트 \zsh{root}에서 실행}
+
+터미널:
+
+\begin{dhkzsh}
+my_ml_project %
+\end{dhkzsh}
+
+여기서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+결과:
+
+\begin{dhkzsh}
+CWD : /Users/user/Desktop/my_ml_project
+FILE: /Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkzsh}
+
+즉:
+
+\begin{dhkzsh}
+CWD
+my_ml_project/
+
+FILE
+my_ml_project/src/train.py
+\end{dhkzsh}
+
+\subsubsection{실험 B - \zsh{src} 안으로 들어가서 실행}
+
+터미널에서:
+
+\begin{dhkzsh}
+cd src
+\end{dhkzsh}
+
+그러면:
+
+\begin{dhkzsh}
+my_ml_project/src %
+\end{dhkzsh}
+
+이제:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+결과:
+
+\begin{dhkzsh}
+CWD : /Users/user/Desktop/my_ml_project/src
+FILE: /Users/user/Desktop/my_ml_project/src/train.py
+\end{dhkzsh}
+
+비교해보자.
+
+\textbf{실험 A}
+
+\begin{dhkzsh}
+CWD = my_ml_project
+FILE = my_ml_project/src/train.py
+\end{dhkzsh}
+
+\textbf{실험 B}
+
+\begin{dhkzsh}
+CWD = my_ml_project/src
+FILE = my_ml_project/src/train.py
+\end{dhkzsh}
+
+\textbf{\zsh{__file__}은 그대로인데 \zsh{CWD}가 바뀌었다}.
+
+이게 핵심이다.
+
+\subsubsection{그래서 상대 경로의 결과가 달라진다}
+
+\zsh{train.py}에 다음 코드가 있다고 하자.
+
+\begin{dhkcode}
+from pathlib import path
+
+data = Path("data/train.csv")
+print(data.resolve())
+\end{dhkcode}
+
+\textbf{프로젝트 root에서 실행하면}
+
+\begin{dhkzsh}
+my_ml_project %    
+\end{dhkzsh}
+
+에서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+하면:
+
+\begin{dhkzsh}
+CWD
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+이므로:
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+는:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/data.train.csv
+\end{dhkzsh}
+
+가 된다.
+
+\subsubsection{그런데 \zsh{src}에서 실행하면?}
+
+\begin{dhkzsh}
+my_ml_project/src %
+\end{dhkzsh}
+
+에서:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+하면 \zsh{CWD}가:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src
+\end{dhkzsh}
+
+다.
+
+따라서:
+
+\begin{dhkcode}
+Path("data/train.csv")
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/src/data/train.csv
+\end{dhkzsh}
+
+를 의미한다.
+
+그런데 실제 파일은:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project/data/train.csv
+\end{dhkzsh}
+
+에 있다.
+
+그러면 \zsh{FileNotFoundError}가 발생할 수 있다.
+
+\subsubsection{여기서 아주 중요한 결론}
+
+많은 초보자가 이렇게 생각한다.
+
+\begin{dhkcode}
+Path("data/train.csv")
+\end{dhkcode}
+
+\textbf{Python 파일이 있는 위치에서 \zsh{data/train.csv}를 찾겠지?}
+
+아니다.
+
+기본적으로 상대 파일 경로를 해석할 때 중요한 기준은:
+
+\begin{dhksmry}[centered]
+.py 파일 위치
+\end{dhksmry}
+
+가 아니라:
+
+\begin{dhksmry}[centered]
+Current Working Directory, CWD
+\end{dhksmry}
+
+이다.
+
+그래서
+
+\begin{dhksmry}[centered]
+같은 train.py
++
+같은 Path("data/train.csv")
+\end{dhksmry}
+
+여도 \textbf{어디에서 프로그램을 실행했느냐에 따라 가리키는 곳이 달라질 수 있다}.
+
+\subsubsection{그러면 파일 위치를 기준으로 만들고 싶으면?}
+
+그때 \zsh{__file__}을 이용할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+project_root = Path(__file__).resolve().parent().parent()
+data_path = project_root / "data" / "train.csv"
+\end{dhkcode}
+
+구조적으로:
+
+\begin{dhkbranch}[in=8]
+node main :: train.py
+arrow main
+node main :: Path(__file__)
+arrow main
+node main :: .../my_ml_project/src/train.py
+line main :: .parent
+arrow main
+node main :: .../my_ml_project/src
+line main :: .parent
+arrow main
+node main :: .../my_ml_project
+line main :: / "data"
+arrow main
+node main :: .../my_ml_project/data
+line main :: / "train.csv"
+arrow main
+node main :: .../my_ml_project/data/train.csv
+\end{dhkbranch}
+
+이제 실행 위치가 바뀌어도 프로젝트 구조 자체가 유지된다면 같은 파일을 가리킬 수 있다.
+
+\subsubsection{이제 세 번재인 \zsh{sys.path}}
+
+여기서 이름 때문에 혼란이 생긴다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.path)
+\end{dhkcode}
+
+결과는 대략:
+
+\begin{dhkzsh}
+[
+'/Users/user/Desktop/my_ml_project/src',
+'/Users/user/anaconda3/envs/transformer/lib/python310.zip',
+'/Users/user/anaconda3/envs/transformer/lib/python3.10',
+'/Users/user/anaconda3/envs/transformer/lib/python3.10/site-packages',
+...
+]
+\end{dhkzsh}
+
+이건 \zsh{train.csv}를 찾기 위한 목록이 아니다.
+
+Python이:
+
+\begin{dhkcode}
+import numpy
+import pandas
+import transformers
+\end{dhkcode}
+
+같은 \textbf{모듈/패키지를 import할 때 검색하는 위치}와 관련된 목록이다.
+
+즉:
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Path.cwd()
+작업 위치
+
+__file__
+이 Python 파일 위치
+
+sys.path
+import 검색 위치들
+\end{dhksmry}
+\end{dhknote}
+이다.
+
+\subsubsection{\zsh{sys.path}는 하나의 경로가 아니라 목록이다}
+
+이 차이도 중요하다.
+
+\begin{dhkcode}
+Path.cwd()
+\end{dhkcode}
+
+는 하나의 현재 작업 위치를 나타낸다.
+
+반면:
+
+\begin{dhkcode}
+sys.path
+\end{dhkcode}
+
+는 여러 검색 위치를 담고 있다.
+
+개념적으로:
+
+\begin{dhkdir}
+sys.path
+>위치 A
+>위치 B
+>위치 C
+>site-packages
+>...
+\end{dhkdir}
+
+Python이:
+
+\begin{dhkcode}
+import pandas
+\end{dhkcode}
+
+를 만나면 이 검색 체계를 이용해 pandas를 찾는다.
+
+그래서 Conda 환경의:
+
+\begin{dhkzsh}
+.../envs/transformer/lib/python3.10/site-packages
+\end{dhkzsh}
+
+같은 위치가 중요해진다.
+
+그곳에 transformer, pandas, numpy 등이 설치되어 있기 때문이다.
+
+\subsubsection{그래서 \zsh{sys.path}와 파일 읽기는 분리해야 한다}
+
+예를 들어:
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.read_csv("data/train.csv")
+\end{dhkcode}
+
+에서 \zsh{data/train.csv}를 찾는 문제와 pandas를 찾는 문제는 다르다.
+
+전자는 파일 시스템 + 파일 경로 문제다.
+
+후자는 Python import system + sys.path 문제다.
+
+\subsubsection{지금까지를 하나의 그림으로 통합}
+
+\begin{dhkdir}
+Python 실행
+> Path.cwd()
+>> 작업 기준점 -> 상대 파일 경로 해석 등에 중요
+> __file__
+>> 파일 위치 -> 프로젝트 root 계산 등에 사용
+> sys.path
+>> import 검색 -> numpy, pandas, transformer
+\end{dhkdir}
+
+\subsubsection{\zsh{pathlib.Path}를 제대로 다뤄보자}
+
+여기서부터는 실제 도구 사용이다.
+
+우선:
+
+\begin{dhkcode}
+from pathlib import Path
+\end{dhkcode}
+
+한다.
+
+\subsubsection{\zsh{Path}객체 만들기}
+
+\begin{dhkcode}
+p = Path("data/train.csv")
+\end{dhkcode}
+
+현재로서는 파일을 읽은 게 아니다.
+
+그냥:
+\begin{dhksmry}[centered]
+data/train.csv라는 경로를 나타내는 객체
+\end{dhksmry}
+
+를 만든 것이다.
+
+이 차이가 중요하다.
+
+\begin{dhkcode}
+Path("data/train.csv")
+\end{dhkcode}
+
+\textbf{한다고 파일이 열리는 것도 아니고 생성되는 것도 아니다}.
+
+\subsubsection{현재 작업 디렉터리}
+
+\begin{dhkcode}
+Path.cwd()
+\end{dhkcode}
+
+예:
+
+\begin{dhkzsh}
+/Users/user/Desktop/my_ml_project
+\end{dhkzsh}
+
+\subsubsection{홈 디렉터리}
+
+\begin{dhkcode}
+Path.home()
+\end{dhkcode}
+
+Mac에서는 예를 들어:
+
+\begin{dhkzsh}
+/Users/user
+\end{dhkzsh}
+
+같은 결과가 나온다.
+
+\subsubsection{경로 결합}
+
+가장 자주 쓴다.
+
+\begin{dhkcode}
+project = Path.cwd()
+data_dir = project / "data"
+train_file = data_dir / "train.csv"
+\end{dhkcode}
+
+또는 한 번에:
+
+\begin{dhkcode}
+train_file = Path.cwd() / "data" / "train.csv"
+\end{dhkcode}
+
+개념:
+
+\begin{dhksmry}[centered]
+CWD
+\da
+my_ml_project
+\da
+data
+\da
+train.csv
+\end{dhksmry}
+
+\subsubsection{파일/디렉터리 존재 여부}
+
+\begin{dhkcode}
+path = Path("data/train.csv")
+
+print(path.exists())
+\end{dhkcode}
+
+존재하면 \zsh{True}, 없으면 \zsh{False}
+
+ML 코드에서 굉장히 유용하다.
+
+\begin{dhkcode}
+if not path.exist():
+    print("데이터 파일이 없습니다.")
+\end{dhkcode}
+
+\subsubsection{파일인지 확인}
+
+\begin{dhkcode}
+path.is_file()
+\end{dhkcode}
+
+예:
+
+\begin{dhkcode}
+Path("data/train.csv").is_file()
+\end{dhkcode}
+
+실제 파일이면 \zsh{True}, 아니면 \zsh{False}
+
+\subsubsection{디렉터리인지 확인}
+
+\begin{dhkcode}
+Path("data").is_dir()
+\end{dhkcode}
+
+실제 디렉터리면 \zsh{True}, 아니면 \zsh{False}
+
+따라서:
+
+\begin{dhksmry}[centered]
+exists()
+\ra 존재하는가?
+
+is_file()
+\ra 파일인가?
+
+is_dir()
+\ra 디렉터리인가?
+\end{dhksmry}
+
+로 구분하면 된다.
+
+\subsubsection{파일 이름 가져오기}
+
+\begin{dhkcode}
+path = Path("/Users/user/Desktop/project/data/train.csv")
+
+print(path.name)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+train.csv
+\end{dhkzsh}
+
+\subsubsection{확장자 가져오기}
+
+\begin{dhkcode}
+print(path.suffix)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+.csv
+\end{dhkzsh}
+
+ML/DL에서는:
+
+\begin{dhkzsh}
+.csv
+.json
+.pt
+.pth
+.ckpt
+.safetensors
+\end{dhkzsh}
+
+같은 확장자를 다룰 일이 많다.
+
+\subsubsection{확장자를 제외한 파일 이름}
+
+\begin{dhkcode}
+print(path.stem)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+train
+\end{dhkzsh}
+
+즉:
+
+
+\begin{dhkdiagram}[in=10]
+node stem (1,1) :: train.csv
+node sd (3,1)  :: stem = train
+node fd (2,3)  :: suffix = .csv
+
+edge stem -> sd
+edge stem -> fd :: VH
+\end{dhkdiagram}
+
+그리고:
+
+\begin{dhkzsh}
+name = train.csv
+\end{dhkzsh}
+
+이다.
+
+\subsubsection{부모 디렉터리}
+
+\begin{dhkcode}
+print(path.parent())
+\end{dhkcode}
+
+경로가:
+
+\begin{dhkzsh}
+/Users/user/project/data/train.csv
+\end{dhkzsh}
+
+라면:
+
+\begin{dhkzsh}
+/Users/user/project/data
+\end{dhkzsh}
+
+가 나온다.
+
+다시:
+
+\begin{dhkcode}
+path.parent.parent
+\end{dhkcode}
+
+하면:
+
+\begin{dhkzsh}
+/Users/user/project
+\end{dhkzsh}
+
+이다.
+
+아까 \zsh{__file__}과 결합했던 이유가 이것이다.
+
+\subsubsection{확장자 변경}
+
+\begin{dhkcode}
+path = Path("data/train.csv")
+new_path = path.with_suffix(".json")
+print(new_path)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+data/train.json
+\end{dhkzsh}
+
+주의할 점은 이 코드가 \textbf{실제 파일의 확장자를 변경한 것은 아니다}.
+
+새로운 경로 객체를 만든 것이다.
+
+이 구분은 중요하다.
+
+\begin{dhkcode}
+path.with_suffix(".json")
+\end{dhkcode}
+
+은:
+\begin{dhksmry}[centered]
+.json으로 끝나는 새로운 Path를 만들어라.
+\end{dhksmry}
+
+이지, \textbf{SSD의 파일 이름을 실제로 바꿔라가 아니다}.
+
+\subsubsection{파일 이름 자체 변경}
+
+경로 표현만 바꾸려면:
+
+\begin{dhkcode}
+path = Path("data/train.csv")
+new_path = path.with_name("train_v2.csv")
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+data/train_v2.csv
+\end{dhkzsh}
+
+이것 역시 \textbf{경로 객체 생성}이다.
+
+실제 파일 변경과는 다르다.
+
+\subsubsection{실제 디렉터리 만들기}
+
+이제부터는 실제 파일 시스템에 영향을 준다.
+
+\begin{dhkcode}
+output_dir = Path("output")
+output_dir.mkdir()
+\end{dhkcode}
+
+실제로 \zsh{output/}디렉터리가 생성된다.
+
+이미 있으면 오류가 날 수 있으므로 보통:
+
+\begin{dhkcode}
+output_dir.mkdir(exist_ok=True)
+\end{dhkcode}
+
+라고 한다.
+
+\subsubsection{중첩 디렉터리 생성}
+
+\begin{dhkcode}
+checkpoint_dir = Path("outputs/models/checkpoints")
+
+checkpoint_dir.mkdir(
+    parents = True,
+    exist_ok = True
+)
+\end{dhkcode}
+
+그러면 필요한 부모 디렉터리까지 만든다.
+
+\begin{dhkdir}
+outputs/
+>models/
+>checkpoints/
+\end{dhkdir}
+
+ML 코드에서 정말 자주 보는 패턴이다.
+
+\subsubsection{간단한 텍스트 파일 쓰기}
+
+\zsh{Path}자체로도 가능하다.
+
+\begin{dhkcode}
+path = Path("result.txt")
+
+path.write_text("accuracy: 0.95")
+\end{dhkcode}
+
+실제로 \zsh{result.txt}가 생성된다.
+
+읽으려면:
+
+\begin{dhkcode}
+text = path.read_text()
+print(text)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+accuracy: 0.95
+\end{dhkzsh}
+
+\subsubsection{파일 삭제}
+
+\begin{dhkcode}
+path = Path("result.txt")
+path.unlink()
+\end{dhkcode}
+
+실제 파일을 삭제한다.
+
+따라서 \zsh{unlink()}는 앞에서 본:
+
+\begin{dhkcode}
+with_suffix(x)
+with_name()
+\end{dhkcode}
+
+보다 훨씬 주의해야 한다.
+
+\zsh{unlink()}는 실제 파일 시스템을 변경하기 때문이다.
+
+\subsubsection{빈 디렉터리 삭제}
+
+\begin{dhkcode}
+directory = Path("outputs")
+directory.rmdir()
+\end{dhkcode}
+
+단, 기본적으로 비어있는 디렉터리여야 한다.
+
+파일이 여러 개 들어 있는 폴더를 통째로 제거하는 것은 별도의 문제로 다루자.
+
+\subsubsection{디렉터리 안을 살펴보기}
+
+프로젝트가:
+
+\begin{dhkdir}
+data/
+>train.csv
+>labels.json
+>README.txt
+\end{dhkdir}
+
+라고 하자.
+
+\begin{dhkcode}
+data_dir = Path("data")
+
+for path in data_dir.iterdir():
+    print(path)
+\end{dhkcode}
+
+대략:
+
+\begin{dhkzsh}
+data/train.csv
+data/test.csv
+data/labels.json
+data/README.txt
+\end{dhkzsh}
+
+가 나온다.
+
+즉 \zsh{iterdir()}는:
+
+\begin{dhksmry}[centered]
+이 디렉터리 바로 아래 뭐가 있는지 순회
+\end{dhksmry}
+
+한다.
+
+\subsubsection{특정 파일만 찾기 - \zsh{glob}}
+
+csv만 찾고 싶다.
+
+\begin{dhkcode}
+data_dir = Path("data")
+for path in data_dir.glob("*.csv"):
+    print(path)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+data/train.csv
+datat/test.csv
+\end{dhkzsh}
+
+여기서:
+
+\begin{dhkzsh}
+*.csv
+\end{dhkzsh}
+
+는:
+
+\begin{dhksmry}[centered]
+이름은 무엇이든 상관없고 .csv로 끝나는 것
+\end{dhksmry}
+
+이라는 패턴이다.
+
+*를 wildcard라고 부른다.
+
+\subsubsection{하위 디렉터리까지 전부 찾기 - \zsh{rglob}}
+
+구조가:
+
+\begin{dhkdir}
+data/
+>train.csv
+>raw/
+>>raw_data.csv
+>processed/
+>>clean_data.csv
+\end{dhkdir}
+
+라고 하자.
+
+\begin{dhkcode}
+for path in Path("data").rglob("*.csv"):
+    print(path)  
+\end{dhkcode}
+
+그러면 하위 디렉터리까지 재귀적으로 검색해서:
+
+\begin{dhkzsh}
+data/train.csv
+data/raw_data.csv
+data/processed/clean_data.csv
+\end{dhkzsh}
+
+를 찾을 수 있다.
+
+ML 데이터셋 관리에서 꽤 유용하다.
+
+\subsubsection{이름 변경 - 실제 파일 시스템 조작}
+
+아까:
+
+\begin{dhkcode}
+with_name()
+\end{dhkcode}
+
+은 새로운 경로만 만들었다.
+
+실제 파일 이름을 변경하려면 예를 들어:
+
+\begin{dhkcode}
+old = Path("data/train.csv")
+new = Path("data/train_v2.csv")
+
+old.rename(new)
+\end{dhkcode}
+
+라고 할 수 있다.
+
+실제로:
+
+\begin{dhksmry}[centered]
+train.csv \ra train_v2.csv
+\end{dhksmry}
+
+로 변경된다.
+
+이 차이를 기억하자.
+
+\begin{dhksmry}[centered]
+with_name()
+with_suffix()
+\da
+Path 표현 생성
+
+rename()
+unlink()
+mkdir()
+\da
+실제 파일 시스템 변경
+\end{dhksmry}
+
+\subsubsection{\zsh{Path}에서 아주 중요한 개념적 구분}
+
+이걸 객체 관점에서 보면 더 명확하다.
+
+\begin{dhkcode}
+p = Path("data/train.csv")
+\end{dhkcode}
+
+여기서 \zsh{p}는 \textbf{파일 그 자체가 아니다}.
+
+\zsh{p}는:
+
+\begin{dhksmry}[centered]
+파일 시스템상의 어떤 위치를 표현하는 Python 객체
+\end{dhksmry}
+
+이다.
+
+그래서:
+
+\begin{dhkcode}
+p.exists()
+\end{dhkcode}
+
+라고 물어보는 것이다.
+
+즉:
+
+\begin{dhkbranch}[in=8]
+node main :: Path 객체
+arrow main :: 이 위치에
+node main :: data/train.csv
+arrow main :: 실제 파일 시스템을 확인
+node main :: 파일이 있는가?
+\end{dhkbranch}
+
+이다.
+
+이 관점은 Python의 \textbf{name $\rightarrow$ object} 사고방식과도 잘 맞는다.
+
+\begin{dhkcode}
+p = Path("data/train.csv")
+\end{dhkcode}
+
+에서 \zsh{p}라는 이름이 \zsh{Path}객체를 가리키고 있는 것이다.
+
+그리고 그 \zsh{Path}객체가 파일 시스템상의 위치를 표현한다.
+
+\subsubsection{실전 ML 코드로 합쳐보자}
+
+예를 들어:
+
+\begin{dhkcode}
+from pathlib import Path
+import pandas as pd
+
+project_root = Path(__file__).resolve().parent.parent
+
+data_dir = project_root / "data"
+model_dir = project_root / "models"
+
+train_path = data_dir / "train.csv"
+
+if not train_path.exists():
+    raise FileNotFoundError(f'데이터가 없습니다: {train_path}')
+
+mdoel_dir.mkdir(
+    parents = True,
+    exist_ok = True
+)
+
+df = pd.read_csv(train_path)
+\end{dhkcode}
+
+이제 이 코드가 거의 전부 읽혀야 한다.
+
+구조는:
+
+\begin{dhkbranch}[in=8]
+node main :: 현재 Python 파일
+arrow main
+node main :: __file__
+arrow main
+node main :: .parent.parent
+arrow main
+node main :: project root
+
+branchline main -> data :: data //* train.csv
+stop data
+
+handoff main -> models :: models
+stop models
+\end{dhkbranch}
+
+그리고:
+
+\begin{dhksmry}[centered]
+trian_path.exists()
+\da
+데이터 존재 확인
+
+model_dir.mkdir()
+\da
+모델 저장 디렉터리 준비
+
+pd.read_csv(train_path)
+\da
+실제 데이터 읽기
+\end{dhksmry}
+
+가 된다.
+
+\subsubsection{마지막으로 세 개를 확실히 분리하자}
+
+프로젝트:
+
+\begin{dhkdir}
+my_ml_project
+>data/
+>>train.csv
+>src/
+>>train.py
+\end{dhkdir}
+
+프로젝트 root에서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+를 실행했다.
+
+\begin{dhknote}
+\begin{dhksmry}
+Path.cwd()
+\ra /Users/user/Desktop/my_ml_project
+의미: \textbf{내 작업 기준점은 어디인가?}
+
+Path(__file__).resolve()
+\ra /Users/user/Desktop/my_ml_project/src/train.py
+의미: \textbf{현재 이 Python 파일은 어디 있는가?}
+
+sys.path
+\ra [
+    ...,
+    ".../site-packages",
+    ...
+    ]
+의미: \textbf{Python이 import할 모듈/패키지를 어디에서 찾는가?}
+\end{dhksmry}
+\end{dhknote}
+
+이 세 가지는 \textbf{모두 경로를 다루지만 서로 다른 질문에 대한 답}이다.
+
+\subsubsection{여기서 다음 단계는 \zsh{sys.argv}이다}
+
+이제 드디어 \textbf{커맨드라인}으로 들어갈 기반이 거의 만들어졌다.
+
+다음에는 이 한 줄을 완전히 해부하면 된다.
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+지금까지 배운 걸 기준으로 이미 앞부분은 이해할 수 있다.
+
+\begin{dhktree}
+python src/train.py --data data/train.csv --epoch 10
+>python :: 파이썬 인터프리터
+>src/train.py :: 실행할 파일
+>data.train.csv :: argument
+>10 :: argument 
+
+\end{dhktree}
+
+터미널에:
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+을 입력한다.
+
+이걸 구조적으로 보면:
+
+\begin{dhkbranch}[in=8]
+node main :: 사용자
+arrow main :: 키보드 입력
+node main :: 터미널
+arrow main
+node main :: Shell
+arrow main :: 명령 해석
+node main :: Python interpreter 실행
+arrow main :: train.py 실행
+node main :: Python 프로그램
+arrow main :: sys.argv
+node main :: 커맨드 라인에서 전달된 값 사용
+\end{dhkbranch}
+
+여기서 새로운 개념들이 등장한다.
+
+\begin{dhksmry}[centered]
+Terminal
+Shell
+Command
+Argument
+Option
+Python interpreter
+sys.argv
+\end{dhksmry}
+
+하나씩 분리하자.
+
+\subsubsection{터미널(Terminal)은 무엇인가?}
+
+Mac에서 Terminal, iTerm, VS Code의 Terminal 같은 화면을 본다고 하자.
+
+예를 들어:
+
+\begin{dhkzsh}
+(transformer) user@MacBook my_ml_project %
+\end{dhkzsh}
+
+그리고 여기에:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+라고 입력한다.
+
+흔히 이걸 보고:
+
+\begin{dhksmry}[centered]
+터미널이 Python을 실행한다.
+\end{dhksmry}
+
+라고 말하지만 조금 더 정확하게 보면 \textbf{터미널과 Shell은 다르다}.
+
+터미널은 사용자와 Shell이 상호작용할 수 있는 \textbf{입출력 인터페이스}에 가깝다.
+
+쉽게 말하면:
+\begin{dhkzsh}
+Terminal
+---------------------------
+python train.py 
+hello
+---------------------------
+\end{dhkzsh}
+
+처럼 명령을 입력하고 결과를 볼 수 있는 창을 제공한다.
+
+\subsubsection{실제로 명령을 해석하는 것은 Shell}
+
+Mac에서는 흔히 zsh를 사용한다.
+
+Linux에서는 zsh, bash 등이 있고,
+
+Windows에서는 PowerShell, cmd 등을 만날 수 있다.
+
+Shell의 역할은 대략:
+
+\begin{dhksmry}[centered]
+사용자가 입력한 명령을 해석해서 적절한 프로그램을 실행하는 것
+\end{dhksmry}
+
+이다.
+
+그래서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+라고 입력하면 Shell이 이것을 해석한다.
+
+\subsubsection{공백이 상당히 중요하다}
+
+다음 명령을 보자.
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+Shell입장에서는 대략 공백을 기준으로 여러 개의 토큰으로 분리된다.
+
+\begin{dhkzsh}
+python
+src/train.py
+--data
+data/train.csv
+--epochs
+10
+\end{dhkzsh}
+
+즉 개념적으로:
+
+\begin{dhkzsh}
+[python]
+[src/train.py]
+[--data]
+[data/train.csv]
+[--epochs]
+[10]
+\end{dhkzsh}
+
+처럼 된다.
+
+물론 따옴표, escape 등의 규칙 때문에 실제 Shell parsing은 이것보다 더 복잡하지만 지금은 이정도면 충분하다.
+
+\subsubsection{첫 번째 \zsh{python}은 무엇인가?}
+
+\begin{dhkdir}
+python src/train.py
+> 이것은 실행하려는 command다.
+\end{dhkdir}
+
+Shell입장에서는:
+
+\begin{dhksmry}[centered]
+python이라는 프로그램을 실행하라.
+\end{dhksmry}
+
+라는 의미다.
+
+여기서 Python interpreter가 등장한다.
+
+\subsubsection{Python interpreter란?}
+
+우리가 작성하는:
+
+\begin{dhkcode}
+print("hello")
+\end{dhkcode}
+
+는 그 자체로 CPU가 바로 실행하는 기계어가 아니다.
+
+Python 코드를 읽고 실행하는 프로그램이 필요하다.
+
+그 프로그램이 \textbf{Python interpreter}다.
+
+따라서:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+는 대략:
+
+\begin{dhksmry}[centered]
+Shell
+"python이라는 프로그램을 실행해."
+
+\da
+
+Python interpreter
+"좋아. 그런데 뭘 실행하지?"
+
+\da
+
+src/train.py
+\end{dhksmry}
+
+라는 구조다.
+
+\subsubsection{Conda와도 바로 연결된다}
+
+예를 들어:
+
+\begin{dhkzsh}
+conda activate transformer
+\end{dhkzsh}
+
+를 했다.
+
+프롬프트가:
+
+\begin{dhkzsh}
+(transformer) %
+\end{dhkzsh}
+
+처럼 바뀌었다.
+
+그리고:
+
+\begin{dhkzsh}
+python
+\end{dhkzsh}
+
+을 실행한다.
+
+여기서 중요한 질문은:
+
+\begin{dhksmry}[centered]
+수많은 Python 중 어떤 Python이 실행되는가?
+\end{dhksmry}
+
+
+이다.
+
+Conda 환경이 활성화되어 있다면 보통 해당 환경의 Python interpreter가 선택된다.
+
+Windows transformer 환경을 예로 들면:
+
+\begin{dhkzsh}
+C:\Users\user\anaconda3\envs\transformer\python.exe
+\end{dhkzsh}
+
+같은 실행 파일이다.
+
+Python 안에서도 확인할 수 있다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+즉:
+
+\begin{dhkbranch}[in=8]
+node main :: Shell
+arrow main :: python
+node main :: Conda transformer 환경의 python.exe
+arrow main
+node main :: Python interpreter
+\end{dhkbranch}
+
+라고 연결된다.
+
+\subsubsection{여기서 \zsh{sys.executable}의 정체가 나온다}
+
+이제 \zsh{sys}가 등장한다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+\zsh{sys.executable}은 대략:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+현재 이 Python 프로그램을 실행하고 있는
+
+Python interpreter 실행 파일은 어디 있는가?
+\end{dhksmry}
+\end{dhknote}
+
+를 알려준다.
+
+예를 들어:
+
+\begin{dhkzsh}
+C:\Users\user\anaconda3\envs\transformer\python.exe
+\end{dhkzsh}
+
+그러니까 이것도 단순한 파일 경로 이야기가 아니다.
+
+\textbf{현재 실행 중인 Python 환경을 확인하는 것}이다.
+
+그래서 환경 문제를 디버깅할 때 굉장히 유용하다.
+
+예를 들어:
+
+\begin{dhksmry}[centered]
+분명 transforemrs를 설치했는데 import transformers가 안되는데?
+\end{dhksmry}
+
+이럴 때:
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+을 보면 엉뚱한 Python을 실행하고 있었다는 걸 발견하는 경우가 있다.
+
+\subsubsection{이제 두 번재 토큰 \zsh{src/train.py}}
+
+전체 명령:
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+여기에서:
+
+\begin{dhkdir}
+python
+>src/train.py
+\end{dhkdir}
+
+이다.
+
+Shell은 Python 프로그램을 실행하면서 나머지 문자열들을 Python 쪽에 전달한다.
+
+Python interpreter 입장에서 첫 번째 중요한 값은:
+
+\begin{dhkzsh}
+src/train.py
+\end{dhkzsh}
+
+이다.
+
+즉:
+
+\begin{dhksmry}
+이 Python 스크립트를 실행해라.
+\end{dhksmry}
+
+\subsubsection{여기서 앞에서 배운 CWD가 바로 등장한다}
+
+현재 터미널 위치가:
+
+\begin{dhkzsh}
+my_ml_project/
+\end{dhkzsh}
+
+라고 하자.
+
+구조:
+
+\begin{dhkdir}
+my_ml_project/
+>data/
+>>train.csv
+>src/
+>>train.py
+\end{dhkdir}
+
+그리고:
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+를 실행한다.
+
+\zsh{src/train.py}는 \textbf{상대 경로}다.
+
+무엇을 기준으로?
+
+앞에서 배운 CWD다.
+
+\begin{dhksmry}[centered]
+CWD
+\da
+my_ml_project
++
+src/train.py
+\da
+my_ml_project/sr/train.py
+\end{dhksmry}
+
+앞에서 공부한 파일 경로와 커맨드 라인이 연결되었다.
+
+\subsubsection{그런데 뒤에 이상한 것들이 더 있다}
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+Python 파일 뒤에:
+
+\begin{dhkzsh}
+--data
+data.train.csv
+--epochs
+10
+\end{dhkzsh}
+
+이 있다.
+
+이것들이 \zsh{커맨드라인 인수(command-line arguments)}다.
+
+프로그램을 실행하면서 프로그램에 추가 정보를 전달하는 것이다.
+
+\subsubsection{왜 굳이 커맨드라인으로 정보를 전달할까?}
+
+예를 들어 \zsh{train.py}에 이렇게 작성할 수도 있다.
+
+\begin{dhkcode}
+data_path = "data/train.csv"
+epochs = 10
+\end{dhkcode}
+
+그런데 다음번에는 다른 데이터를 학습하거나 epochs를 변경하고 싶다.
+
+그러면:
+
+\begin{dhkcode}
+data_path = "data/test.csv"
+epochs = 20
+\end{dhkcode}
+
+으로 수정해야 한다.
+
+불편하다.
+
+그래서 프로그램 자체와 실행 설정을 분리한다.
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+다음에는:
+
+\begin{dhkzsh}
+python src/train.py --data data/new_data.csv --epochs 30
+\end{dhkzsh}
+
+라고 실행할 수 있다.
+
+\zsh{train.py} 코드는 수정하지 않았다.
+
+\subsubsection{이게 커맨드라인 인수의 핵심 목적이다}
+
+\begin{dhksmry}[centered]
+프로그램 코드
+train.py
+
++
+
+실행할 때 필요한 설정
+data/train.csv
+epochs = 10
+\end{dhksmry}
+
+를 분리한다.
+
+즉:
+
+\begin{dhkdir}[in=8]
+train.py
+>실행 A
+>>data=train.csv
+>>epochs=10
+>실행 B
+>>data=train2.csv
+>>epochs=20
+>실행 C
+>>data=train3.csv
+>>epochs=50
+\end{dhkdir}
+
+가 가능해진다.
+
+ML/DL에서 CLI를 많이 사용하는 이유 중 하나다.
+
+\subsubsection{이제 Argument와 Option을 구분하자}
+
+간단한 명령:
+
+\begin{dhkzsh}
+python train.py data/train.csv
+\end{dhkzsh}
+
+여기서:
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+는 argument다.
+
+프로그램에 전달하는 값이다.
+
+그런데 값이 많아지면 문제가 생긴다.
+
+\begin{dhkzsh}
+python train.py data/train.csv 10 32 model.pt
+\end{dhkzsh}
+
+이게 뭘 의미하는지 알아보기 어렵다.
+
+\begin{dhksmry}[centered]
+data/train.csv \ra 데이터?
+
+10 \ra epochs?
+
+32 \ra batch size?
+
+model.pt \ra outputs?
+\end{dhksmry}
+
+그래서 이름을 붙여준다.
+
+\begin{dhkzsh}
+python train.py \
+    --data data/train.csv \
+    --epochs 10 \
+    --batch-size 32 \
+    --output model.pt
+\end{dhkzsh}
+
+훨씬 명확하다.
+
+\subsubsection{\zsh{--data, --epochs}가 option이다}
+
+보통:
+
+\begin{dhkzsh}
+--data
+--epochs
+--batch-size
+--output
+\end{dhkzsh}
+
+같은 것을 option이라고 부른다.
+
+그리고:
+
+\begin{dhkzsh}
+--data data/train.csv
+\end{dhkzsh}
+
+를 보면:
+
+\begin{dhkdir}
+--data
+> 어떤 설정인지 나타내는 option
+\end{dhkdir}
+\begin{dhkdir}
+data/train.csv
+> 전달할 value
+\end{dhkdir}
+
+
+라고 볼 수 있다.
+
+다만 CLI 관련 용어는 라이브러리/문서에 따라 
+
+argument, option, parameter 등을 조금 다르게 쓰기도 한다. 
+
+중요한 것은 구조다.
+
+\subsubsection{위치로 의미를 판단하는 positional argument도 있다}
+
+예를 들어:
+
+\begin{dhkzsh}
+python copy.py source.txt destination.txt
+\end{dhkzsh}
+
+이라고 하자.
+
+프로그램이:
+
+\begin{dhksmry}[centered]
+첫 번째 값 = source
+
+두 번째 값 = destination
+\end{dhksmry}
+
+이라고 약속했다면:
+
+\begin{dhkzsh}
+source.txt
+destination.txt
+\end{dhkzsh}
+
+는 위치 자체가 의미를 가진다.
+
+이것을 \textbf{positional argument라고 한다}.
+
+예를 들어:
+
+\begin{dhkzsh}
+git add README.md
+\end{dhkzsh}
+
+같은 명령에서도 비슷한 사고방식을 볼 수 있다.
+
+\subsubsection{Option은 이름을 붙여 전달한다}
+
+반면:
+
+\begin{dhkzsh}
+python train.py --epochs 10
+\end{dhkzsh}
+
+에서는:
+
+\begin{dhkzsh}
+--epochs
+\end{dhkzsh}
+
+라는 이름을 통해 10의 의미를 알 수 있다.
+
+그래서 개념적으로:
+
+\begin{dhksmry}[centered]
+Positional - 위치로 의미 결정
+
+python train.py data.csv 10
+\end{dhksmry}
+
+위의 내용 대비:
+
+\begin{dhksmry}[centered]
+Option - 이름으로 의미 명시
+
+python train.py --data data.csv --epochs 10
+\end{dhksmry}
+
+라고 생각하면 된다.
+
+\subsubsection{이제 드디어 \zsh{sys.argv}}
+
+Python은 자신에게 전달된 커맨드라인 인수에 접근할 방법이 필요하다.
+
+그것이:
+
+\begin{dhkcode}
+import sys
+
+print(sys.argv)
+\end{dhkcode}
+
+이다.
+
+\zsh{argv}는 전통적으로:
+
+\begin{dhksmry}[centered]
+argument vector
+\end{dhksmry}
+
+에서 온 이름이다.
+
+여기서 vector를 NumPy 벡터처럼 수학적으로 생각할 필요는 없다.
+
+\textbf{전달된 argument들의 순서 있는 목록}정도로 이해하면 충분하다.
+
+\subsubsection{직접 실험해보자}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+import sys
+
+print(sys.argv)
+\end{dhkcode}
+
+터미널:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+결과는 대략:
+
+\begin{dhkzsh}
+['train.py']
+\end{dhkzsh}
+
+여기서 중요한 사실이 나온다.
+
+\zsh{sys.argv[0]}에는 보통 실행 대상 스크립트 이름/경로가 들어간다.
+
+\subsubsection{인수를 하나 전달해보자}
+
+\begin{dhkzsh}
+python train.py hello
+\end{dhkzsh}
+
+그러면:
+
+\begin{dhkzsh}
+['train.py', 'hello']
+\end{dhkzsh}
+
+가 된다.
+
+즉:
+
+\begin{dhkdir}
+sys.argv
+>[0] = 'train.py'
+>[1] = 'hello'
+\end{dhkdir}
+
+이다.
+
+\subsubsection{여러 개 전달}
+
+\begin{dhkzsh}
+python train.py hello world 10
+\end{dhkzsh}
+
+그러면:
+
+\begin{dhkzsh}
+[
+    'train.py',
+    'hello',
+    'world',
+    '10'
+]
+\end{dhkzsh}
+
+가 된다.
+
+인덱스로 접근이 가능하다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.argv[0])
+print(sys.argv[1])
+print(sys.argv[2])
+print(sys.argv[3])
+\end{dhkcode}
+
+결과
+
+\begin{dhkzsh}
+train.py
+hello
+world
+10
+\end{dhkzsh}
+
+\subsubsection{아주 중요한 점: 전부 문자열이다}
+
+\begin{dhkzsh}
+python train.py 10
+\end{dhkzsh}
+
+이라고 했다고 하자.
+
+사람은 10을 보고 숫자라고 생각한다.
+
+하지만:
+
+\begin{dhkcode}
+import sys
+
+print(sys.argv[1])
+print(type(sys.argv[1]))
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+10
+<class 'str'>
+\end{dhkzsh}
+
+이다.
+
+즉:
+
+\begin{dhksmry}[centered]
+터미널에서 전달
+10
+\da
+sys.argv
+\da
+"10"
+\end{dhksmry}
+
+이다.
+
+\textbf{커맨드라인 인수는 문자열 형태로 들어오므로 필요하면 변환해야 한다}.
+
+\subsubsection{epochs라면 숫자로 변환해야 한다}
+
+\begin{dhkzsh}
+python train.py 10
+\end{dhkzsh}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+import sys
+
+epochs = int(sys.argv[1])
+
+print(epochs)
+pirnt(type(epochs))
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+10
+<class 'int'>
+\end{dhkzsh}
+
+즉 \zsh{input()}과 비슷한 면이 있다.
+
+\begin{dhkzsh}
+x = input()
+\end{dhkzsh}
+
+도 기본적으로 문자열을 받는다.
+
+커맨드라인 인수도:
+
+\begin{dhkzsh}
+sys.argv[1]
+\end{dhkzsh}
+
+에서 문자열을 받는다.
+
+\subsubsection{파일 경로와 결합해보자}
+
+터미널:
+
+\begin{dhkzsh}
+python train.py data/train.csv
+\end{dhkzsh}
+
+Python:
+
+\begin{dhkcode}
+import sys
+from pathlib import Path
+
+data_path = Path(sys.argv[1])
+
+print(data_path)
+print(data_path.resolve())
+\end{dhkcode}
+
+여기서 흐름이 중요해진다.
+
+\begin{dhkbranch}[in=8]
+node main :: Shell
+arrow main :: "data/train.csv"
+
+node main :: Python
+arrow main :: sys.argv[1]
+
+node main :: "data/train.csv"
+arrow main :: Path(...)
+
+node main :: Path("data/train.csv")
+arrow main :: CWD 기준
+
+node main :: 실제 파일 시스템상의 위치
+\end{dhkbranch}
+
+지금가지 공부한 두 파트가 완전히 연결되었다.
+
+\subsubsection{Pandas까지 붙이면}
+
+\begin{dhkcode}
+import sys
+import pandas as pd
+from pathlib import Path
+
+data_path = Path(sys.argv[1])
+
+df = pd.read_csv(data_path)
+print(df.head())
+\end{dhkcode}
+
+실행:
+
+\begin{dhkzsh}
+python train.py data/train.csv
+\end{dhkzsh}
+
+그러면:
+
+\begin{dhkbranch}[in=8]
+node main :: Terminal
+arrow main :: data/train.csv
+node main :: sys.argv
+arrow main
+node main :: 파일 시스템
+arrow main
+node main :: train.csv
+arrow main
+node main :: Pandas
+arrow main
+node main :: DataFrame
+\end{dhkbranch}
+
+이 된다.
+
+이제 CLI가 ML 코드와 연결되기 시작한다.
+
+\subsubsection{그런데 \zsh{sys.argv}만 직접 쓰면 금방 불편해진다}
+
+예를 들어:
+
+\begin{dhkzsh}
+python train.py data/train.csv 10 32 model.pt
+\end{dhkzsh}
+
+코드는:
+
+\begin{dhkcode}
+data = sys.argv[1]
+epochs = int(sys.argv[2])
+batch_size = int(sys.argv[3])
+outuput = sys.argv[4]
+\end{dhkcode}
+
+가 된다.
+
+문제가 많다.
+
+순서를 기억해야 하고,
+
+\begin{dhkzsh}
+python train.py data/train.csv 32 10 model.pt
+\end{dhkzsh}
+
+처럼 순서를 잘못 넣어도 사람이 알아채기 어렵다.
+
+인수가 빠지면 \zsh{IndexError}가 날 수도 있고 도움말도 없다.
+
+\subsubsection{그래서 \zsh{argparse}가 등장한다}
+
+Python 표준 라이브러리에:
+
+\begin{dhkcode}
+import argparse
+\end{dhkcode}
+
+가 있다.
+
+이걸 사용하면:
+
+\begin{dhkzsh}
+python train.py \
+    --data data/train.csv \
+    --epochs 10 \
+    --batch-size 32
+\end{dhkzsh}
+
+같은 CLI를 훨씬 체계적으로 만들 수 있다.
+
+예를 들어:
+
+\begin{dhkcode}
+import argparse
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument("--data")
+parser.add_argument("--epochs, type=int)
+
+args = parser.parse_args()
+
+print(args.data)
+print(args.epochs)
+\end{dhkcode}
+
+실행:
+
+\begin{dhkzsh}
+python train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+그러면:
+
+\begin{dhkcode}
+args.data
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+datat/train.csv
+\end{dhkzsh}
+
+이고:
+
+\begin{dhkcode}
+args.epochs
+\end{dhkcode}
+
+는 \zsh{type=int}를 지정했으므로 정수 10 이다.
+
+\subsubsection{\zsh{argparse}가 마법을 쓰는 것은 아니다}
+
+이것도 구조적으로 이해하는 게 중요하다.
+
+밑바닥에는 여전히 커맨드라인에서 전달된 argument가 있다.
+
+개념적으로:
+
+\begin{dhkbranch}[in=4]
+node main :: Shell
+arrow main
+node main :: python train.py --data data/train.csv --epoch 10
+arrow main
+node main :: command-line arguments
+arrow main
+node main :: Python 프로세스
+
+branchline main -> argv :: sys.argv //* raw 문자열 목록
+stop argv
+
+handoff main -> argparse :: argparse //* 해석/검증/변환
+stop argparse
+\end{dhkbranch}
+
+\zsh{sys.argv}는 비교적 \textbf{날것 그대로 접근}하는 방법이고,
+
+\zsh{argparse}는 그것을 \textbf{구조적으로 해석해주는 도구}라고 보면 된다.
+
+\subsubsection{Option을 조금 더 제대로 만들어보자}
+
+\begin{dhkcode}
+import argparse
+from pathlib import Path
+
+parser = argparse.Argumentparser()
+
+parser.add_argument(
+    "--data",
+    type=Path,
+    required=True
+)
+
+parser.add_argument(
+    "--epochs",
+    type=int,
+    default=10
+)
+
+args = parser.parse_args()
+\end{dhkcode}
+
+이제:
+
+\begin{dhkzsh}
+python train.py --data data/train.csv
+\end{dhkzsh}
+
+라고만 실행해도:
+
+\begin{dhkcode}
+args.data
+\end{dhkcode}
+
+는 \zsh{Path}객체가 되고:
+
+\begin{dhkcode}
+args.epochs
+\end{dhkcode}
+
+는 기본값 10이 된다.
+
+\subsubsection{\zsh{required=True}}
+
+\begin{dhkcode}
+parser.add_argument(
+    "--data",
+    required=True
+)
+\end{dhkcode}
+
+라고 하면:
+
+\begin{dhksmry}[centered]
+--data는 반드시 전달해야 한다.
+\end{dhksmry}
+
+라는 의미다.
+
+따라서:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+라고 실행하면 \zsh{argparse}가 오류를 알려준다.
+
+직접:
+
+\begin{dhkcode}
+if len(sys.argv) < 2:
+...
+\end{dhkcode}
+
+같은 검사를 만들 필요가 줄어든다.
+
+\subsubsection{\zsh{default}}
+
+\begin{dhkcode}
+parser.add_argument(
+    "--epochs",
+    type=int,
+    default=10
+)
+\end{dhkcode}
+
+는:
+
+\begin{dhksmry}[centered]
+사용자가 epochs를 안 주면 10을 사용해라.
+\end{dhksmry}
+
+라는 뜻이다.
+
+따라서:
+
+\begin{dhkzsh}
+python train.py --data data/train.csv
+\end{dhkzsh}
+
+라면:
+
+\begin{dhkcode}
+args.epochs == 10
+\end{dhkcode}
+
+이고
+
+\begin{dhkzsh}
+python train.py --data data/train.csv --epochs 50
+\end{dhkzsh}
+
+라면:
+
+\begin{dhkcode}
+args.epochs == 50
+\end{dhkcode}
+
+이다.
+
+\subsubsection{도움말도 자동으로 만들 수 있다}
+
+\begin{dhkcode}
+parser.add_argument(
+    "--epochs",
+    type=int,
+    default=10,
+    help="Number of training epochs"
+)
+\end{dhkcode}
+
+그리고:
+
+\begin{dhkzsh}
+python train.py --help
+\end{dhkzsh}
+
+라고 실행하면 CLI 사용법을 보여준다.
+
+그래서 제대로 만들어진 Python 프로그램에서:
+
+\begin{dhkzsh}
+-h
+--help
+\end{dhkzsh}
+
+를 자주 볼 수 있는 것이다.
+
+\subsubsection{이제 실제 ML 형태로 만들어보자}
+
+\begin{dhkcode}
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser(
+    description="Train a classification model"
+)
+
+parser.add_argument(
+    "--data",
+    type=Path,
+    required=True,
+    help="Path to training data"
+)
+
+parser.add_argument(
+    "--epochs",
+    type=int,
+    default=10
+)
+
+...
+\end{dhkcode}
+
+실행:
+
+\begin{dhkzsh}
+python src/train.py \
+    --data data/train.csv \
+    --epochs 20 \
+    --batch-size 64 \
+    --output models/run1
+\end{dhkzsh}
+
+그러면 프로그램 내부에서는:
+
+\begin{dhksmry}[centered]
+args.data
+\ra Path("data/train.csv")
+
+args.epochs
+\ra 20
+
+args.batch_size
+\ra 64
+
+args.output
+\ra Path("models/run1")
+\end{dhksmry}
+
+처럼 사용할 수 있다.
+
+\subsubsection{이제 이 명령 전체가 읽혀야 한다}
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+앞에서부터 읽자.
+
+\begin{dhksmry}
+    python \ra Shell에게 Python interpreter를 실행하라고 요청
+
+    src/train.py \ra Python에게 실행할 스크립트 전다
+
+    --data \ra data라는 option
+
+    data/train.csv \ra 해당 option에 전달되는 값
+
+    --epochs \ra epochs라는 option
+
+    10 \ra 전달되는 값
+\end{dhksmry}
+
+그리고 Python 안에서는 원시적으로 \zsh{sys.argv}를 통해 이 정보에 접근할 수 있고,
+
+더 체계적인 프로그램에서는 \zsh{argparse}로 파싱한다.
+
+\subsubsection{지금까지 공부한 파일 경로까지 전부 합치면}
+
+\begin{dhkzsh}
+python src/train.py --data data/train.csv --epochs 10
+\end{dhkzsh}
+
+을 실행했다고 하자.
+
+\begin{dhkbranch}[in=8]
+node main :: Terminal
+arrow main
+node main :: Shell
+arrow main :: command 해석
+node main :: python
+arrow main :: 어떤 Python?
+node main :: Conda 환경의 Python interpreter
+arrow main :: sys.executable로 확인 가능
+node main :: src/train.py
+arrow main :: CWD 기준 상대 경로
+\end{dhkbranch}
+
+이 구조가 이번 파트의 핵심이다.
+
+\subsubsection{그리고 \zsh{sys}의 역할도 조금씩 선명해진다}
+
+지금까지 등장한 \zsh{sys} 기능은 두 개다.
+
+\begin{dhksmry}
+    sys.executable
+    \ra 현재 어떤 Python interpreter가 나를 실행하고 있는가?
+
+    sys.argv
+    \ra 이 프로그램을 실행할 때 어떤 command-line argument가 전달되었는가?
+
+    그리고 앞에서 잠깐 본:
+    sys.path
+    \ra import할 모듈을 어디에서 찾는가?
+\end{dhksmry}
+
+따라서 \zsh{sys}라는 모듈의 공통점이 보이기 시작한다.
+
+\begin{dhkdir}
+sys
+> 현재 실행중인 Python과 실행 환경에 대한 접근
+>> executable - interpreter
+>> argv - 실행 인수
+>> path - import 검색
+\end{dhkdir}
+
+\textbf{\zsh{sys}를 파일 경로 라이브러리라고 생각하면 안 되는 이유}도 상당히 명확해진다.
+
+\subsubsection{\zsh{argparse}에 대한 추가 내용}
+
+\begin{dhkcode}
+import argparse
+\end{dhkcode}
+
+그냥 Python 표준 라이브러리의 \zsh{argparse} 모듈을 가져온 것이다.
+
+우리가 사용하고 싶은 것은 이 안에 있는 \zsh{argparse.ArgumentParser}다.
+
+\begin{dhkcode}
+parser = argparse.ArgumentParser()
+\end{dhkcode}
+
+여기서 객체 관점으로 보는 게 중요하다.
+
+\begin{dhkbranch}[in=8]
+node main :: argparse
+line main
+node main :: ArgumentParser
+arrow main :: ()
+node main :: ArgumentParser 객체
+arrow main
+node main :: parser
+\end{dhkbranch}
+
+즉:
+
+\begin{dhkcode}
+parser = argparse.ArgumentParser()
+\end{dhkcode}
+
+는 \zsh{ArgumentParser}를 호출하여 객체를 만들고 \zsh{parser}라는 이름에 바인딩 한 것이다.
+
+이 객체의 역할은:
+
+\begin{dhksmry}[centered]
+커맨드라인 입력을 어떻게 해석할 것인지 관리하는 객체
+\end{dhksmry}
+
+라고 생각하면 된다.
+
+\begin{dhkcode}
+parser.add_argument("--name")
+\end{dhkcode}
+
+이제 \zsh{parser}에게 말하는 것이다.
+
+\begin{dhksmry}[centered]
+--name 이라는 입력을 받을 거야.
+\end{dhksmry}
+
+그리고:
+
+\begin{dhkcode}
+parser.add_argument("--age", type=int)
+\end{dhkcode}
+
+는:
+
+\begin{dhksmry}[centered]
+--age 라는 입력도 받을 거야. 그리고 이 값은 int로 변환해.
+\end{dhksmry}
+
+이다.
+
+그러니까 \zsh{add_argument()}는 이름 그대로다.
+
+\begin{dhksmry}[centered]
+"내가 어떤 argument를 받아야 하지?"
+\da
+add_argument("--name")
+\da
+add_argument("--age", type=int)
+\end{dhksmry}
+
+\textbf{입력 규칙을 \zsh{parser}에 하나씩 등록하는 것}이다.
+
+하지만 아직 실제 값을 읽은 게 아니며 이게 중요하다.
+
+\begin{dhkcode}
+parser.add_argument("--name")
+parser.add_argument("--age", type=int)
+\end{dhkcode}
+
+여기까지 했다고:
+
+\begin{dhkzsh}
+Kim
+30
+\end{dhkzsh}
+
+가 들어온 게 아니다.
+
+그냥:
+
+\begin{dhksmry}[centered]
+앞으로 이런 입력을 받을 예정이다.
+\end{dhksmry}
+
+라는 규칙만 만들어놓은 것이다.
+
+프로그래밍적으로 표현하면:
+
+\begin{dhksmry}[centered]
+프로그램의 입력 설계
+\end{dhksmry}
+
+단계다.
+
+이제:
+
+\begin{dhkcode}
+args = parser.parse_args()
+\end{dhkcode}
+
+가 나온다.
+
+여기서 실제 커맨드라인을 읽고 \zsh{parser}가 등록된 규칙에 따라 해석한다.
+
+우리가:
+
+\begin{dhkzsh}
+python hello.py --name Kim --age 30
+\end{dhkzsh}
+
+라고 실행했다.
+
+그러면 개념적으로:
+
+\begin{dhkbranch}[in=8]
+node main :: --name Kim --age 30
+arrow main
+node main :: parser.parse_args()
+
+branchline main -> name :: --name 발견
+arrow name
+node name :: Kim
+stop name
+
+handoff main -> age :: --age 발견
+arrow age
+node age :: "30"
+arrow age :: type=int
+node age :: 30
+stop age
+\end{dhkbranch}
+
+그리고 결과 객체를 반환한다.
+
+그 객체에 \zsh{args}라는 이름을 붙인 것이다.
+
+이후:
+
+\begin{dhkcode}
+print(args)
+\end{dhkcode}
+
+를 해보자.
+
+대략:
+
+\begin{dhkzsh}
+Namespace(name='Kim', age=30)
+\end{dhkzsh}
+
+가 나온다.
+
+즉 \zsh{parser}가 지저분한 \zsh{command-line}입력을:
+
+\begin{dhkzsh}
+--name Kim --age 30
+\end{dhkzsh}
+
+에서:
+
+\begin{dhkdir}
+Namespace
+>name = "Kim"
+>age = 35
+\end{dhkdir}
+
+라는 Python에서 다루기 쉬운 객체로 정리해 준 것이다.
+
+그래서:
+
+\begin{dhkcode}
+args.name
+args.age
+\end{dhkcode}
+
+로 접근할 수 있다.
+
+이게 \zsh{sys.agrv[1],[2],[3]}를 기억하는 것보다 훨씬 편한 이유다.
+
+\begin{dhknote}
+\begin{dhksmry}
+1. ArgumentParser()
+
+    Argument + Parser 는 argument를 parse하는 것
+
+    parse : \textbf{구조를 분석해서 의미 있는 형태로 해석한다}정도의 의미
+
+    따라서:
+
+    ArgumentParser = command-line argument를 해석하는 객체
+
+    라고 보면 외우지 않아도 이름 자체가 기능 설명임을 알 수 있다.
+
+
+2. args = parser.parse_args()      
+
+    이것 또한 마찬가지다
+
+    parse + args 이므로 arguments를 해석하라.
+
+
+3. argparse는 option의 - 를 attribute의 _ 형태로 만들어준다.
+
+    Command Line            Python
+
+    --batch-size      \ra     args.batch_size   
+    
+    --learning rate   \ra     args.learning_rate
+
+\end{dhksmry}
+\end{dhknote}
+
+\subsubsection{기억할 최소 골격과 자주 나타나는 오류}
+
+당장은 이것만 직접 칠 수 있게 되는 것이 목표다.
+
+\begin{dhkcode}
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--name")
+parser.add_argument("--age", type=int)
+args = parser.parse_args()
+print(args.name)
+\end{dhkcode}
+
+그리고 터미널:
+
+\begin{dhkzsh}
+python example.py --name Kim --age 30
+\end{dhkzsh}
+
+이 작은 프로그램을 \textbf{보지 않고 한 번 작성해보는 것}을 추천한다.
+
+지금부터 몇 번 직접 타이핑하면서 아래 패턴을 손에 넣으면 된다.
+
+\begin{dhksmry}[centered]
+만든다
+ArgumentParser()
+
+\da
+
+등록한다
+add_argument()
+
+\da
+
+해석한다
+parser_args()
+
+\da
+
+사용한다
+args.xxx
+\end{dhksmry}
+
+\begin{dhksmry}[centered]
+\zsh{ \ } 는 단순히 줄바꿈 기호가 아니다.
+\end{dhksmry}
+
+zsh/bash 같은 Shell에서 줄 끝의 
+
+\begin{dhkcode}
+    \
+\end{dhkcode}
+
+는 \textbf{다음 줄까지 현재 명령이 계속된다는 뜻}이다.
+
+좀 더 정확하게 말하면 바로 뒤의 newline을 escape해서
+
+그 줄바꿈을 명령 구분으로 취급하지 않게 만든다.
+
+그리고 이 \zsh{ \ }를 작성하며 나오는 \zsh{ > } 또한 오류가 아니다.
+
+터미널에서:
+
+\begin{dhkzsh}
+(transformer) ... % python train.py \
+>
+\end{dhkzsh}
+
+처럼 \zsh{ > }가 나온다면, 이건 zsh가:
+
+\begin{dhksmry}[centered]
+명령이 아직 끝나지 않았으니 다음 줄을 입력하세요.
+\end{dhksmry}
+
+
+라고 기다리고 있는 것이다.
+
+\zsh{ > }를 직접 입력하는 것은 아니다.
+
+Shell이 표시해주는 continuation prompt다.
+
+Python REPL의 >>>와 혼동하면 안된다.
+
+\subsubsection{지금까지 배운 네 가지를 정리하고 추가 내용}
+
+지금까지 배운 각각은:
+
+\begin{dhksmry}[centered]
+type
+\ra 어떤 Python 타입으로 변환할까?
+
+default
+\ra 사용자가 입력하지 않으면 무엇을 사용할까?
+
+required
+\ra 반드시 입력해야 하는가?
+
+help
+\ra --help에서 어떻게 설명할까?
+\end{dhksmry}
+
+이다.
+
+그런데 ML/DL 프로그램을 만들다 보면 이것만으로 부족하다.
+
+특히 자주 만날 것은
+
+\begin{dhkzsh}
+action
+choices
+nargs
+짧은 option alias
+dest
+positional argument
+\end{dhkzsh}
+
+정도다.
+
+\subsubsection{\zsh{action} - 값을 받지 않는 스위치}
+
+ML에서 이런 옵션을 만들고 싶다고 하자.
+
+\begin{dhkzsh}
+python train.py --use-augmentation
+\end{dhkzsh}
+
+뜻은:
+\begin{dhksmry}[centered]
+augmentation을 사용한다.
+\end{dhksmry}
+
+여기서는 굳이 \zsh{--use-augmentation True}라고 할 필요가 없다.
+
+\zsh{--use-augmentation}이 \textbf{존재하는 것 자체를 True}로 만들 수 있다.
+
+\begin{dhkcode}
+parser.add_argument(
+    "--use-augmentation",
+    action="store_true"
+)
+\end{dhkcode}
+
+이제:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+라면:
+
+\begin{dhkcode}
+args.use_augmentation
+\end{dhkcode}
+
+은 \zsh{False}다.
+
+반대로:
+
+\begin{dhkzsh}
+python train.py --use-augmentation
+\end{dhkzsh}
+
+하면:
+
+\begin{dhkcode}
+args.use-augmentation
+\end{dhkcode}
+
+은 \zsh{True}가 된다.
+
+이런 걸 흔히 flag라고 생각하면 된다.
+
+GPU 관련 설정, logging, augmentation, debug mode 같은 on/off 설정에 잘 어울린다.
+
+\subsubsection{ML에서는 \zsh{choices}를 어디에 쓸까?}
+
+예를 들어:
+
+\begin{dhkcode}
+parser.add_argument(
+    "--optimizer",
+    choices=["adamw", "adam", "sgd"],
+    default="adamw"
+)
+
+parser.add_argument(
+    "--scheduler",
+    choices=["linear", "cosine", "constant"],
+    default="linear"
+)
+
+parser.add_argument(
+    "--device",
+    choices=["cpu", "cuda", "mps"],
+    default="cpu"
+)
+\end{dhkcode}
+
+같은 식이다.
+
+그러면 CLI 자체가 프로그램이 허용하는 설정을 설명한다.
+
+\subsubsection{\zsh{nargs} - argument 하나에 여러 값 받기}
+
+이번에는 hidden layer 크기를 받고 싶다고 하자.
+
+예를 들어:
+
+\begin{dhksmry}[centered]
+512 \ra 256 \ra 128
+\end{dhksmry}
+
+사용자가:
+
+\begin{dhkzsh}
+python train.py --hidden-sizes 512 256 128
+\end{dhkzsh}
+
+라고 입력하게 하고 싶다.
+
+그때:
+
+\begin{dhkcode}
+parser.add_argument(
+    "--hidden-sizes",
+    type=int,
+    nargs="+"
+)
+\end{dhkcode}
+
+라고 할 수 있다.
+
+그러면:
+
+\begin{dhkcode}
+args.hidden_sizes
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+[512, 256, 128]
+\end{dhkzsh}
+
+이 된다.
+
+즉 하나의 option에 여러 값을 전달했다.
+
+\subsubsection{\zsh{nargs="+"}의 +는 무슨 뜻인가?}
+
+여기서는:
+
+\begin{dhksmry}[centered]
+하나 이상
+\end{dhksmry}
+
+이라는 뜻이다.
+
+그래서:
+
+\begin{dhkzsh}
+--hidden-sizes 512
+\end{dhkzsh}
+
+도 가능하고:
+
+\begin{dhkzsh}
+--hidden-szie 512 256 128
+\end{dhkzsh}
+
+도 가능하다.
+
+하지만 값 없이:
+
+\begin{dhkzsh}
+--hidden-sizes
+\end{dhkzsh}
+
+만 쓰면 안된다.
+
+\subsubsection{짧은 option이름도 같이 만들 수 있다}
+
+예를 들어:
+
+\begin{dhkcode}
+parser.add_argument(
+    "-e",
+    "--epochs",
+    type=int,
+    default=10
+)
+\end{dhkcode}
+
+그러면 둘 다 가능하다.
+
+\begin{dhkzsh}
+python train.py --epochs 20
+python train.py -e 20
+\end{dhkzsh}
+
+둘 다:
+
+\begin{dhkcode}
+args.epochs == 20
+\end{dhkcode}
+
+이다.
+
+짧은 옵션은 자주 사용하는 CLI에서 편리하다.
+
+\subsubsection{\zsh{dest} - 최종 Python attribute 이름을 직접 정하기}
+
+우리가 사용했던:
+
+\begin{dhkcode}
+parser.add_argument("--learning-rate")
+\end{dhkcode}
+
+는 자동으로:
+
+\begin{dhkcode}
+args.learning_rate
+\end{dhkcode}
+
+가 된다고 했다.
+
+이 최종 목적지 이름을 \zsh{argparse}에서는 \textbf{destination}, 줄여서 \zsh{dest}라고 한다.
+
+직접 지정할 수도 있다.
+
+\begin{dhkcode}
+parser.add_argument(
+    "--learning_rate",
+    dest="lr,
+    type=float
+)
+\end{dhkcode}
+
+그러면:
+
+\begin{dhkzsh}
+python train.py --learning-rate 0.001
+\end{dhkzsh}
+
+라고 입력했는데 Python에서는:
+
+\begin{dhkcode}
+args.lr
+\end{dhkcode}
+
+로 접근한다.
+
+즉:
+
+\begin{dhkdir}
+--learning-rate
+>dest="lr"
+>args.lr
+\end{dhkdir}
+
+이다.
+
+\subsubsection{\zsh{dest}는 왜 존재할까?}
+
+CLI에서 사람이 읽기 좋은 이름과 Python 내부에서 쓰기 좋은 이름을 분리할 수 있기 때문이다.
+
+예를 들어 터미널에서는
+
+\begin{dhkzsh}
+--learning-rate
+\end{dhkzsh}
+
+가 명확하다.
+
+하지만 학습 코드에서는:
+
+\begin{dhkzsh}
+lr
+\end{dhkzsh}
+
+라는 이름을 사용하고 싶을 수도 있다.
+
+그러면 위와 같은 코드로 변경이 가능하다.
+
+다만 특별한 이유가 없다면 자동 변환되는 기본 동작을 그대로 써도 충분하다.
+
+\subsubsection{Positional argument도 만들 수 있다}
+
+지금까지 전부:
+
+\begin{dhkzsh}
+--epochs
+--batch-size
+--learning-rate
+\end{dhkzsh}
+
+처럼 --가 붙었다.
+
+그런데:
+
+\begin{dhkcode}
+parser.add_argument("data")
+\end{dhkcode}
+
+처럼 --없이 정의하면 positional argument가 된다.
+
+그러면 실행할 때:
+
+\begin{dhkzsh}
+python train.py data/train.csv
+\end{dhkzsh}
+
+라고 한다.
+
+Python에서는:
+
+\begin{dhkcode}
+args.data
+\end{dhkcode}
+
+로 사용한다.
+
+즉:
+
+positional argument
+
+\begin{dhktree}
+python train.py data/train.csv
+>python
+>train.py
+>data/train.csv :: args.data
+\end{dhktree}
+
+optional argument
+
+\begin{dhktree}
+python train.py --data data/train.csv
+>python
+>train.py
+>--data data/train.csv :: args.data
+\end{dhktree}
+
+
+이다.
+
+\subsubsection{무엇을 positional로 만들고 무엇을 optional로 만들까?}
+
+정답이 하나로 고정된 것은 아니지만 프로그램 설계의 문제다.
+
+예를 들어 프로그램이:
+
+\begin{dhksmry}[centered]
+CSV 하나를 반드시 분석한다.
+\end{dhksmry}
+
+라는 도구라면:
+
+\begin{dhkzsh}
+python analyze.py data.csv
+\end{dhkzsh}
+
+처럼 파일을 positional로 두는 것도 자연스럽다.
+
+반면 ML 학습 프로그램처럼 설정이 많다면:
+
+\begin{dhkzsh}
+python train.py \
+    --data data/train.csv \
+    --epochs 20 \
+    --batch-size 64
+\end{dhkzsh}
+
+처럼 명시적인 optional으로 두면 읽기 쉽다.
+
+\subsubsection{실제 ML CLI를 한번 읽어보자}
+
+이제 꽤 현실적인 코드를 보자.
+
+\begin{dhkcode}
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser(
+    description="Train a classification model"
+)
+
+parser.add_argument(
+    "--data",
+    type=Path,
+    required=True,
+    help="Path to training dataset"
+)
+
+parser.add_argument(
+    "-e",
+    "--epochs",
+    type=int,
+    default=10
+)
+
+parser.add_argument(
+    "--optimizer",
+    choices=["adam", "adamw", "sgd"],
+    default="adamw"
+)
+
+parser.add_argument(
+    "--hidden-sizes",
+    type=int,
+    nargs="+"
+)
+
+parser.add_argument(
+    "--use-augmentation",
+    action="store_true"
+)
+\end{dhkcode}
+
+처음 \zsh{argparse}를 봤을 때는 이 코드가 꽤 낯설었지만
+
+지금은 위에서부터 읽을 수 있다.
+
+\begin{dhkcode}
+parser.add_argument(
+    "--data",
+    type=Path,
+    required=True
+)
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+data 경로는 반드시 받아라. 그리고 Path 객체로 변환해라.
+\end{dhksmry}
+
+\begin{dhkcode}
+parser.add_argument(
+    "-e",
+    "--epochs",
+    type=int,
+    default=10
+)
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+-e 또는 --epochs 로 받을 수 있고 정수이며 안 주면 10.
+\end{dhksmry}
+
+\begin{dhkcode}
+parser.add_argument(
+    "--optimizer",
+    choices=["adam", "adamw", "sgd"],
+    default="adamw"
+)
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+optimizer는 셋 중 하나만 허용하고 기본값은 adamw. 
+\end{dhksmry}
+
+\begin{dhkcode}
+parser.add_argument(
+    "--hidden-sizes",
+    type=int,
+    nargs="+"
+)
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+정수를 하나 이상 받아서 여러 값으로 저장.
+\end{dhksmry}
+
+\begin{dhkcode}
+parser.add_argument(
+    "--use-augmentation",
+    action="store_true"
+)
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+option이 등장하면 True가 되는 스위치.
+\end{dhksmry}
+
+\subsubsection{\zsh{--help}의 가치도 이제 커진다}
+
+이렇게 잘 정의해놓으면:
+
+\begin{dhkzsh}
+python train.py --help
+\end{dhkzsh}
+
+만 입력해도 \zsh{argparse}가 프로그램 사용법을 만들어준다.
+
+즉 \zsh{add_argument()}에 우리가 입력한 정보는 단순히 값을 읽는 데만 사용되는 게 아니다.
+
+\begin{dhkbranch}[in=8]
+node main :: add_argument()
+branchline main -> name :: 입력 이름
+stop name
+branchline main -> type :: 타입 변환
+stop type
+branchline main -> default :: 기본값
+stop default
+branchline main -> need :: 필수 여부
+stop need
+branchline main -> accept :: 허용 값
+stop accept
+branchline main -> number :: 값의 갯수
+stop number
+branchline main -> explain :: 설명
+stop explain
+arrow main
+node main :: ArgumentParser
+branchline main -> parse :: 입력 parsing
+stop parse
+handoff main -> help :: help 생성
+stop help
+\end{dhkbranch}
+
+그래서 CLI 자체가 하나의 \textbf{입력 인터페이스}가 된다.
+
+\begin{dhktable}
+| 바꾸고 싶은 것 | CLI 사용 예시 | argparse에서 필요한 것 |
+|:---|:---|:---|
+| 학습 횟수 | --epochs 20 | type=int |
+| batch 크기 | --batch-size 64 | type=int |
+| learning rate | --learning-rate 0.001 | type=float |
+| 데이터 위치 | --data train.csv | type=Path |
+| 모델 저장 위치 | --output model.pt | type=Path |
+| optimizer 종류 | --optimizer adamw | choices=... |
+| augmentation 켜기 | --use-augmentation | action="store_true" |
+| device 선택 | --device mps | choices=... |
+| worker 수 | --num-workers 4 | type=int |
+| hidden layer 여러 개 | --hidden-sizes 512 256 | nargs="+", type=int |
+\end{dhktable}

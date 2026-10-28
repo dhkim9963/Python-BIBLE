@@ -1,0 +1,1002 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.6. __new__와 __init__ — 인스턴스 생성과 초기화는 어떻게 다른가?
+% ==================================================
+
+\subsection{\zsh{__new__}와 \zsh{__init__} - 인스턴스 생성과 초기화는 어떻게 다른가?}
+
+2.5에서는 클래스에 정의된 함수 객체가 인스턴스에 바인딩되면서 메서드가 호출되는 과정을 학습하였다.
+
+특히 다음 두 호출이 일반적인 인스턴스 메서드에서 같은 효과를 가진다는 사실을 확인하였다.
+
+\begin{dhkcode}
+p.introduce()
+
+Person.introduce(p)
+\end{dhkcode}
+
+이번 2.6에서는 그보다 앞선 과정, 즉 인스턴스가 존재하기 전부터 인스턴스가 생성되고 초기화될 때까지 Python에서 어떤 일이 발생하는지 살펴볼 것이다.
+
+출발점은 다음 코드다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+
+p = Person("Kim")
+\end{dhkcode}
+
+우리는 흔히 \zsh{__init__()}을 생성자(Constructor)라고 부르지만,
+
+엄밀하게는 \zsh{__init__()}이 인스턴스 자체를 생성하는 것은 아니다.
+
+Python에서는 일반적으로 다음 두 과정을 구분한다.
+
+\begin{dhksmry}
+    __new__() : 인스턴스 생성
+
+    __init__() : 생성된 인스턴스 초기화
+\end{dhksmry}
+
+이번 학습의 핵심은 이 두 메서드가 어떤 순서로 호출되고, 각각 무엇을 반환하며, 그 과정에서 \zsh{self}가 어떻게 전달되는지를 이해하는 것이다.
+
+\subsubsection{개념 정의 - 생성과 초기화의 차이}
+
+먼저 객체의 생성(Creation)과 초기화(Initialization)를 구분하자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 생성
+\end{dhksmry}
+\end{dhknote}
+
+아직 존재하지 않는 인스턴스 객체를 만들어 반환하는 과정이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 초기화
+\end{dhksmry}
+\end{dhknote}
+
+이미 생성된 인스턴스에 필요한 속성을 설정하거나 초기 상태를 구성하는 과정이다.
+
+예를 들어 다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+        self.age = 0
+\end{dhkcode}
+
+여기서 \zsh{__init__()}은 인스턴스에 \zsh{name}과 \zsh{age} 속성을 설정하고 있다.
+
+하지만 \zsh{self.name}과 \zsh{self.age}를 설정하려면 그 속성들을 담을 인스턴스 객체가 먼저 존재해야 하지 않을까?
+
+바로 이 질문이 \zsh{__new__()}와 \zsh{__init__()}을 구분하는 출발점이다.
+
+\begin{dhktable}
+|구분|	__new__()|	__init__()|
+|:---|:---|:---|
+|역할|	인스턴스 생성|	인스턴스 초기화|
+|첫 번째 매개변수 관례|	cls|	self|
+|첫 번째 인수|	생성 대상 클래스|	생성된 인스턴스|
+|반환값|	생성한 객체 또는 다른 객체|	반드시 None|
+|실행 순서|	일반적으로 먼저|	생성 이후|
+|직접 재정의하는 빈도|	상대적으로 드묾|	매우 흔함|
+\end{dhktable}
+
+여기서 \zsh{cls}와 \zsh{self}는 모두 관례적인 매개변수 이름이다.
+
+\zsh{self}가 예약어가 아니었던 것처럼 \zsh{cls}도 예약어는 아니다.
+
+\subsubsection{클래스 객체를 호출하면 무엇이 실행되는가?}
+
+다음 표현식을 살펴보자.
+
+\begin{dhkcode}
+Person("Kim")
+\end{dhkcode}
+
+2.3에서는 이 표현식이 클래스 객체를 호출하는 것이라고 학습했다.
+
+그렇다면 클래스 객체를 호출할 때 Python은 무엇을 실행할까?
+
+일반적인 Python 클래스는 \zsh{type}이라는 메타클래스의 인스턴스다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+print(type(Person))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'type'>
+\end{dhkzsh}
+
+여기서 중요한 사실이 있다.
+
+클래스 객체도 호출 가능한 객체이며, 그 호출 과정은 메타클래스의 호출 메커니즘에 의해 처리된다는 것이다.
+
+일반적인 클래스에서는 \zsh{type.__call__()}이 인스턴스 생성 과정을 담당한다.
+
+개념적인 실행 순서는 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: Person('Kim') // 클래스 객체 호출
+node n2 (2,1) :: type.__call__ // 생성 과정 조정
+node n3 (3,1) [accent] :: Person.__new__ // 인스턴스 생성 시도
+node n4 (4,1) [accent] :: Person.__init__ // 생성된 인스턴스 초기화
+node n5 (5,1) :: 호출 결과 반환 // p 이름에 바인딩
+
+edge n1->n2
+edge n2->n3
+edge n3->n4
+edge n4->n5
+
+caption :: 기본 메타클래스 type을 사용하는 일반적인 클래스의 인스턴스 생성 과정
+\end{dhkgraph}
+
+단, 이 그림에는 한 가지 조건이 있다.
+
+\zsh{__new__()}가 해당 클래스의 인스턴스 객체를 반환한 경우에만 \zsh{__init__()}이 이어서 호출된다.
+
+다른 종류의 객체를 반환하면 \zsh{__init__()}이 호출되지 않을 수 있다.
+
+이 예외는 뒤에서 실제 코드로 확인할 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+type.__call__()을 개념적으로 표현하면
+\end{dhksmry}
+\end{dhknote}
+
+다음과 비슷하게 생각할 수 있다.
+
+\begin{dhkcode}
+def conceptual_call(cls, *args, **kwargs):
+    obj = cls.__new__(cls, *args, **kwargs)
+
+    if isinstance(obj, cls):
+        cls.__init__(obj, *args, **kwargs)
+
+    return obj
+\end{dhkcode}
+
+이 코드는 실제 CPython 구현을 그대로 옮긴 것이 아니라, 일반적인 동작 순서를 이해하기 위한 수도 코드다.
+
+실제 구현에서는 특수 메서드 탐색, 타입 검사, 초기화 결과 검증 등의 세부 처리가 추가된다.
+
+또한 위 수도 코드는 \zsh{__init__()}의 반환값이 \zsh{None}이어야 한다는 검사도 생략하였다.
+
+현재 단계에서 중요한 것은 다음 순서다.
+
+\begin{dhksmry}[centered]
+Class Call \ra __new__ \ra __init__ \ra Return
+\end{dhksmry}
+
+\subsubsection{\zsh{__new__()} - 인스턴스 생성}
+
+이제 \zsh{__new__()}를 직접 정의해 보자.
+
+\begin{dhkcode}
+class Person:
+    def __new__(cls):
+        print("__new__ 실행")
+
+        instance = super().__new__(cls)
+
+        return instance
+\end{dhkcode}
+
+이 코드에서 가장 중요한 부분은 다음 표현식이다.
+
+\begin{dhkcode}
+instance = super().__new__(cls)
+\end{dhkcode}
+
+여기서는 상위 클래스에서 제공하는 인스턴스 생성 기능을 호출한다.
+
+\zsh{Person}의 직접적인 상위 클래스는 기본적으로 \zsh{object}이므로,
+
+이 예제에서는 \zsh{object.__new__()}를 통해 인스턴스를 생성하는 효과가 있다.
+
+\zsh{super()}의 정확한 메서드 탐색 규칙은 2.9에서 다룰 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+cls는 무엇을 참조할까?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드로 확인해 보자.
+
+\begin{dhkcode}
+class Person:
+    def __new__(cls):
+        print(cls)
+
+        return super().__new__(cls)
+
+p = Person()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+즉, \zsh{cls}는 생성 대상인 \zsh{Person} 클래스 객체를 참조한다.
+
+2.5에서 \zsh{self}가 인스턴스 객체를 참조했던 것과 비교해 보자.
+
+\begin{dhktable}
+|매개변수|참조하는 객체|
+|:---|:---|
+|cls|클래스 객체|
+|self|인스턴스 객체|
+\end{dhktable}
+
+이 차이는 자연스러운 결과다.
+
+\zsh{__new__()}이 호출되는 시점에는 새 인스턴스를 생성하려는 중이므로, 아직 그 인스턴스를 \zsh{self}로 전달할 수 없기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+생성한 인스턴스를 확인해 보자.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    def __new__(cls):
+        instance = super().__new__(cls)
+
+        print(type(instance))
+
+        return instance
+
+p = Person()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+\zsh{super().__new__(cls)}가 반환한 객체는 \zsh{Person} 클래스의 인스턴스다.
+
+그리고 \zsh{__new__()}는 그 객체를 반환하고 있다.
+
+여기서 중요한 사실은 \zsh{__new__()}가 반드시 새 인스턴스를 반환해야 하는 것은 아니라는 것이다.
+
+다른 객체를 반환하는 것도 가능하다.
+
+다만 그렇게 하면 이후 초기화 과정이 달라질 수 있다.
+
+\subsubsection{\zsh{__init__()} - 생성된 인스턴스 초기화}
+
+이번에는 \zsh{__init__()}을 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        print("__init__ 실행")
+
+        self.name = name
+
+p = Person("Kim")
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+__init__ 실행
+\end{dhkzsh}
+
+여기서 \zsh{self}는 이미 생성된 \zsh{Person} 인스턴스를 참조한다.
+
+따라서 다음 코드를 실행할 수 있다.
+
+\begin{dhkcode}
+self.name = name
+\end{dhkcode}
+
+2.4에서 배운 것처럼, 이 코드는 \zsh{self}가 참조하는 인스턴스에 \zsh{name} 속성을 설정하는 동작이다.
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+print(p.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'name': 'Kim'}
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__init__()은 객체를 반환하는가?
+\end{dhksmry}
+\end{dhknote}
+
+여기서 주의할 점이 있다.
+
+\zsh{__init__()}은 생성된 인스턴스를 초기화하는 메서드이므로 반드시 \zsh{None}을 반환해야 한다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self):
+        return 10
+
+
+p = Person()
+\end{dhkcode}
+
+실행하면 다음과 같은 오류가 발생한다.
+
+\begin{dhkzsh}
+TypeError: __init__() should return None, not 'int'
+\end{dhkzsh}
+
+왜 그럴까?
+
+\zsh{__init__()}은 인스턴스 생성 결과를 결정하는 메서드가 아니라, 이미 생성된 인스턴스를 초기화하는 메서드이기 때문이다.
+
+일반적인 함수에서는 반환값을 자유롭게 지정할 수 있지만, Python의 특수 메서드에는 각각의 동작 규약이 존재한다.
+
+\zsh{__init__()}도 그 규약을 따르는 것이다.
+
+다음처럼 명시적으로 \zsh{None}을 반환하는 것은 가능하다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self):
+        return None
+\end{dhkcode}
+
+하지만 보통 \zsh{return}을 작성하지 않는다.
+
+Python 함수는 명시적인 반환문 없이 종료되면 자동으로 \zsh{None}을 반환하기 때문이다.
+
+\subsubsection{\zsh{__new__()}와 \zsh{__init__()}의 실행 순서 확인}
+
+이제 두 메서드를 함께 정의해 보자.
+
+\begin{dhkcode}
+class Person:
+    def __new__(cls, name):
+        print("1. __new__ 실행")
+
+        instance = super().__new__(cls)
+
+        print("2. 인스턴스 생성 완료")
+
+        return instance
+
+    def __init__(self, name):
+        print("3. __init__ 실행")
+
+        self.name = name
+
+        print("4. 인스턴스 초기화 완료")
+
+
+p = Person("Kim")
+
+print("5. p에 바인딩된 인스턴스:", p.name)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+1. __new__ 실행
+2. 인스턴스 생성 완료
+3. __init__ 실행
+4. 인스턴스 초기화 완료
+5. p에 바인딩된 인스턴스: Kim
+\end{dhkzsh}
+
+여기서 주목할 점은 \zsh{__new__()}와 \zsh{__init__()} 모두 \zsh{"Kim"}을 전달받았다는 사실이다.
+
+\begin{dhkcode}
+def __new__(cls, name):
+
+def __init__(self, name):
+\end{dhkcode}
+
+하지만 첫 번째 매개변수가 참조하는 객체는 서로 다르다.
+
+\begin{dhkbranch}[in=8]
+node main :: Person("Kim")
+arrow main
+node main :: __new__(cls, name)
+branchline main -> cls :: cls -> Person 클래스 객체
+stop cls
+branchline main -> name :: name -> "Kim"
+stop name
+arrow main
+node main :: 새 인스턴스 생성
+arrow main
+node main :: __init__(self, name)
+branchline main -> self :: self -> 생성된 Person 인스턴스
+stop self
+branchline main -> nn :: name -> "Kim"
+stop nn
+arrow main
+node main :: self.name = name
+arrow main
+node main :: 초기화 완료
+arrow main
+node main :: p에 인스턴스 바인딩
+\end{dhkbranch}
+
+이 구조는 이전에 학습했던 함수의 인수 전달 및 이름 바인딩 규칙과 연결된다.
+
+\zsh{cls, self, name}은 모두 함수 실행 과정에서 객체를 참조하도록 바인딩되는 매개변수 이름이다.
+
+차이는 Python이 특수 메서드를 호출할 때 어떤 객체를 전달하도록 정해 놓았는가에 있다.
+
+\subsubsection{\zsh{__new__()}가 다른 객체를 반환하면 어떻게 되는가?}
+
+앞에서 \zsh{__new__()}는 반드시 새로운 인스턴스를 반환할 필요가 없다고 했다.
+
+이번에는 그 의미를 실제 코드로 확인해 보자.
+
+\begin{dhkcode}
+class Person:
+    def __new__(cls):
+        print("__new__ 실행")
+
+        return "Not a Person"
+
+    def __init__(self):
+        print("__init__ 실행")
+
+
+p = Person()
+
+print(p)
+print(type(p))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+__new__ 실행
+Not a Person
+<class 'str'>
+\end{dhkzsh}
+
+여기서 중요한 사실이 있다.
+
+\zsh{__init__ 실행} 이라는 메시지가 출력되지 않았다.
+
+왜 그럴까?
+
+\zsh{__new__()}가 \zsh{Person} 인스턴스가 아니라 문자열 객체를 반환했기 때문이다.
+
+일반적인 \zsh{type.__call__()} 동작에서는 \zsh{__new__()}의 반환값이 생성 대상 클래스의 인스턴스가 아니면 \zsh{__init__()}을 호출하지 않는다.
+
+따라서 이 예제에서는 다음과 같은 과정이 이루어진다.
+
+\begin{dhksmry}[centered]
+Person()
+\da
+Person.__new__()
+\da
+문자열 객체 반환
+\da
+Person 인스턴스가 아님
+\da
+Person.__init__() 호출하지 않음
+\da
+문자열 객체 반환
+\end{dhksmry}
+
+이 예제를 통해 중요한 사실을 알 수 있다.
+
+클래스 객체를 호출한다고 해서 반드시 그 클래스의 인스턴스가 반환되는 것은 아니다.
+
+일반적으로는 인스턴스를 반환하도록 설계하지만, 특수한 클래스에서는 다른 동작을 구현할 수 있다.
+
+이 점은 클래스 호출이 단순한 객체 복제 문법이 아니라, 정해진 호출 프로토콜을 통해 실행되는 과정이라는 사실을 보여준다.
+
+\subsubsection{\zsh{__new__()}를 직접 재정의하는 이유}
+
+그렇다면 왜 \zsh{__new__()}와 \zsh{__init__()}을 분리했을까?
+
+일반적인 클래스에서는 \zsh{__init__()}만 정의해도 충분한 경우가 많다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+\end{dhkcode}
+
+그런데 다음과 같은 상황에서는 인스턴스 생성 과정 자체를 제어해야 할 수 있다.
+
+\begin{dhksmry}
+    1. 생성할 객체의 타입을 결정해야 하는 경우
+
+    2. 불변 객체의 값을 생성 시점에 설정해야 하는 경우
+
+    3. 이미 존재하는 객체를 반환해야 하는 경우
+
+    4. 인스턴스 생성을 제한하거나 관리해야 하는 경우
+\end{dhksmry}
+
+대표적인 예로 불변 객체를 생각해 볼 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+불변 객체를 상속하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class PositiveInt(int):
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("양수 또는 0만 허용됩니다.")
+
+    return super().__new__(cls, value)
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+a = PositiveInt(10)
+
+print(a)
+print(type(a))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+10
+<class '__main__.PositiveInt'>
+\end{dhkzsh}
+
+반면 다음 코드는 오류를 발생시킨다.
+
+\begin{dhkcode}
+b = PositiveInt(-5)
+\end{dhkcode}
+
+\begin{dhkzsh}
+ValueError: 양수 또는 0만 허용합니다.
+\end{dhkzsh}
+
+이 예제에서 \zsh{PositiveInt}는 \zsh{int}를 상속받아 새로운 정수형 객체를 정의했다.
+
+\zsh{int}는 불변 객체이므로 정수값 자체는 생성 과정에서 결정된다.
+
+따라서 이런 경우에는 \zsh{__init__()} 보다 \zsh{__new__()}를 재정의하는 것이 적절하다.
+
+이처럼 \zsh{__new__()}는 인스턴스가 만들어지는 과정 자체를 제어해야 할 때 사용된다.
+
+\subsubsection{\zsh{__new__()}와 \zsh{__init__()}을 직접 호출하면 어떻게 되는가?}
+
+이번에는 두 메서드를 직접 호출해 보자.
+
+먼저 다음 클래스를 정의하자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__new__() 직접 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person.__new__(Person)
+\end{dhkcode}
+
+이 코드는 \zsh{Person}의 인스턴스를 생성한다.
+
+하지만 \zsh{__init__()}은 호출하지 않았다.
+
+따라서 다음 코드를 실행하면
+
+\begin{dhkcode}
+print(p.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{}
+\end{dhkzsh}
+
+인스턴스는 존재하지만 \zsh{name} 속성은 설정되지 않았다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__init__() 직접 호출
+\end{dhksmry}
+\end{dhknote}
+
+이제 다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+Person.__init__(p, "Kim")
+\end{dhkcode}
+
+그다음 속성을 확인하면
+
+\begin{dhkcode}
+print(p.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'name': 'Kim'}
+\end{dhkzsh}
+
+즉, 직접 호출한 \zsh{__init__()}이 기존 인스턴스를 초기화한 것이다.
+
+이 과정을 정리하면 다음과 같다.
+
+\begin{dhkcode}
+p = Person.__new__(Person)
+
+Person.__init__(p, "Kim")
+\end{dhkcode}
+
+이는 일반적인 \zsh{Person("Kim")} 호출에서 일어나는 생성 및 초기화 과정을 이해하기 위한 실험이다.
+
+다만 모든 클래스에 대해 이렇게 수동으로 생성과 초기화를 분리해도 안전한 것은 아니다.
+
+일부 클래스는 생성 과정에서 특별한 불변 조건이나 내부 상태를 설정하기 때문에, 일반적으로는 클래스 객체를 직접 호출하는 방식을 사용해야 한다.
+
+\begin{dhkcode}
+p = Person("Kim")
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 이 실험이 중요할까?
+\end{dhksmry}
+\end{dhknote}
+
+이전에는 다음 코드만 봤다.
+
+\begin{dhkcode}
+p = Person("Kim")
+\end{dhkcode}
+
+이제는 이 한 줄 안에서 개념적으로 두 가지 다른 동작이 이루어진다는 사실을 확인한 것이다.
+
+\begin{dhksmry}[centered]
+Instance Creation $\neq$ Instance Initialization
+\end{dhksmry}
+
+\subsubsection{\zsh{__init__()}은 인스턴스마다 실행되는가?}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        print("__init__ 실행", name)
+
+        self.name = name
+
+p1 = Person("Kim")
+p2 = Person("Lee")
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+__init__ 실행: Kim
+__init__ 실행: Lee
+\end{dhkzsh}
+
+일반적인 인스턴스 생성에서는 클래스를 호출할 때마다 새 인스턴스가 생성되고 \zsh{__init__()}이 실행된다.
+
+따라서 \zsh{p1}과 \zsh{p2}는 각각 별도의 속성을 갖게 된다.
+
+\begin{dhkcode}
+print(p1.__dict__)
+print(p2.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'name': 'Kim'}
+{'name': 'Lee'}
+\end{dhkzsh}
+
+여기서 2.3과 2.4에서 학습한 개념들이 연결된다.
+
+\begin{dhksmry}
+    - 클래스 객체는 하나다.
+
+    - 인스턴스 객체는 두 개다.
+
+    - 각 인스턴스는 독립적인 속성 저장 공간을 가질 수 있다.
+
+    - __init__()은 각 인스턴스를 초기화하는 과정에서 호출된다.
+\end{dhksmry}
+
+다만 앞에서 본 것처럼 \zsh{__new__()}가 다른 객체를 반환하거나 메타클래스의 호출 동작을 변경하면 이러한 일반적인 흐름이 달라질 수 있다.
+
+\subsubsection{PyTorch와의 연결 - \zsh{super().__init__()}은 왜 필요한가?}
+
+이제 PyTorch 모델 코드로 돌아가 보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10,5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+여기서 가장 중요한 부분은 다음 코드다.
+
+\begin{dhkcode}
+super().__init__()
+\end{dhkcode}
+
+왜 이 코드를 작성할까?
+
+\zsh{MyModel}은 \zsh{nn.Module}을 상속받는 클래스다.
+
+\zsh{nn.Module}은 하위 모듈과 파라미터를 등록하고 관리하기 위한 내부 상태를 가지고 있다.
+
+따라서 \zsh{MyModel}의 초기화 과정에서는 먼저 \zsh{nn.Module}이 필요로 하는 내부 상태를 초기화해야 한다.
+
+그 역할을 수행하는 것이 다음 코드다.
+
+\begin{dhkcode}
+super().__init__()
+\end{dhkcode}
+
+이 예제에서는 \zsh{super()}가 MRO에 따라 \zsh{nn.Module}의 \zsh{__init__()}을 찾아 호출하게 된다.
+
+이후 다음 코드가 실행된다.
+
+\begin{dhkcode}
+self.linear = nn.Linear(10,5)
+\end{dhkcode}
+
+이때 \zsh{nn.Module}의 내부 상태가 초기화되어 있으므로, \zsh{nn.Module} 인스턴스를 하위 모듈로 등록할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+초기화 순서가 바뀌면 어떻게 될까?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class WrongModel(nn.Module):
+    def __init__(self):
+        self.linear = nn.Linear(10,5)
+
+        super().__init__()
+\end{dhkcode}
+
+이 코드는 일반적인 PyTorch \zsh{nn.Module}에서 오류를 발생시킨다.
+
+대표적인 오류 메시지는 다음과 같다.
+
+\begin{dhkzsh}
+AttributeError: cannot assign module before Module.__init__() call
+\end{dhkzsh}
+
+왜 이런 문제가 발생할까?
+
+\zsh{nn.Module}이 하위 모듈을 등록하기 위한 내부 관리 구조를 아직 초기화하지 않았기 때문이다.
+
+따라서 일반적인 PyTorch 모델에서는 다음 순서를 사용해야 한다.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10,5)
+\end{dhkcode}
+
+이 과정을 그림으로 나타내면 다음과 같다.
+
+\begin{dhksmry}[centered]
+MyModel()
+\da
+인스턴스 생성
+\da
+MyModel.__init__()
+\da
+super().__init__()
+\da
+nn.Module 내부 상태 초기화
+\da
+self.linear = nn.Linear(10,5)
+\da
+하위 모듈 등록
+\da
+모델 초기화 완료
+\end{dhksmry}
+
+여기서 주의할 점은 \zsh{super()}가 무조건 직접적인 부모 클래스만 호출하는 문법은 아니라는 사실이다.
+
+정확히는 현재 클래스와 MRO를 기준으로 다음 메서드를 탐색하는 구조다.
+
+이 부분은 2.9에서 자세히 다룰 것이다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서는 클래스 객체 호출과 인스턴스 생성 및 초기화의 관계를 살펴보았다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__new__()와 __init__()은 서로 다른 역할을 한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def __new__(cls, ...):
+    ...
+\end{dhkcode}
+
+인스턴스 생성에 관여한다.
+
+\begin{dhkcode}
+def __init__(self, ...):
+    ...
+\end{dhkcode}
+
+이미 생성된 인스턴스를 초기화한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+일반적인 클래스 호출은 type.__call__()을 통해 처리된다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person("Kim")
+\end{dhkcode}
+
+기본적인 생성 과정에서는 \zsh{__new__()}와 \zsh{__init__()}이 순서대로 호출된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+cls와 self는 서로 다른 객체를 참조한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}
+    - cls는 클래스 객체를 참조한다.
+
+    - self는 인스턴스 객체를 참조한다.
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__init__()은 반드시 None을 반환해야 한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def __init__(self):
+    self.name = "Kim"
+\end{dhkcode}
+
+반환값을 명시하지 않는 것이 일반적이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__new__()가 다른 타입의 객체를 반환하면
+__init__()이 호출되지 않을 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def __new__(cls):
+    return "Hello"
+\end{dhkcode}
+
+이 경우 일반적인 \zsh{Person} 인스턴스 초기화가 이루어지지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 생성과 초기화는 별도의 과정이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person.__new__(Person)
+
+Person.__init__(p, "Kim")
+\end{dhkcode}
+
+이 코드는 두 과정의 차이를 이해하기 위한 예제이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__new__()는 생성 과정 자체를 제어할 때 사용한다.
+\end{dhksmry}
+\end{dhknote}
+
+특히 불변 객체의 서브클래싱이나 특수한 객체 생성 전략에서 활용할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch에서는 super().__init__()이 중요하다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+\end{dhkcode}
+
+\zsh{nn.Module}의 내부 상태를 초기화해야 하위 모듈과 파라미터를 정상적으로 등록하고 관리할 수 있다.
+
+\subsubsection{2.6에서 반드시 이해해야 할 결론}
+
+이번 학습의 핵심은 다음 구조다.
+
+\begin{dhksmry}[centered]
+Class Object Call
+\da
+__new__
+\da
+Instance Creation
+\da
+__init__
+\da
+Instance Initialization
+\da
+Return and Name Binding
+\end{dhksmry}
+
+단, 이것은 \zsh{__new__()}가 적절한 인스턴스를 반환하고 기본적인 클래스 호출 규칙을 따르는 일반적인 경우의 흐름이다.
+
+이제 다음 코드가 단순히 \zsh{Person}이라는 클래스로 객체를 만든다는 의미를 넘어,
+
+\begin{dhkcode}
+p = Person("Kim")
+\end{dhkcode}
+
+\begin{dhksmry}
+클래스 객체 호출 \ra 인스턴스 생성 \ra 인스턴스 초기화 \ra 반환값 바인딩
+\end{dhksmry}
+
+이라는 실행 과정으로 이해되어야 한다.
+
+다음 2.7에서는 지금까지 학습한 인스턴스 네임스페이스와 메서드 바인딩을 기반으로 Python이 같은 이름의 속성을 어떤 순서로 탐색하는지 살펴볼 것이다.
+
+특히 클래스 속성과 인스턴스 속성의 차이, Mutable 클래스 속성의 공유 문제, 속성 탐색 순서, 디스크립터의 우선순위를 연결해서 설명한다.

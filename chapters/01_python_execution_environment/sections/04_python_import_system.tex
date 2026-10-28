@@ -1,0 +1,2573 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.4. import, module, package, sys.path
+% ==================================================
+
+
+\subsection{import, module, package, sys.path}
+
+우리는 당연하게 아래와 같은 것을 사용한다.
+
+\begin{dhkcode}
+import argparse
+from pathlib import Path
+import pandas as pd
+import torch
+\end{dhkcode}
+
+처음에는 그냥:
+
+\begin{dhksmry}[centered]
+라이브러리를 가져온다.
+\end{dhksmry}
+
+정도로 배운다.
+
+그런데 이제는 그 설명을 버리고 좀 더 정확하게 볼 때이다.
+
+예를 들어:
+
+\begin{dhkcode}
+import pandas
+\end{dhkcode}
+
+라고 하면 Python은 대략적으로
+
+\begin{dhksmry}[centered]
+"pandas라는 이름의 module/package가 필요하네."
+\da
+어디에 있는지 찾아야 함
+\da
+import 탐색 경로
+\da
+sys.path
+\da
+site-packages/
+\da
+pandas를 발견
+\da
+module을 load/execute
+\da
+현재 namespace에서 pandas 라는 이름으로 사용
+\end{dhksmry}
+
+하는 과정이 있다.
+
+여기서 우리가 앞에서 배운 \textbf{파일 경로}와 드디어 다시 만난다.
+
+\subsubsection{sys.path를 먼저 보자}
+
+Python에서:
+
+\begin{dhkcode}
+import sys
+
+print(sys.path)
+\end{dhkcode}
+
+를 해보면 대략 이런 리스트가 나온다.
+
+\begin{dhkzsh}
+[
+'/Users/user/Desktop/my_project/src',
+'/Users/user/anaconda3/envs/transformer/lib/python310.zip',
+'/Users/user/anaconda3/envs/transformer/lib/python3.10',
+'/Users/user/anaconda3/envs/transformer/lib/python3.10/site-packages'
+]
+\end{dhkzsh}
+
+중요한 것은 정확한 문자열을 외우는 게 아니다.
+
+\textbf{sys.path 자체가 리스트다}.
+
+\begin{dhkdir}
+sys.path
+>어떤 디렉터리
+>어떤 디렉터리
+>어떤 디렉터리
+>site-packages
+\end{dhkdir}
+
+Python이:
+
+\begin{dhkcode}
+import pandas
+\end{dhkcode}
+
+를 만나면 이런 \textbf{탐색 위치들을 이용해서 pandas를 찾는다}.
+
+그래서 아주 중요한 구분이 생긴다.
+
+\begin{dhksmry}[centered]
+Path.cwd()
+\da
+"현재 어디에서 작업하고 있는가?"
+
+sys.path()
+\da
+"import할 module/package를 어디에서 찾을 것인가?"
+\end{dhksmry}
+
+둘 다 경로가 등장하니까 처음에는 굉장히 헛갈리지만 \textbf{질문 자체가 다르다}.
+
+\subsubsection{그리고 \zsh{site-packages}가 등장한다}
+
+Conda 환경에서:
+
+\begin{dhkzsh}
+pip install pandas
+\end{dhkzsh}
+
+했다고 해보자.
+
+패키지는 보통 현재 Python 환경의 \zsh{site-packages}쪽에 설치된다.
+
+개념적으로:
+
+\begin{dhkdir}
+transformer/
+>lib/
+>>python 3.10/
+>>>site-packages/
+>>>>pandas/
+>>>>numpy/
+>>>>transformers/
+>>>>...
+\end{dhkdir}
+
+그리고 그 위치가 Python의 import탐색 대상에 있으니까:
+
+\begin{dhkcode}
+import pandas
+\end{dhkcode}
+
+가 가능하다.
+
+전에 확인했던:
+
+\begin{dhkcode}
+sys.executable
+\end{dhkcode}
+
+과 연결하면 상당히 중요한 그림이 완성된다.
+
+\begin{dhkdir}
+conda transformer 환경
+> Python interpreter
+>> sys.executable
+> site-packages
+>> torch
+>> pandas
+>> transformers
+\end{dhkdir}
+
+그래서 VS Code/Jupyter에서 흔히 발생하는:
+
+\begin{dhksmry}[centered]
+분명히 \zsh{pip install} 했는데 \zsh{ModuleNotFoundError}가 나는데?
+\end{dhksmry}
+
+라는 문제도 결국 상당수가:
+
+\begin{dhksmry}[centered]
+설치한 Python 환경 $\neq$ 현재 코드를 실행하는 Python 환경
+\end{dhksmry}
+
+문제다.
+
+\begin{dhktable}
+|명령어|의미|
+|:---|:---|
+|Path.cwd()|내가 지금 어디서 작업하는가?|
+|sys.executable|어떤 Python이 나를 실행하고 있는가?|
+|sys.path|그 Python이 import 대상을 어디서 찾는가?|
+|site-packages|설치한 외부 package들이 주로 존재하는 곳|
+\end{dhktable}
+
+이제 직접만든 \zsh{util.py}를 Python이 어떻게 찾아서 import하는지 볼 것이다.
+
+여기서부터:
+
+\begin{dhksmry}[centered]
+module \ra package \ra sys.path \ra ModuleNotFoundError
+\end{dhksmry}
+
+가 한 번에 연결된다.
+
+\subsubsection{먼저 module이 뭔가?}
+
+아주 단순하게 시작하면 \textbf{Python 파일 하나가 하나의 module이 될 수 있다}.
+
+프로젝트가:
+
+\begin{dhkdir}
+my_project/
+>train.py
+>utils.py
+\end{dhkdir}
+
+이렇게 있다고 하자.
+
+\zsh{utils.py}:
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+import utils
+
+results = utils.add(10,20)
+print(result)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+는 대충:
+
+\begin{dhksmry}[centered]
+\zsh{utils}라는 module을 찾아서 사용할 수 있게 해줘.
+\end{dhksmry}
+
+라는 뜻이다.
+
+Python은 \zsh{utils.py}를 발견하면 그 파일을 module 객체로 만들어 다룬다.
+
+\begin{dhkbranch}
+node main :: utils.py
+arrow main :: import
+node main :: module 객체
+arrow main
+node main :: 이름 utils에 binding
+\end{dhkbranch}
+
+\begin{dhkdir}
+utils
+>add
+\end{dhkdir}
+
+그래서:
+
+\begin{dhkcode}
+utils.add(10, 20)
+\end{dhkcode}
+
+처럼 접근할 수 있다.
+
+이것도:
+
+\begin{dhksmry}[centered]
+name \ra object binding
+\end{dhksmry}
+
+과 똑같다.
+
+\begin{dhkdir}
+import utils
+
+이름        객체
+
+util -> @module object
+>add
+\end{dhkdir}
+
+\subsubsection{\zsh{from utils import add}는 뭐가 다를까?}
+
+이번에는:
+
+\begin{dhkcode}
+from utils import add
+
+result = add(10, 20)
+\end{dhkcode}
+
+라고 해보자.
+
+개념적으로는 최종 namespace가 다르다.
+
+\textbf{import utils}
+
+\begin{dhkdir}
+현재 namespace
+
+utils -> @module
+>add
+\end{dhkdir}
+
+따라서:
+
+\begin{dhkcode}
+utils.add()
+\end{dhkcode}
+
+\textbf{from utils import add}
+
+\begin{dhksmry}
+현재 namespace
+
+add \ra function object
+\end{dhksmry}
+
+따라서:
+
+\begin{dhkcode}
+add()
+\end{dhkcode}
+
+이렇게 사용한다.
+
+여기서도 완전히 새로운 원리가 나온 게 아니라 \textbf{객체와 이름의 binding}이 나온 것이다.
+
+\subsubsection{그런데 Python은 \zsh{utils.py}를 어떻게 찾았나?}
+
+이것이 이번 파트의 핵심이다.
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+를 실행했다고 해서 Python이 컴퓨터 전체 SSD를 뒤지는 게 아니다.
+
+Python에는 \textbf{import를 찾을 위치들}이 있고, 그게 앞에서 본:
+
+\begin{dhkcode}
+sys.path
+\end{dhkcode}
+
+이다.
+
+개념적으로:
+
+\begin{dhksmry}[centered]
+import utils
+\da
+"utils 어디 있지?"
+\da
+import system
+\da
+sys.path에 있는 위치들을 탐색
+\da
+utils를 발견
+\da
+load
+\da
+module object 생성/사용
+\da
+utils라는 이름에 binding
+\end{dhksmry}
+
+여기까지가 첫 번째 큰 그림이다.
+
+\subsubsection{이제 폴더가 하나 생기면 문제가 재미있어진다}
+
+프로젝트를:
+
+\begin{dhkdir}
+my_project/
+>train.py
+>src/
+>>utils.py
+\end{dhkdir}
+
+이렇게 바꿔보자.
+
+이제 \zsh{train.py}에서:
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+하면 \zsh{src/utils.py}를 찾을까?
+
+\textbf{아니다}.
+
+\zsh{src/}가 존재한다고 해서 
+
+Python이 자동으로 모든 하위 디렉터리를 import탐색 대상으로 삼는 게 아니다.
+
+이게 굉장히 중요하다.
+
+Python이 \zsh{my_project}를 탐색한다고 해서:
+
+\begin{dhksmry}[centered]
+my_project
+\da
+모든 하위 폴더를 재귀적으로 검색
+\da
+src/utils.py 발견
+\end{dhksmry}
+
+하는 방식이 \textbf{아니다}.
+
+그래서 import를 이해할 때:
+
+\begin{dhksmry}[centered]
+파일이 프로젝트 어딘가에 존재한다.
+\end{dhksmry}
+
+와:
+
+\begin{dhksmry}[centered]
+Python이 그 파일을 import대상으로 찾을 수 있다.
+\end{dhksmry}
+
+는 전혀 다른 말이다.
+
+\subsubsection{그래서 package라는 개념이 필요해진다}
+
+우리가 원하는 것은:
+
+\begin{dhkcode}
+from src import utils
+\end{dhkcode}
+
+또는:
+
+\begin{dhkcode}
+from src.utils import add
+\end{dhkcode}
+
+같은 구조라면 \zsh{src}를 \textbf{package}구조로 다루게 된다.
+
+전통적으로 아주 흔하게 보는 구조가:
+
+\begin{dhkdir}
+my_project/
+>train.py
+>src/
+>>__init__.py
+>>utils.py
+\end{dhkdir}
+
+이다.
+
+그러면 개념적으로:
+
+\begin{dhkdir}
+src
+>__init__.py
+>utils.py
+>>add()
+\end{dhkdir}
+
+라는 \zsh{package/module}계층이 만들어진다.
+
+그래서:
+
+\begin{dhkcode}
+from src.utils import add
+\end{dhkcode}
+
+를 보면 이제 이렇게 읽으면 된다.
+
+\begin{dhkdiagram}[in=8]
+node full (1,2) :: src.utils.add
+node n1 (2,1)
+node n2 (2,2)
+node n3 (2,3)
+node src (3,1) :: src
+node util (3,2) :: utils
+node add (3,3) :: add
+node f (4,4) :: 함수/객체
+node m (5,3) :: module
+node p (6,2) :: package
+
+edge full -- n2
+edge n1 -- n2
+edge n2 -- n3
+edge src -- n1
+edge n3 -- add
+edge n2 -- util
+edge add -- f :: VH
+edge util -- m :: VH
+edge src -- p :: VH
+\end{dhkdiagram}
+
+사용:
+
+\begin{dhkcode}
+from src.utils import add
+
+print(add(10, 20))
+\end{dhkcode}
+
+\subsubsection{\zsh{__init__.py}는 뭔데?}
+
+이 파일을 처음 보면 이상하다.
+
+\begin{dhksmry}[centered]
+__init__.py
+\end{dhksmry}
+
+클래스에서 배운:
+
+\begin{dhkcode}
+def __init__(self):
+\end{dhkcode}
+
+와 이름이 같아서 더 헛갈릴 수 있지만
+
+지금은:
+
+\begin{dhksmry}[centered]
+package의 __init__.py
+\end{dhksmry}
+
+이다.
+
+역사적으로 Python에서는:
+
+\begin{dhkdir}
+src/
+>__init__.py
+>utils.py
+\end{dhkdir}
+
+처럼:
+
+\begin{dhksmry}[centered]
+__init__.py
+\end{dhksmry}
+
+가 있으면 이 디렉터리를 Python package로 취급하는 전통적인 구조를 사용했다.
+
+현대 Python에는 이 것이 없어도 가능한 \textbf{namespace package}도 있어서,
+
+\begin{dhksmry}[centered]
+package라면 무조건 __init__.py가 있어야 한다.
+\end{dhksmry}
+
+라고 외우면 정확하지 않다.
+
+하지만 일반적인 Python 프로젝트 구조를 배우는 지금 단계에서는:
+
+\begin{dhksmry}[centered]
+디렉터리를 일반적인 Python package로 구성
+\da
+__init__.py를 둔다.
+\end{dhksmry}
+
+정도로 먼저 이해하면 충분하다.
+
+\subsubsection{module과 package를 이렇게 구분하면 된다}
+
+지금 단계에서는:
+
+\begin{dhksmry}[centered]
+module
+\da
+Python 코드의 한 단위
+대표적으로 .py 파일
+
+utils.py
+train.py
+model.py
+\end{dhksmry}
+
+반면:
+
+\begin{dhksmry}[centered]
+package
+\da
+여러 module 등을 계층적으로 조직하는 구조
+\end{dhksmry}
+
+\begin{dhkdir}
+src/
+>__init__.py
+>utils.py
+>model.py
+>dataset.py
+\end{dhkdir}
+
+그래서 ML 프로젝트도 점점 커지면:
+
+\begin{dhkdir}
+my_project/
+>train.py
+>src/
+>>__init__.py
+>>data.py
+>>model.py
+>>utils.py
+\end{dhkdir}
+
+같아지고,
+
+\begin{dhkcode}
+from src.data import load_data
+from src.model import MyModel
+from src.utils import save_model
+\end{dhkcode}
+
+같은 코드가 나온다.
+
+\subsubsection{여기서 \zsh{ModuleNotFoundError}의 의미가 보이기 시작한다}
+
+예를 들어:
+
+\begin{dhkcode}
+from src.model import MyModel
+\end{dhkcode}
+
+했는데:
+
+\begin{dhkzsh}
+ModuleNotFoundError
+\end{dhkzsh}
+
+가 발생했다면 무조건:
+
+\begin{dhksmry}[centered]
+\zsh{model.py}파일이 없다.
+\end{dhksmry}
+
+라는 뜻이 아니다.
+
+더 정확하게는:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+현재 import system이 주어진 이름을 해석해서
+
+해당 module/package를 찾지 못했다.
+\end{dhksmry}
+\end{dhknote}
+
+이다.
+
+따라서 문제를 볼 때 이제 세 가지를 분리해야 한다.
+
+\begin{dhksmry}[centered]
+실제 파일은 어디 있는가?
+\da
+Path / filesystem 문제
+
+
+
+현재 어떤 Python으로 실행 중인가?
+\da
+sys.executable / Conda 문제
+
+
+
+그 Python은 import 대상을 어디서 찾는가?
+\da
+sys.path / package 구조 문제
+\end{dhksmry}
+
+이 구분이 중요하다.
+
+\subsubsection{그리고 여기서 \zsh{sys.path.append()}가 왜 인터넷에 자주 나오는지도 보인다}
+
+검색하다보면 이런 코드를 엄청 많이 보게 된다.
+
+\begin{dhkcode}
+import sys
+
+sys.path.append("...")
+\end{dhkcode}
+
+이게 하는 일은 말 그대로:
+
+\begin{dhksmry}
+[
+    A,
+    B,
+    C
+]
+
+append(D)
+
+[
+    A,
+    B,
+    C,
+    D
+]
+\end{dhksmry}
+
+즉:
+
+\begin{dhksmry}[centered]
+Python아, import할 때 이 디렉터리도 찾아봐.
+\end{dhksmry}
+
+라고 import 탐색 위치를 런타임에 추가하는 것이다.
+
+그래서 import가 안 될 때:
+
+\begin{dhkcode}
+sys.path.append("...")
+\end{dhkcode}
+
+같은 것을 넣으면 갑자기 되는 경우가 있다.
+
+그런데 이건 때때로 \textbf{프로젝트 구조나 실행 방법의 문제를 임시로 덮어버리는 것}일 수 있다.
+
+그래서 지금 단계에서는:
+
+\begin{dhksmry}[centered]
+ModuleNotFoundError 가 발생했으니 sys.path.append부터 넣자
+\end{dhksmry}
+
+가 아니라
+
+\begin{dhksmry}[centered]
+ModuleNotFoundError
+\da
+파일은 어디 있지?
+\da
+어떤 Python으로 실행 중이지?
+\da
+어디서 어떤 방식으로 실행했지?
+\da
+package 구조는 어떻게 되어 있지?
+\da
+sys.path는 어떻게 구성되어 있지?
+\end{dhksmry}
+
+라고 생각하는 습관을 들이는 것이 좋다.
+
+\subsubsection{여기까지의 핵심}
+
+새로운 내용을 기존 개념과 합치면 이렇게 된다.
+
+\begin{dhkdir}[in=6]
+File system
+> utils.py → module
+> src/
+>>__init__.py → package 구성
+>>model.py → module
+\end{dhkdir}
+
+\begin{dhksmry}[centered]
+import src.model
+\da
+Python import system
+\da
+sys.path
+\da
+src를 찾음
+\da
+...
+\end{dhksmry}
+
+이것이 \textbf{Filesystem + Path + name/object/binding + 실행환경}이 하나로 합쳐지는 지점이다.
+
+다음 단계에서는 가장 많이 헛갈리는
+
+\begin{dhkzsh}
+python src/train.py
+
+python -m src.train
+\end{dhkzsh}
+
+위 두 가지가 서로 다르고, 
+
+왜 하나에서는 import가 되지만 다른 하나에서는 깨질 수 있는지
+
+를 실제 프로젝트 구조를 놓고 볼 것이다.
+
+\subsubsection{같은 \zsh{train.py}인데 실행 방법이 두 가지다}
+
+프로젝트를 이렇게 두자:
+
+\begin{dhkdir}
+my_project/
+>src/
+>>__init__.py
+>>train.py
+>>utils.py
+>data/
+>>train.csv
+\end{dhkdir}
+
+그리고 \zsh{train.py}에서 같은 \zsh{package}의 \zsh{utils.py}를 사용하고 싶다고 하자.
+
+\begin{dhkcode}
+from src.utils import add
+\end{dhkcode}
+
+터미널의 CWD는:
+
+\begin{dhkzsh}
+my_project/
+\end{dhkzsh}
+
+라고 하자.
+
+여기서 두 가지 실행법이 있다.
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+그리고:
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+둘 다 \zsh{train.py}의 코드를 실행하는 것 처럼 보이는가?
+
+그렇지만 Python에게 전달하는 \textbf{의미가 다르다}.
+
+\subsubsection{\zsh{python src/train.py}}
+
+이건 우리가 지금까지 많이 썼던 방식이다.
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+Python에게 말하는 건:
+
+\begin{dhksmry}[centered]
+\zsh{src/train.py}라는 \textbf{파일을 직접 실행해}.
+\end{dhksmry}
+
+라는 의미다.
+
+즉 출발점이 \textbf{파일 경로}이다.
+
+\begin{dhkdir}
+python src/train.py
+>>>>파일 경로
+\end{dhkdir}
+
+이때 \zsh{train.py}는 실행할 최상위 스크립트로 취급된다.
+
+그리고 중요한 변화가 하나 생긴다.
+
+실행되는 스크립트가 있는 디렉터리인:
+
+\begin{dhkzsh}
+my_project/src/
+\end{dhkzsh}
+
+가 import탐색에 중요한 위치로 들어오게 된다.
+
+그래서 상황에 따라 package import가 예상과 다르게 동작할 수 있다.
+
+\subsubsection{\zsh{python -m src.train}}
+
+이번엔 완전히 관점이 다르다.
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+여기에는:
+
+\begin{dhkzsh}
+src/train.py
+\end{dhkzsh}
+
+라는 파일 경로를 주지 않았다.
+
+대신:
+
+\begin{dhkzsh}
+src.train
+\end{dhkzsh}
+
+이라는 \textbf{module 이름}을 주었다.
+
+\zsh{-m}은 간단히 말하면:
+
+\begin{dhksmry}[centered]
+이 이름의 module을 찾아서 실행해.
+\end{dhksmry}
+
+라는 의미다.
+
+따라서 Python의 사고 과정은:
+
+\begin{dhksmry}[centered]
+python -m src.train
+
+현재 import 환경에서
+
+\da
+
+src라는 package를 찾고
+
+\da
+
+그 안의 train module을 찾고
+
+\da
+
+그 module을 실행
+\end{dhksmry}
+
+이렇게 된다.
+
+즉:
+
+\begin{dhksmry}[centered]
+python src/train.py
+
+\da
+
+파일 경로를 직접 실행
+
+
+
+python -m src.train
+
+\da
+
+module/package 이름으로 찾아서 실행
+\end{dhksmry}
+
+이 차이가 핵심이다.
+
+\subsubsection{왜 /를 안 쓰고 .을 쓰는가?}
+
+이제 이유가 보일 것이다.
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+에서는 \textbf{Filesystem Path}니까:
+
+\begin{dhkzsh}
+src/train.py
+\end{dhkzsh}
+
+라고 쓴다.
+
+반면:
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+에서는 \textbf{Python module}경로니까:
+
+\begin{dhkzsh}
+src.train
+\end{dhkzsh}
+
+이라고 쓴다.
+
+따라서 둘을 구별해야 한다.
+
+\begin{dhksmry}
+    Filesystem
+    ───────────────────────
+    src/train.py
+    src/utils.py
+
+
+
+    Python module namespace
+    ───────────────────────
+    src.train
+    src.utils
+\end{dhksmry}
+
+이것은 상당히 중요한 구분이다.
+
+\subsubsection{이제 package 내부 import가 나온다}
+
+\zsh{train.py}와 \zsh{utils.py}가 같은 \zsh{src} package 안에 있다.
+
+\begin{dhkdir}
+src/
+>__init__.py
+>train.py
+>utils.py
+\end{dhkdir}
+
+\zsh{train.py}에서 이렇게 쓸 수도 있다.
+
+\begin{dhkcode}
+from src.utils import add
+\end{dhkcode}
+
+이걸 \textbf{absolut import}라고 생각하면 된다.
+
+전체 package 기준으로:
+
+\begin{dhkdir}
+src
+>utils
+>>add
+\end{dhkdir}
+
+를 지정했기 때문이다.
+
+그런데 이렇게도 쓸 수 있다.
+
+\begin{dhkcode}
+from .utils import add
+\end{dhkcode}
+
+여기서 . 은 Filesystem의:
+
+\begin{dhkzsh}
+./
+\end{dhkzsh}
+
+와 똑같은 문자열 문법이라고 생각하면 \textbf{안 된다}.
+
+여기서는 \textbf{현재 package}라는 의미다.
+
+즉 \zsh{train.py}가 \zsh{src} package 안에 있으므로:
+
+\begin{dhkcode}
+from .utils import add
+\end{dhkcode}
+
+는 개념적으로:
+
+\begin{dhksmry}[centered]
+현재 package
+
+\da
+
+src
+
+\da
+
+utils
+
+\da
+
+add
+\end{dhksmry}
+
+라는 뜻이다.
+
+이를 \textbf{relative import}라고 한다.
+
+\subsubsection{그런데 파일을 직접 실행하면 문제가 생길 수 있다}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+from .tuils import add
+
+print(add(10, 20))
+\end{dhkcode}
+
+라고 해보자.
+
+그리고:
+
+\begin{dhkzsh}
+ptyhon src/trian.py
+\end{dhkzsh}
+
+로 실행하면 \zsh{relative import}관련 오류를 만날 수 있다.
+
+왜냐하면 우리는 Python에게:
+
+\begin{dhksmry}[centered]
+\zsh{src} package 안의 \zsh{train} module을 실행해.
+\end{dhksmry}
+
+라고 한 것이 아니다.
+
+그냥:
+
+\begin{dhksmry}[centered]
+이 \zsh{train.py}를 직접 실행해.
+\end{dhksmry}
+
+
+라고 했기 때문이다.
+
+즉 Python입장에서는 \zsh{train.py}가 package 안에서
+
+어떤 위치를 갖는 module인지에 대한 문맥이 깨질 수 있다.
+
+반대로:
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+이라고 하면 처음부터
+
+\begin{dhksmry}[centered]
+src package
+
+\da
+
+train module
+\end{dhksmry}
+
+이라는 package 문맥으로 찾았다.
+
+따라서:
+
+\begin{dhkcode}
+from .utils import add
+\end{dhkcode}
+
+의 . 도:
+
+\begin{dhksmry}[centered]
+현재 \zsh{package} = \zsh{src}
+\end{dhksmry}
+
+라고 해석할 수 있다.
+
+이게 \zsh{-m}이 중요한 이유 중 하나이다.
+
+\subsubsection{\zsh{__name__}까지 여기서 연결된다}
+
+Python 파일에서 많이 보는:
+
+\begin{dhkcode}
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+도 사실 이 주제이다.
+
+Python이 어떤 module을 \textbf{실행의 시작점}으로 실행하면
+
+그 모듈의:
+
+\begin{dhkzsh}
+__name__
+\end{dhkzsh}
+
+을:
+
+\begin{dhkzsh}
+"__main__"
+\end{dhkzsh}
+
+으로 설정한다.
+
+예를 들어:
+
+\begin{dhkcode}
+def main():
+    print("training.")
+
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+직접 실행하면:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+\begin{dhksmry}[centered]
+__name__=="__main__" 이므로 main()이 실행된다.
+\end{dhksmry}
+
+반면 다른 코드에서:
+
+\begin{dhkcode}
+import train
+\end{dhkcode}
+
+하면 보통:
+
+\begin{dhkzsh}
+__name__=="train"
+\end{dhkzsh}
+
+이므로 저 조건은 \zsh{False}가 된다.
+
+그래서 \textbf{import 했을 때 학습이 갑자기 시작되는 것을 막고, 실행 진입점만 분리}할 수 있다.
+
+\subsubsection{이게 ML 코드에서 왜 중요할까?}
+
+프로젝트가 커지면 보통:
+
+\begin{dhkdir}
+my_project/
+>src/
+>>__init__.py
+>>train.py
+>>model.py
+>>dataset.py
+>>utils.py
+>data/
+>models/
+\end{dhkdir}
+
+이런 식이 된다.
+
+\zsh{train.py} 혼자 모든 걸 하는 게 아니라:
+
+\begin{dhkcode}
+from src.model import MyModel
+from src.dataset import load_dataset
+from src.utils import save_model
+\end{dhkcode}
+
+처럼 여러 module이 연결된다.
+
+그러면 단순히:
+
+\begin{dhksmry}[centered]
+파일 A 실행
+\end{dhksmry}
+
+만 생각하는 것보다:
+
+\begin{dhkdir}
+my_project
+| src package
+> train module
+> model module
+> dataset module
+> utils module
+\end{dhkdir}
+
+이라는 package 구조로 생각하는 게 중요해진다.
+
+그래서 프로젝트 루트에서:
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+처럼 실행하는 방식이 자연스러워 지는 경우가 있다.
+
+\begin{dhkdir}
+Python 프로젝트
+> file system
+>> src/train.py - Path
+>> src/utils.py - Path
+> import system
+>> src.train - sys.path
+>> src.utils - sys.path
+>>> python src/train.py - 파일로 실행
+>>> python -m src.train - module로 찾아 실행
+\end{dhkdir}
+
+여기까지 이해되면 \textbf{import의 뼈대}는 거의 잡힌 것이다.
+
+다음 내용은 여기서 자연스럽게:
+
+\begin{dhksmry}
+    __name__
+
+    __main__
+
+    import 할 때 Python 파일의 코드가 실제로 실행된다는 사실
+
+    module caching인 sys.modules
+\end{dhksmry}
+
+로 넘어가는 것이 좋다.
+
+이것을 배우면:
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 import는 단순히 함수/클래스 정의를 복사해오는 게 아닌가?
+\end{dhksmry}
+\end{dhknote}
+
+까지 이해할 수 있다.
+
+\subsubsection{import는 정의를 복사해오는 게 아니다}
+
+예를 들어 \zsh{utils.py}가 있다고 하자.
+
+\begin{dhkcode}
+print("utils.py 실행됨")
+
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+그리고 \zsh{train.py}:
+
+\begin{dhkcode}
+import utils
+
+print(utils.add(10,20))
+\end{dhkcode}
+
+실행하면:
+
+\begin{dhkzsh}
+utils.py 실행됨
+30
+\end{dhkzsh}
+
+이게 중요한 이유는,
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+가 단순히 \zsh{add()}라는 함수 정의만 가져오는 게 아니라는 것이다.
+
+Python은 처음 import 할 때 개념적으로:
+
+\begin{dhksmry}[centered]
+import utils
+
+\da
+
+utils라는 모듈을 찾음
+
+\da
+
+utils.py의 코드를 실행
+
+\da
+
+그 실행으로 module namespace 구성
+
+\da
+
+module 객체를 만듦
+
+\da
+
+utils라는 이름에 그 module 객체를 binding
+\end{dhksmry}
+
+한다고 보면 된다.
+
+\subsubsection{왜 파일을 실행해야 할까?}
+
+\zsh{utils.py}가:
+
+\begin{dhkcode}
+x = 10
+
+def add(a, b):
+    return a + b
+
+class Calculator:
+    pass
+\end{dhkcode}
+
+라고 해보자.
+
+Python이 이 파일을 실행하면서 namespace가 만들어진다고 생각하면 된다.
+
+\begin{dhksmry}
+    utils module의 namespace
+
+    x \ra 10
+
+    add \ra function object
+
+    Calculator \ra class object
+\end{dhksmry}
+
+그리고:
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+하는 파이썬 파일에서는:
+
+\begin{dhkdir}
+현재 namespace
+
+utils -> @module object
+>x
+>add
+>Calculator
+\end{dhkdir}
+
+
+가 되는 것이다.
+
+그래서:
+
+\begin{dhkcode}
+utils.x
+utils.add()
+utils.Calculator()
+\end{dhkcode}
+
+처럼 접근할 수 있었던 것이다.
+
+이건 예전에 배운 \textbf{name $\rightarrow$ object binding}이 module 수준으로 확장된 것이다.
+
+\subsubsection{그러면 import 할 때 위험한 코드도 실행된다}
+
+예를 들어 \zsh{train.py}를 이렇게 만들면:
+
+\begin{dhkcode}
+def train():
+    print("모델 학습 시작")
+
+train()
+\end{dhkcode}
+
+그리고 다른 파일에서:
+
+\begin{dhkcode}
+import train
+\end{dhkcode}
+
+만 해도:
+
+\begin{dhkzsh}
+모델 학습 시작
+\end{dhkzsh}
+
+이 출력된다.
+
+왜냐하면 Python은 \zsh{train.py}를 import 하기 위해
+
+\textbf{그 모듈의 코드를 실행했기 때문}이다.
+
+바로 여기서 아까 배운 것이 다시 등장한다.
+
+\begin{dhkcode}
+def main():
+    print("모델 학습 시작")
+
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+이제 다른 파일에서:
+
+\begin{dhkcode}
+import train
+\end{dhkcode}
+
+하면 \zsh{train.py} 자체는 import 과정에서 실행된다.
+
+그래서:
+
+\begin{dhkcode}
+def main():
+\end{dhkcode}
+
+도 실행되어 \textbf{함수 객체가 만들어지고 main이라는 이름에 binding}된다.
+
+하지만:
+
+\begin{dhkcode}
+if __name__ == "__main__":
+\end{dhkcode}
+
+에서는 import 된 모듈이므로:
+
+\begin{dhksmry}[centered]
+__name__ == "train"
+
+"train" == "__main__"
+\da
+False
+\end{dhksmry}
+
+따라서:
+
+\begin{dhkcode}
+main()
+\end{dhkcode}
+
+이라는 \textbf{함수 호출만 실행되지 않은 것}이다.
+
+이 차이가 중요하다.
+
+\begin{dhksmry}[centered]
+import train
+
+\da
+
+train.py 자체가 실행되지 않는다 (X)
+
+train.py는 실행된다 (O)
+
+하지만 __main__ 조건 내부의 main() 호출이 실행되지 않는다. (O)
+\end{dhksmry}
+
+\subsubsection{그렇다면 매번 import할 때마다 파일을 다시 실행할까?}
+
+여기서 \zsh{sys.modules}가 등장한다.
+
+\zsh{utils.py}:
+
+\begin{dhkcode}
+print("UTILS EXECUTED")
+\end{dhkcode}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+import utils
+import utils
+import utils
+\end{dhkcode}
+
+얼핏 생각하면:
+
+\begin{dhkzsh}
+UTILS EXECUTED
+UTILS EXECUTED
+UTILS EXECUTED
+\end{dhkzsh}
+
+일 것 같지만 일반적으로 한 번만 출력된다.
+
+왜냐하면 Python은 이미 import한 module을 \textbf{캐시, Cache}해두기 때문이다.
+
+그 캐시가:
+
+\begin{dhksmry}[centered]
+sys.modules
+\end{dhksmry}
+
+이다.
+
+\subsubsection{\zsh{sys.modules}는 dictionary다}
+
+\begin{dhkcode}
+import sys
+
+print(type(sys.modules))
+\end{dhkcode}
+
+개념적으로:
+
+\begin{dhkzsh}
+dict
+\end{dhkzsh}
+
+이고 대충 이런 구조라 생각하면 된다.
+
+\begin{dhkzsh}
+sys.modules
+{
+    "sys": <module 'sys'>,
+    "os": <module 'os'>,
+    "pathlib": <module 'pathlib'>,
+    "utils": <module 'utils'>,
+    ...
+}
+\end{dhkzsh}
+
+즉:
+
+\begin{dhksmry}[centered]
+module 이름
+
+\da
+
+module 객체
+\end{dhksmry}
+
+를 저장하는 dictionary이다.
+
+\subsubsection{두 번재 \zsh{import utils}에서는 어떻게 되는가?}
+
+첫 번재:
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+에서는 대략:
+
+\begin{dhksmry}[centered]
+import utils
+
+\da
+
+sys.modules에 utils 있나?
+
+\da
+
+없음
+
+\da
+
+모듈 탐색
+
+\da
+
+utils.py 발견
+
+\da
+
+코드 실행
+
+\da
+
+module 객체 생성/초기화
+
+\da
+
+sys.modules["utils"]에 등록
+\end{dhksmry}
+
+이제:
+
+\begin{dhksmry}
+    sys.modules
+
+    "utils" \ra utils module object
+\end{dhksmry}
+
+가 되었다고 생각하자.
+
+두 번재:
+
+\begin{dhkcode}
+import utils
+\end{dhkcode}
+
+에서는:
+
+\begin{dhksmry}[centered]
+import utils
+
+\da
+
+sys.modules에 utils 있나?
+
+\da
+
+있음
+
+\da
+
+기존 module 객체 사용
+\end{dhksmry}
+
+그래서 일반적으로 \zsh{utils.py}를 처음부터 다시 실행하지 않는다.
+
+\subsubsection{그래서 같은 module 객체인지 확인할 수도 있다}
+
+\begin{dhkcode}
+import sys
+import utils
+
+print(utils is sys.modules["utils"])
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\begin{dhksmry}[centered]
+현재 namespace
+utils
+
+\da
+
+module object
+
+\ua
+
+sys.modules["utils"]
+\end{dhksmry}
+
+두 이름/참조가 \textbf{동일한 module 객체를 가리키므로}:
+
+\begin{dhkcode}
+utils is sys.modules["utils"]
+\end{dhkcode}
+
+가 \zsh{True}인 것이다.
+
+\subsubsection{이제 전체 import 과정을 조금 더 정확하게 만들 수 있다}
+
+단순하게:
+
+\begin{dhksmry}[centered]
+import
+
+\da
+
+sys.path 탐색
+
+\da
+
+module 발견
+\end{dhksmry}
+
+이라고 이전에 배웠던 것이 이제 한 단계 정밀해진다.
+
+\begin{dhksmry}[centered]
+import src.utils
+
+\da
+
+이미 로드되어 있는가?
+
+\da
+
+sys.modules 확인
+
+\da
+
+No
+
+\da
+
+import system이 module 탐색
+
+\da
+
+sys.path
+
+\da
+
+module 발견
+
+\da
+
+module 코드 실행
+\end{dhksmry}
+
+\subsubsection{그리고 이것이 \zsh{__name__}과도 연결된다}
+
+\zsh{utils.py}가 import 되면서 실행될 때
+
+Python은 module namespace 에 여러 특별한 이름도 준비한다.
+
+개념적으로:
+
+\begin{dhksmry}
+    utils module namespace
+
+
+    __name__ \ra "utils"
+
+    __package__ \ra ...
+
+    __file__ \ra ".../utils.py"
+
+    add \ra function object
+
+    x \ra 10
+
+    ...
+\end{dhksmry}
+
+그래서 \zsh{utils.py}내부 코드가 실행되는 동안에도:
+
+\begin{dhkcode}
+print(__name__)
+\end{dhkcode}
+
+이 가능했던 것이다.
+
+\zsh{__name__}이라는 마법 같은 함수가 따로 있는게 아니라
+
+\textbf{Python이 module namespace에 준비해둔 특별한 이름}이라고 보면 된다.
+
+여기까지 이해하면 다음에는
+
+\begin{dhksmry}
+    import utils와 from utils import add가 
+
+    객체/binding 관점에서 정확히 어떻게 다른지
+
+    그리고 왜 import한 변수는 원본 module에서 나중에 바뀌었는데
+
+    내쪽에서는 안바뀌지? 정도까지 들어가면 된다.
+\end{dhksmry}
+
+\subsubsection{\zsh{import ... / from ... import ...} $\rightarrow$ 객체와 바인딩 관점에서 분리}
+
+먼저 모듈 하나를 만들자.
+
+\zsh{config.py}:
+
+\begin{dhkcode}
+learning_rate = 0.001
+
+def show_lr():
+    print(learning_rate)
+\end{dhkcode}
+
+다른 파일 \zsh{train.py}에서:
+
+\begin{dhkcode}
+import config
+\end{dhkcode}
+
+한다고 하자.
+
+앞에서 배운 과정에 따라 \zsh{config.py}가 처음 import 되면
+
+실행되고 module namespace 가 만들어진다.
+
+\begin{dhkdir}
+config module object
+> namespace
+>> learning_rate → 0.001
+>> show_lr → function object
+\end{dhkdir}
+
+그리고 \zsh{train.py}쪽에서는:
+
+\begin{dhksmry}
+    trian.py namespace
+    
+    config \ra config module object
+\end{dhksmry}
+
+즉 \zsh{import config}가 현재 namespace 에 만드는 핵심 이름은 \zsh{config}이다.
+
+그래서:
+
+\begin{dhkcode}
+config.learning_rate
+config.show_lr()
+\end{dhkcode}
+
+라고 접근한다.
+
+\subsubsection{\zsh{from config import learning_rate}는 다르다}
+
+이번에는:
+
+\begin{dhkcode}
+from config import learning_rate
+\end{dhkcode}
+
+라고 해보자.
+
+\zsh{config module}을 찾고 로드하는 과정 자체는 여전히 필요하다.
+
+하지만 마지막에 현재 namespace 로 가져오는 이름이 다르다.
+
+\begin{dhkbranch}
+node main :: config module namespace // learning_rate → 0.001
+arrow main :: from config import learning_rate
+node main :: train.py namespace // learning_rate → 같은 0.001 객체
+\end{dhkbranch}
+
+즉 현재 namespace 에:
+
+\begin{dhkzsh}
+config
+\end{dhkzsh}
+
+라는 이름을 만드는 게 아니라:
+
+\begin{dhkzsh}
+learning_rate
+\end{dhkzsh}
+
+라는 이름을 직접 binding 하는 것이다.
+
+그래서:
+
+\begin{dhkcode}
+print(learning_rate)
+\end{dhkcode}
+
+라고 바로 쓸 수 있다.
+
+\subsubsection{여기서 중요한 실험}
+
+\zsh{config.py}:
+
+\begin{dhkcode}
+learning_rate = 0.001
+\end{dhkcode}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+import config
+
+print(config.learning_rate)
+
+config.learning_rate = 0.01
+
+print(config.learning_rate)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+0.001
+0.01
+\end{dhkzsh}
+
+이건 어렵지 않다.
+
+\begin{dhksmry}[centered]
+config
+
+\da
+
+module object
+
+\da
+
+learning_rate \ra 0.001
+\end{dhksmry}
+
+에서 module namespace 의 \zsh{learning_rate} binding을:
+
+\begin{dhksmry}[centered]
+learning_rate \ra 0.01
+\end{dhksmry}
+
+로 바꾼 것이기 때문이다.
+
+\subsubsection{그런데 이렇게 하면 재미있는 일이 생긴다}
+
+\begin{dhkcode}
+from config import learning_rate
+
+print(learning_rate)
+
+learning_rate = 0.01
+
+print(learning_rate)
+\end{dhkcode}
+
+당연히:
+
+\begin{dhkzsh}
+0.001
+0.01
+\end{dhkzsh}
+
+이다.
+
+그런데 이것은 \textbf{\zsh{config.learning_rate}를 0.01로 바꾼 것이 아니다}.
+
+처음에는:
+
+\begin{dhksmry}[centered]
+config namespace
+learning_rate
+
+\da
+
+0.001
+
+\ua
+
+train namespace
+learning_rate
+\end{dhksmry}
+
+두 namespace 의 서로 다른 이름이 같은 객체를 가리키고 있었던 것이다.
+
+그 후 \zsh{train.py}에서:
+
+\begin{dhkcode}
+learning_rate = 0.01
+\end{dhkcode}
+
+하면 \textbf{train namespace의 binding만 바뀐다}.
+
+\begin{dhksmry}
+    config namespace
+    learning_rate \ra 0.001
+
+    train namespace
+    learning_rate \ra 0.01
+\end{dhksmry}
+
+\subsubsection{반대로 \zsh{import config}는 module 을 통해 계속 접근한다}
+
+\begin{dhkcode}
+import config
+
+config.learning_rate = 0.01
+\end{dhkcode}
+
+에서는 구조가:
+
+\begin{dhkdir}
+train namespace
+
+config
+| config module object
+>learning_rate -> 0.01
+\end{dhkdir}
+
+이다.
+
+별도의 \zsh{learning_rate}이름을 \zsh{train} namespace에 만든 게 아니라
+
+\textbf{config module namespace에 들어가서 그 binding을 변경}한 것이다.
+
+그래서 이 둘은 꽤 중요한 차이가 있다.
+
+\begin{dhkcode}
+import config
+config.learning_rate
+\end{dhkcode}
+
+    vs.
+
+\begin{dhkcode}
+from config import learning_rate
+learning_rate
+\end{dhkcode}
+
+첫 번째는 매번 \zsh{config} module의 attribute를 보고 있고,
+
+두 번째는 import 시점에 해당 객체를 \textbf{현재 namespace의 별도 이름에 binding한 것}이다.
+
+\subsubsection{함수도 완전히 똑같다}
+
+\zsh{utils.py}:
+
+\begin{dhkcode}
+def add(a,b):
+    return a + b
+\end{dhkcode}
+
+방법 A
+
+\begin{dhkcode}
+import utils
+
+utils.add(10, 20)
+\end{dhkcode}
+
+구조:
+
+\begin{dhkdir}
+현재 namespace
+
+utils -> @module object
+> add -> function object
+\end{dhkdir}
+
+방법 B
+
+\begin{dhkcode}
+from utils import add
+
+add(10, 20)
+\end{dhkcode}
+
+구조:
+
+\begin{dhksmry}[centered]
+utils module
+
+\da
+
+add
+
+\da
+
+function object
+
+\ua
+
+add
+
+\ua
+
+현재 namespace
+\end{dhksmry}
+
+즉 \textbf{함수 코드를 복사해온 것도 아니다}.
+
+같은 function object를 현재 namespace의 \zsh{add}라는 이름에서도 가리키게 만든 것이다.
+
+\subsubsection{\zsh{as}도 이제 별 것 아니다}
+
+\begin{dhkcode}
+import pandas as pd
+\end{dhkcode}
+
+이것도 특별한 마법처럼 볼 필요가 없다.
+
+대략:
+
+\begin{dhksmry}[centered]
+pandas module object
+\ua
+pd
+\end{dhksmry}
+
+현재 namespace에서 그 module 객체를 \zsh{pd}라는 이름으로 사용하겠다는 것이다.
+
+그래서:
+
+\begin{dhkcode}
+pd.read_csv(...)
+\end{dhkcode}
+
+가 되는 것이다.
+
+마찬가지로:
+
+\begin{dhkcode}
+from pathlib import Path as P
+\end{dhkcode}
+
+라면 현재 namespace에:
+
+\begin{dhksmry}[centered]
+P \ra Path class object
+\end{dhksmry}
+
+가 생기는 셈이다.
+
+\subsubsection{여기까지 하나로 정리}
+
+\begin{dhkdir}
+import utils // 현재 namespace
+| utils -> @module
+> add
+> ...
+\end{dhkdir}
+
+\begin{dhkdir}
+from utils import add // 현재 namespace
+| add -> function object
+| utils module
+> add -> function object(same)
+\end{dhkdir}
+
+결국 import 문법도:
+
+\begin{dhksmry}[centered]
+객체를 찾고 \ra 어떤 namespace의 어떤 이름에 binding 할 것인가
+\end{dhksmry}
+
+라는 원리 위에 있다.
+
+다음에는 여기서 한단계 더 나아가서,
+
+\textbf{mutable 객체를 from ... import ... 했을 때는 왜 조금 다르게 보이는지},
+
+그리고 \textbf{import * 가 왜 좋지 않은지} 살펴본다.
+
+\subsubsection{mutable 객체를 import 했을 때의 동작은?}
+
+이번에는 \zsh{config}에 리스트를 넣어보자.
+
+\zsh{config.py}:
+
+\begin{dhkcode}
+hidden_sizes = [512, 256, 128]
+\end{dhkcode}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+from config import hidden_sizes
+
+print(hidden_sizes)
+\end{dhkcode}
+
+처음 import 직후 구조는:
+
+\begin{dhksmry}[centered]
+config namespace
+
+hidden_sizes
+
+\da
+
+[512, 256, 128]
+
+\ua
+
+hidden_sizes
+
+train namespace
+\end{dhksmry}
+
+즉 \textbf{리스트를 복사한 것이 아니다}.
+
+두 namespace의 \zsh{hidden_size}라는 이름이 \textbf{동일한 list 객체를 가리킨다}.
+
+따라서:
+
+\begin{dhkcode}
+import config
+from config import hidden_sizes
+
+print(config.hidden_sizes is hidden_sizes)
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+가 된다.
+
+\subsubsection{여기서 객체 자체를 변경해보자}
+
+\begin{dhkcode}
+import config
+from config import hidden_sizes
+
+hidden_sizes.append(64)
+
+print(hidden_sizes)
+print(config.hidden_sizes)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+[512, 256, 128, 64]
+[512, 256, 128, 64]
+\end{dhkzsh}
+
+왜?
+
+\zsh{append()}는 \zsh{hidden_sizes}라는 이름의 binding을 바꾼 것이 아니다.
+
+\textbf{그 이름이 가리키고 있는 list 객체 자체를 변경한 것}이다.
+
+그래서 양쪽에서 변경된 상태가 보인다.
+
+\subsubsection{그런데 재대입하면 완전히 다르다}
+
+이번에는:
+
+\begin{dhkcode}
+import config
+from config import hidden_sizes
+
+hidden_sizes = [1024, 512]
+print(hidden_sizes)
+print(config.hidden_sizes)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+[1024, 512]
+[512, 256, 128]
+\end{dhkzsh}
+
+왜냐하면:
+
+\begin{dhkcode}
+hidden_sizes = [1024, 512]
+\end{dhkcode}
+
+는 기존 list를 수정한 게 아니라 \textbf{train namespace의 \zsh{hidden_sizes}라는 이름을 새로운 list 객체에 재바인딩}했기 때문이다.
+
+\begin{dhksmry}
+    config namespace
+    hidden_sizes \ra [512, 256, 128]
+
+
+    train namespace
+    hidden_sizes \ra [1024, 512]
+\end{dhksmry}
+
+이건 mutable/immutable 의 내용과 같은 원리이다.
+
+\subsubsection{따라서 핵심은 import가 아니다}
+
+이게 중요하다.
+
+이 현상을 보고:
+
+\begin{dhksmry}[centered]
+\zsh{from import}는 mutable일 때 특별하게 동작한다.
+\end{dhksmry}
+
+라고 \textbf{이해하면 안된다}.
+
+특별한 import 규칙이 있는 것이 아니다.
+
+핵심은:
+
+\begin{dhksmry}[centered]
+객체 자체 변경(mutaion)
+
+vs.
+
+이름의 재바인딩(rebinding)
+\end{dhksmry}
+
+이다.
+
+예를 들어:
+
+\begin{dhkcode}
+hidden_sizes.append(64)
+\end{dhkcode}
+
+는:
+
+\begin{dhksmry}[centered]
+이름
+
+\da
+
+기존 list 객체
+
+\da
+
+객체 내부 상태 변경
+\end{dhksmry}
+
+반면:
+
+\begin{dhkcode}
+hidden_sizes = [1024, 512]
+\end{dhkcode}
+
+는:
+
+\begin{dhksmry}[centered]
+    이름 \ra 기존 list (X)
+
+    이름 \ra 새로운 list (O)
+\end{dhksmry}
+
+이다.
+
+\subsubsection{dictionary도 똑같다}
+
+\zsh{config.py}:
+
+\begin{dhkcode}
+settings = {
+    "epochs": 10,
+    "batch_size": 32
+}
+\end{dhkcode}
+
+\zsh{train.py}:
+
+\begin{dhkcode}
+import config
+from config import settings
+
+settings["epochs"] = 20
+print(settings)
+print(config.settings)
+\end{dhkcode}
+
+둘 다:
+
+\begin{dhkzsh}
+{
+    "epochs": 20,
+    "batch_size": 32
+}
+\end{dhkzsh}
+
+가 보인다.
+
+왜냐하면:
+
+\begin{dhkcode}
+settings["epochs"]=20
+\end{dhkcode}
+
+은 dictionary 객체 자체를 변경했기 때문이다.
+
+반대로:
+
+\begin{dhkcode}
+settings = {
+    "epochs": 100
+}
+\end{dhkcode}
+
+하면 \zsh{train}쪽 이름만 새로운 dictionary로 재바인딩 된다.
+
+\subsubsection{여기까지 오면 import를 굉장히 단순하게 볼 수 있다}
+
+처음에는:
+
+\begin{dhkcode}
+import config
+from config imoprt hidden_sizes
+\end{dhkcode}
+
+가 Python만의 복잡한 규칙처럼 보이지만, 실제 객체 모델은:
+
+\begin{dhksmry}
+    1. module도 객체다.
+
+    2. module은 자신의 namespace를 가진다.
+
+    3. import는 객체를 현재 namespace의 이름에 binding한다.
+
+    4. from ... import ... 도 특정 객체를 
+        현재 namespace의 이름에 binding한다.
+
+    5. 그 이후부터는 평번한 Python 객체 규칙이다.
+\end{dhksmry}
+
+\begin{dhksmry}[centered]
+mutation
+
+\da
+
+같은 객체를 보는 모든 곳에서 관찰됨
+
+
+
+rebinding
+
+\da
+
+해당 namespace의 이름만 다른 객체를 가리킴
+\end{dhksmry}
+
+이것이 전부이다.
+
+\subsubsection{그리고 \zsh{import *}}
+
+이제 이런 코드도 이해할 수 있다.
+
+\begin{dhkcode}
+from config import *
+\end{dhkcode}
+
+대략적으로는 \zsh{config}에서 공개 대상으로 취급되는 여러 이름을 
+
+현재 namespace로 가져오는 형태다.
+
+예를 들어:
+
+\begin{dhkcode}
+# config.py
+
+learning_rate = 0.001
+batch_size =32
+
+def load_config():
+    ...
+\end{dhkcode}
+
+에서:
+
+\begin{dhkcode}
+from config import *
+\end{dhkcode}
+
+를 사용하면 현재 namespace에 여러 이름이 한꺼번에 들어올 수 있다.
+
+\begin{dhksmry}[centered]
+현재 namespace
+
+learning_rate
+batch_size
+load_config
+...
+\end{dhksmry}
+
+문제는 구묘가 커지면:
+
+\begin{dhkcode}
+from config import *
+from utils import *
+from dataset import *
+\end{dhkcode}
+
+같은 코드에서
+
+\begin{dhkcode}
+load()
+\end{dhkcode}
+
+를 봤을 때:
+
+\begin{dhksmry}[centered]
+\zsh{load}가 어디서 들어온 것인가?
+\end{dhksmry}
+
+를 파악하기 어려워진다는 것이다.
+
+같은 이름이 여러 module에 있으면 namespace 충돌도 생길 수 있다.
+
+그래서 일반적인 애플리케이션 코드에서는 \zsh{import *}를 피하고:
+
+\begin{dhkcode}
+import config
+\end{dhkcode}
+
+또는:
+
+\begin{dhkcode}
+from config import learning_rate, batch_size
+\end{dhkcode}
+
+처럼 \textbf{어떤 이름을 가져오는지 명시적으로 표현하는 편이 좋다}.
+
+여기까지 왔으면 \textbf{import/module/package} 학습의 핵심 부분은 거의 끝났다.
+
+지금까지 연결한 범위는:
+
+\begin{dhksmry}[centered]
+filesystem
+
+\da
+
+Path / CWD
+
+\da
+
+Python 실행
+
+\da
+
+sys.executable
+
+\da
+
+sys.path
+
+\da
+
+module 탐색
+
+\da
+
+module / package
+
+\da
+
+python file.py vs ptyhon -m package.module
+
+\da
+
+__name__ / __package__
+
+\da
+
+module namespace
+
+\da
+
+sys.modules / import cache
+
+\da
+
+import binding
+
+\da
+
+mutable / mutation / rebinding
+\end{dhksmry}

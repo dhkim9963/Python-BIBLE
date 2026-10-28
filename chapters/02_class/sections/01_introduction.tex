@@ -1,0 +1,456 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.1 Introduction
+% ==================================================
+
+\subsection{Introduction - 클래스와 객체 모델을 왜 공부하는가?}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+학습목표
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}[centered]
+Python의 클래스와 객체 모델을 공부해야 하는 이유를
+
+이해하고 핵심 질문을 정의한다.
+\end{dhksmry}
+
+이번 학습의 출발점은 다음과 같은 PyTorch 모델 코드다.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+이 코드는 PyTorch를 이용해 간단한 신경망 모델을 정의한 것이다.
+
+코드의 기능을 기준으로 설명하면 다음과 같다.
+
+\begin{dhksmry}
+    1. \zsh{MyModel}이라는 클래스를 정의한다.
+
+    2. \zsh{nn.Module}을 상속한다.
+
+    3. \zsh{__init__()}에서 신경망 계층을 정의한다.
+
+    4. \zsh{forward()}에서 입력 데이터에 대한 연산을 정의한다.
+\end{dhksmry}
+
+이 정도의 설명만으로도 코드의 목적은 대략적으로 파악할 수 있다.
+
+하지만 코드의 기능을 이해하는 것과 Python이 해당 코드를 실행하는 원리를 이해하는 것은 서로 다른 문제다.
+
+예를 들어 다음과 같은 질문을 생각해 볼 수 있다.
+
+\begin{dhktable}
+|코드	|핵심 질문|
+|:---|:---|
+|class MyModel:	|클래스 정의를 실행하면 무엇이 생성되는가?|
+|MyModel()	|클래스 이름 뒤에 ()를 붙이면 어떤 과정이 시작되는가?|
+|__init__(self)	|왜 인스턴스를 생성할 때 자동으로 호출되는가?|
+|self	|무엇을 참조하며 누가 전달하는가?|
+|self.linear = ...	|생성한 객체는 어디에 저장되는가?|
+|nn.Module	|상속하면 어떤 기능을 사용할 수 있는가?|
+|super().__init__()	|상위 클래스의 초기화가 왜 필요한가?|
+|model(x)	|모델 인스턴스를 함수처럼 호출할 수 있는 이유는 무엇인가?|
+|__call__()	|Python은 왜 이 이름을 특별하게 처리하는가?|
+\end{dhktable}
+
+이러한 질문에 순서대로 답하는 것을 목표로 한다.
+
+\subsubsection{메서드와 \zsh{self}에 대한 의문}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+
+    def introduce(self):
+        print("Hello")
+
+
+p = Person()
+
+p.introduce()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Hello
+\end{dhkzsh}
+
+여기서 \zsh{introduce()} 메서드는 다음과 같이 정의되어 있다.
+
+\begin{dhkcode}
+def introduce(self):
+\end{dhkcode}
+
+분명히 \zsh{self}라는 매개변수가 하나 존재한다.
+
+그런데 실제 호출에서는 아무런 인수도 전달하지 않았다.
+
+\begin{dhkcode}
+p.introduce()
+\end{dhkcode}
+
+그럼에도 정상적으로 실행된다.
+
+왜 그럴까?
+
+Python에서는 인스턴스를 통해 일반적인 인스턴스 메서드에 접근하면 해당 인스턴스가 연결된 \zsh{바운드 메서드(Bound Method)}를 얻기 때문이다.
+
+따라서 다음 두 호출은 이 예제에서 같은 효과를 가진다.
+
+\begin{dhkcode}
+p.introduce()
+
+Person.introduce(p)
+\end{dhkcode}
+
+여기서 \zsh{self}는 Python의 예약어가 아니다.
+
+메서드에 전달되는 인스턴스를 받기 위해 관례적으로 사용하는 매개변수 이름이다.
+
+즉, \zsh{self}를 이해하려면 다음 개념을 함께 이해해야 한다.
+
+\begin{dhksmry}
+    1. 함수도 객체라는 사실
+
+    2. 클래스에 정의된 함수와 인스턴스 메서드의 관계
+
+    3. 인스턴스를 통한 속성 접근
+
+    4. 바운드 메서드와 인수 전달
+\end{dhksmry}
+
+이 내용은 \zsh{2.5. 메서드와 self}에서 자세히 학습한다.
+
+\subsubsection{인스턴스 생성과 초기화에 대한 의문}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+p = Person("Kim")
+\end{dhkcode}
+
+일반적으로 \zsh{__init__()}은 객체를 생성할 때 실행되는 함수라고 설명한다.
+
+하지만 엄밀하게 말하면 \zsh{__init__()}은 객체 자체를 생성하는 메서드가 아니다.
+
+Python의 일반적인 인스턴스 생성 과정은 다음과 같다.
+
+\begin{dhksmry}[centered]
+Person("Kim")
+\da
+클래스 객체 호출
+\da
+__new__()
+\da
+인스턴스 생성
+\da
+__init__()
+\da
+인스턴스 초기화
+\da
+p에 인스턴스 바인딩
+\end{dhksmry}
+
+이것은 일반적인 클래스 생성 과정의 개념도이며, 
+
+실제로는 \zsh{__new__()}가 해당 클래스의 인스턴스를 반환하는지 등에 따라
+
+\zsh{__init__()} 호출 여부가 달라질 수 있다.
+
+여기서 두 메서드의 역할을 구분해야 한다.
+
+\begin{dhktable}
+|메서드	|주요 역할|
+|:---|:---|
+|__new__()	|인스턴스 생성|
+|__init__()|	생성된 인스턴스 초기화|
+\end{dhktable}
+
+그리고 다음 코드에서는
+
+\begin{dhkcode}
+self.name = name
+\end{dhkcode}
+
+인스턴스에 \zsh{name}이라는 속성을 설정한다.
+
+따라서 다음 질문들이 발생한다.
+
+\begin{dhksmry}
+    1. __new__()와 __init__()은 왜 분리되어 있는가?
+
+    2. Python은 이 메서드들을 어떤 규칙으로 호출하는가?
+
+    3. self는 어느 시점에 전달되는가?
+
+    4. self.name은 어디에 저장되는가?
+
+    5. __init__()은 어떤 값을 반환해야 하는가?
+\end{dhksmry}
+
+이 내용은 \zsh{2.6. __new__와 __init__}에서 자세히 학습한다.
+
+\subsubsection{특수 메서드와 Callable 객체}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Calculator:
+    def __call__(self, x):
+        return x * 2
+
+calc = Calculator()
+
+result = calc(10)
+
+print(result)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+20
+\end{dhkzsh}
+
+여기서 \zsh{calc}는 함수가 아니다.
+
+\zsh{Calculator} 클래스의 인스턴스다.
+
+그런데 다음 코드가 정상적으로 실행된다.
+
+\begin{dhkcode}
+calc(10)
+\end{dhkcode}
+
+이것이 가능한 이유는 \zsh{Calculator} 클래스에 \zsh{__call__()}이라는 특수 메서드가 정의되어 있기 때문이다.
+
+Python은 인스턴스가 호출될 때 해당 타입의 \zsh{__call__()}을 이용한다.
+
+따라서 이 예제에서는 다음과 같은 호출 관계를 생각할 수 있다.
+
+\begin{dhksmry}[centered]
+calc(10)
+\da
+Calculator.__call__(calc, 10)
+\da
+10 * 2
+\da
+20
+\end{dhksmry}
+
+이러한 객체를 Callable 객체라고 한다.
+
+이 개념은 PyTorch 모델에서도 사용된다.
+
+\begin{dhkcode}
+model = MyModel()
+
+output = model(x)
+\end{dhkcode}
+
+여기서 \zsh{model}은 \zsh{MyModel}의 인스턴스다.
+
+하지만 \zsh{nn.Module}이 제공하는 호출 메커니즘을 상속받았기 때문에 함수처럼 호출할 수 있다.
+
+PyTorch는 이 호출 과정에서 \zsh{forward()}를 실행하도록 구성되어 있다.
+
+따라서 \zsh{__call__()}을 이해하면 다음 두 코드의 관계도 설명할 수 있다.
+
+\begin{dhkcode}
+model(x)
+
+model.forward(x)
+\end{dhkcode}
+
+두 코드 모두 순전파 계산을 수행할 수 있지만, 동일한 호출 경로를 거치는 것은 아니다.
+
+\zsh{model(x)}는 PyTorch의 모듈 호출 메커니즘을 거치므로 일반적으로 권장되는 방식이다.
+
+이 내용은 \zsh{2.10. 특수 메서드}에서 자세히 학습한다.
+
+\subsubsection{상속은 왜 사용하는가?}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    ...
+\end{dhkcode}
+
+여기서 \zsh{MyModel}은 \zsh{nn.Module}을 상속한다.
+
+상속은 일반적으로 기존 클래스의 기능을 재사용하는 방법으로 소개된다.
+
+하지만 상속의 목적은 단순한 코드 재사용에만 있지 않다.
+
+상속을 통해 기존 클래스가 제공하는 메서드와 동작 규약을 활용하거나,
+
+필요한 부분을 재정의하여 새로운 클래스를 구성할 수 있다.
+
+예를 들어 \zsh{nn.Module}을 상속받은 모델에서는 다음과 같은 메서드들을 사용할 수 있다.
+
+\begin{dhkcode}
+model.parameters()
+
+model.state_dict()
+
+model.to(device)
+
+model.train()
+
+model.eval()
+\end{dhkcode}
+
+우리는 이러한 메서드를 \zsh{MyModel} 내부에 직접 정의하지 않았다.
+
+그런데도 사용할 수 있는 이유는 상속 관계를 통해 해당 기능들이 제공되기 때문이다.
+
+또한 \zsh{nn.Module}은 하위 모듈과 파라미터를 등록하고 관리하는 기능도 제공한다.
+
+따라서 다음 코드에서
+
+\begin{dhkcode}
+self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+\zsh{nn.Linear} 인스턴스를 모델의 하위 모듈로 등록하는 동작이 이루어진다.
+
+이러한 구조를 이해하려면 다음 개념이 필요하다.
+
+\begin{dhksmry}
+    1. 상속 관계
+
+    2. 메서드 탐색
+
+    3. 메서드 오버라이딩
+
+    4. super()
+
+    5. MRO(Method Resolution Order)
+
+    6. 클래스가 제공하는 객체 관리 기능
+\end{dhksmry}
+
+이 내용은 \zsh{2.8. 상속과 메서드 오버라이딩}, \zsh{2.9. super()와 MRO}에서 자세히 학습한다.
+
+\subsubsection{최종 학습 목표}
+
+이번 학습의 최종 목표는 Python 클래스의 문법을 단순히 암기하는 것이 아니다.
+
+다음 코드를 다시 살펴보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+
+model = MyModel()
+
+output = model(x)
+\end{dhkcode}
+
+여기서 \zsh{x}는 적절한 입력 Tensor가 미리 정의되어 있다고 가정한다.
+
+이번 학습을 마친 뒤에는 다음 과정을 스스로 설명할 수 있어야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 정의
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+\end{dhkcode}
+
+Python이 클래스 객체를 생성하고 \zsh{MyModel}이라는 이름에 바인딩하는 과정
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+model = MyModel()
+\end{dhkcode}
+
+클래스 객체가 호출되고 인스턴스가 생성되는 과정
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 초기화
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def __init__(self):
+\end{dhkcode}
+
+생성된 인스턴스가 초기화되는 과정
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+상속된 기능 활용
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+super().__init__()
+\end{dhkcode}
+
+상속 관계에서 \zsh{super()}가 다음 메서드를 탐색하고 호출하는 과정
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 속성 설정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+생성한 객체가 인스턴스에 연결되고 Pytorch에 하위 모듈로 등록되는 과정
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Callable 객체 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+output = model(x)
+\end{dhkcode}
+
+인스턴스 호출이 \zsh{nn.Module}의 호출 메커니즘을 거쳐 \zsh{forward()}를 실행하는 과정
+
+이 과정을 이해하면 PyTorch 모델을 단순히 아키텍처를 구현한 코드로 보는 것이 아니라, Python 객체 모델을 활용하여 구성된 실행가능한 시스템으로 이해할 수 있게 된다.

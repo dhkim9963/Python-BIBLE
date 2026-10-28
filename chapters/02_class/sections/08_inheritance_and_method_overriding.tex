@@ -1,0 +1,1231 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.8. 상속과 메서드 오버라이딩 — 자식 클래스는 부모 클래스의 기능을 어떻게 사용하는가?
+% ==================================================
+
+\subsection{상속과 메서드 오버라이딩 - 자식 클래스는 부모 클래스의 기능을 어떻게 사용하는가?}
+
+2.7에서는 Python이 인스턴스 속성을 읽을 때 인스턴스 네임스페이스뿐 아니라 클래스 네임스페이스도 탐색한다는 사실을 학습했다.
+
+이번 2.8에서는 이 속성 탐색 범위를 하나의 클래스에서 여러 클래스 사이의 관계로 확장한다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Animal:
+    def speak(self):
+        print("Animal sound")
+
+
+class Dog(Animal):
+    pass
+
+dog = Dog()
+dog.speak()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Animal sound
+\end{dhkzsh}
+
+여기서 중요한 질문이 생긴다.
+
+\zsh{Dog} 클래스에는 \zsh{speak()}가 정의되어 있지 않다.
+
+그런데 왜 \zsh{dog.speak()}를 호출할 수 있을까?
+
+이번 학습에서는 이 질문을 출발점으로 다음 개념들을 연결할 것이다.
+
+\begin{dhksmry}
+    - 상속(Inheritance)과 클래스 간 관계
+
+    - 부모 클래스와 자식 클래스의 객체 모델
+
+    - 상속된 속성과 메서드의 탐색
+
+    - 메서드 오버라이딩(Overriding)
+
+    - self와 실제 인스턴스 타입
+
+    - __init__()의 상속과 초기화
+
+    - 다형성(Polymorphism)
+
+    - PyTorch nn.Module의 상속 구조
+\end{dhksmry}
+
+\subsubsection{개념 정의 - 상속이란 무엇인가?}
+
+상속(Inheritance)은 기존 클래스의 속성과 동작을 활용하여 새로운 클래스를 정의하는 메커니즘이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Animal:
+    def speak(self):
+        print("Animal sound")
+
+
+class Dog(Animal):
+    pass
+\end{dhkcode}
+
+여기서 \zsh{Animal}은 부모 클래스(Base Class), \zsh{Dog}는 자식 클래스(Derived Class)이다.
+
+\begin{dhkcode}
+class Dog(Animal):
+\end{dhkcode}
+
+이 구문은 \zsh{Dog} 클래스가 \zsh{Animal}을 상속하도록 정의한다는 의미다.
+
+상속 관계를 그림으로 표현하면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) [accent] :: speak -> 함수 객체
+node n2 (2,1) :: 부모의 speak() 사용 가능
+group g1(n1) :: Animal 클래스 객체 
+group g2(n2) :: Dog 클래스 객체 
+edge g2 -> g1
+
+caption :: 상속은 클래스 객체 사이에 속성 탐색 관계를 형성한다.
+\end{dhkgraph}
+
+여기서 가장 먼저 이해해야 할 점이 있다.
+
+상속은 부모 클래스의 모든 속성과 메서드를 자식 클래스의 네임스페이스에 복사하는 과정이 아니다.
+
+자식 클래스는 부모 클래스를 참조하는 상속 관계를 가지고, 속성을 탐색할 때 그 관계를 이용한다.
+
+이 사실은 이후 메서드 오버라이딩과 \zsh{super()}를 이해하는 핵심이 된다.
+
+\subsubsection{상속하면 실제로 무엇이 생성되는가?}
+
+2.2에서는 \zsh{class}문을 실행하면 클래스 객체가 생성된다고 학습했다.
+
+상속을 사용해도 마찬가지다.
+
+\begin{dhkcode}
+class Animal:
+    pass
+
+class Dog(Animal):
+    pass
+\end{dhkcode}
+
+이 코드를 실행하면 두 개의 클래스 객체가 생성된다.
+
+\begin{dhksmry}
+    - Animal 클래스 객체
+
+    - Dog 클래스 객체
+\end{dhksmry}
+
+\zsh{Dog}가 \zsh{Animal}을 상속했다고 해서 두 이름이 같은 객체를 참조하는 것은 아니다.
+
+\begin{dhkcode}
+print(Dog is Animal)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+두 클래스는 별개의 객체다.
+
+그렇다면 상속 관계는 어디에 기록될까?
+
+Python 클래스 객체에는 직접적인 부모 클래스 정보를 확인할 수 있는 
+
+\zsh{__bases__} 속성이 있다.
+
+\begin{dhkcode}
+print(Dog.__bases__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+(<class '__main__.Animal'>,)
+\end{dhkzsh}
+
+즉, \zsh{Dog} 클래스 객체는 자신의 직접적인 부모 클래스가 \zsh{Animal}이라는 정보를 가지고 있다.
+
+반대로 다음 코드도 확인해 보자.
+
+\begin{dhkcode}
+print(Animal.__bases__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+(<class 'object'>,)
+\end{dhkzsh}
+
+Python 3의 일반적인 사용자 정의 클래스는 별도의 부모 클래스를 명시하지 않으면 기본적으로 \zsh{object}를 상속한다.
+
+따라서 다음 두 클래스 정의는 기본적인 상속 관계에서 동일하다.
+
+\begin{dhkcode}
+class Animal:
+    pass
+
+
+class Animal(object):
+    pass
+\end{dhkcode}
+
+전체 관계는 다음과 같다.
+
+\begin{dhkdiagram}[in=10]
+node n1 (1,1) :: object
+node n2 (3,1) :: Animal
+node n3 (5,1) :: Dog
+
+edge n2 -> n1 :: 상속
+edge n3 -> n2 :: 상속
+\end{dhkdiagram}
+
+이 그림의 화살표는 클래스 사이의 상속 관계를 나타낸다.
+
+2.3에서 학습했던 클래스와 인스턴스의 타입 관계와는 구분해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+상속 관계와 인스턴스 관계 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+dog = Dog()
+\end{dhkcode}
+
+이때 두 종류의 관계가 동시에 존재한다.
+
+\begin{dhkdiagram}[in=10]
+node n1 (1,1) :: object
+node n2 (3,1) :: Animal
+node n3 (5,1) :: Dog
+node n4 (7,1) :: dog
+edge n4 -> n3 :: 인스턴스 관계
+edge n3 -> n2 :: 상속
+edge n2 -> n1 :: 상속
+\end{dhkdiagram}
+
+따라서 다음 결과가 성립한다.
+
+\begin{dhkcode}
+print(type(dog) is Dog)
+
+print(isinstance(dog, Dog))
+print(isinstance(dog, Animal))
+print(isinstance(dog, object))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+True
+True
+\end{dhkzsh}
+
+\zsh{dog}의 실제 타입은 \zsh{Dog}이지만, 상속 관계 때문에 \zsh{Animal}과 \zsh{object}의 인스턴스로도 인정되는 것이다.
+
+\subsubsection{부모 클래스의 메서드는 자식 클래스에 복사되는가?}
+
+이번 학습에서 중요한 내용 중 하나다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Animal:
+    def speak(self):
+        print("Animal sound")
+
+
+class Dog(Animal):
+    pass
+\end{dhkcode}
+
+이제 클래스 네임스페이스를 확인해 보자.
+
+\begin{dhkcode}
+print("speak" in Animal.__dict__)
+print("speak" in Dog.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+False
+\end{dhkzsh}
+
+\zsh{Animal}의 네임스페이스에는 \zsh{speak} 함수 객체가 존재한다.
+
+하지만 \zsh{Dog}의 네임스페이스에는 존재하지 않는다.
+
+그런데도 다음 코드는 실행된다.
+
+\begin{dhkcode}
+dog = Dog()
+
+dog.speak()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Animal sound
+\end{dhkzsh}
+
+왜 그럴까?
+
+Python이 \zsh{Dog}에서 \zsh{speak}을 찾지 못하면 상속 관계에 따라 \zsh{Animal}에서도 탐색하기 때문이다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: dog.speak() // 인스턴스를 통한 속성 접근
+node n2 (2,1) :: Dog 클래스 탐색 // speak 없음
+node n3 (3,1) :: Animal 클래스 탐색 // speak 함수 객체 발견
+node n4 (4,1) :: 바운드 메서드 호출 // self -> dog 인스턴스
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+
+caption :: 일반적인 상속 메서드 탐색 과정을 단순화한 그림
+\end{dhkgraph}
+
+여기서 2.5의 바운드 메서드 개념이 연결된다.
+
+\zsh{Animal}에서 발견한 함수 객체를 \zsh{dog} 인스턴스에 바인딩하는 것이다.
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+method = dog.speak
+
+print(method.__self__ is dog)
+print(method.__func__ is Animal.__dict__["speak"])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+즉, 부모 클래스에 정의된 함수 객체가 자식 클래스 인스턴스에 바인딩될 수 있다.
+
+이것이 상속 메서드 호출의 핵심 원리다.
+
+\subsubsection{부모 메서드의 \zsh{self}는 어떤 인스턴스를 참조하는가?}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Animal:
+    def identify(self):
+        print(type(self))
+
+
+class Dog(Animal):
+    pass
+
+
+dog = Dog()
+dog.identify()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Dog'>
+\end{dhkzsh}
+
+여기서 주목해야 할 점이 있다.
+
+\zsh{identify()}는 \zsh{Animal} 클래스에 정의되어 있다.
+
+그런데 \zsh{self}의 타입은 \zsh{Animal}이 아니라 \zsh{Dog}다.
+
+왜 그럴까?
+
+\zsh{self}는 메서드가 정의된 클래스를 의미하는 것이 아니라, 메서드 호출에 바인딩된 실제 인스턴스를 참조하기 때문이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+animal = Animal()
+dog = Dog()
+
+animal.identify()
+dog.identify()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Animal'>
+<class '__main__.Dog'>
+\end{dhkzsh}
+
+두 호출은 같은 함수 객체를 사용하지만, 전달되는 인스턴스가 다르다.
+
+개념적으로 다음과 같다.
+
+\begin{dhkcode}
+Animal.identify(animal)
+
+Animal.identify(dog)
+\end{dhkcode}
+
+따라서 함수 본문은 같더라도 \zsh{self}가 참조하는 객체에 따라 동작 결과가 달라질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+부모 메서드에서 자식 인스턴스의 속성에 접근할 수도 있다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Animal:
+    def introduce(self):
+        print(self.name)
+
+
+class Dog(Animal):
+    def __init__(self, name):
+        self.name = name
+
+
+dog = Dog("Buddy")
+dog.introduce()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Buddy
+\end{dhkzsh}
+
+\zsh{introduce()}는 \zsh{Animal}에 정의되어 있지만, \zsh{self.name}은 \zsh{dog} 인스턴스의 속성을 읽는다.
+
+즉, 메서드가 정의된 위치와 메서드가 사용하는 인스턴스의 상태는 구분되는 개념이다.
+
+\subsubsection{메서드 오버라이딩 - 자식 클래스에서 메서드를 재정의하기}
+
+이제 오버라이딩(Overriding)을 살펴보자.
+
+오버라이딩은 자식 클래스가 부모 클래스에 존재하는 메서드와 같은 이름의 메서드를 정의하여, 자식 클래스에서의 동작을 변경하는 것이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Animal:
+    def speak(self):
+        print("Animal sound")
+
+
+class Dog(Animal):
+    def speak(self):
+        print("Woof!")
+\end{dhkcode}
+
+이제 인스턴스를 생성해 보자.
+
+\begin{dhkcode}
+animal = Animal()
+dog = Dog()
+
+animal.speak()
+dog.speak()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Animal sound
+Woof!
+\end{dhkzsh}
+
+여기서 \zsh{Dog}는 부모 클래스의 \zsh{speak()}을 변경한 것일까?
+
+정확히는 아니다.
+
+\zsh{Animal} 클래스의 \zsh{speak} 함수 객체는 그대로 존재한다.
+
+\zsh{Dog} 클래스의 네임스페이스에 새로운 \zsh{speak} 함수 객체가 정의된 것이다.
+
+확인해 보자.
+
+\begin{dhkcode}
+print(Animal.__dict__["speak"])
+print(Dog.__dict__["speak"])
+
+print(
+    Animal.__dict__["speak"] is Dog.__dict__["speak"]
+)
+\end{dhkcode}
+
+실행 결과의 마지막 줄:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+두 함수 객체는 서로 다르다.
+
+따라서 구조는 다음과 같다.
+
+\begin{dhkgraph}
+node n1 (1,1):: speak -> 함수 객체 A
+node n2 (2,1) [accent] :: speak -> 함수 객체 B
+group g1(n1) :: Animal 클래스
+group g2(n2) :: Dog 클래스 
+edge g2 -> g1
+
+caption :: 오버라이딩은 부모의 함수 객체를 수정하지 않고 자식 클래스에 같은 이름의 속성을 정의한다.
+\end{dhkgraph}
+
+따라서 \zsh{dog.speak()}에서는 \zsh{Dog}클래스의 \zsh{speak}가 먼저 발견된다.
+
+부모 클래스의 \zsh{speak}까지 탐색할 필요가 없는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오버라이딩은 이름 탐색의 결과다
+\end{dhksmry}
+\end{dhknote}
+
+이전에 인스턴스 속성이 클래스 속성을 가리는 Shadowing을 학습했다.
+
+메서드 오버라이딩도 넓은 의미에서는 비슷한 원리다.
+
+\begin{dhksmry}
+    - 인스턴스 속성이 클래스 속성을 가릴 수 있다.
+
+    - 자식 클래스의 속성이 부모 클래스의 속성을 가릴 수 있다.
+\end{dhksmry}
+
+다만 오버라이딩은 주로 상속 관계에서 메서드를 재정의하는 것을 의미한다.
+
+\subsubsection{부모 메서드와 자식 메서드를 직접 비교하기}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Animal:
+    def speak(self):
+        print("Animal sound")
+
+
+class Dog(Animal):
+    def speak(self):
+        print("Woof!")
+
+
+dog = Dog()
+\end{dhkcode}
+
+일반적으로 다음 코드를 실행하면
+
+\begin{dhkcode}
+dog.speak()
+\end{dhkcode}
+
+\zsh{Dog.speak()}가 호출된다.
+
+그런데 부모 클래스에 정의된 메서드를 직접 호출할 수도 있다.
+
+\begin{dhkcode}
+Animal.speak(dog)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Animal sound
+\end{dhkzsh}
+
+왜 가능할까?
+
+2.5에서 배운 것처럼 클래스에서 함수 객체에 직접 접근한 뒤 인스턴스를 명시적으로 전달할 수 있기 때문이다.
+
+\begin{dhkcode}
+Animal.speak(dog)
+\end{dhkcode}
+
+이 표현식은 \zsh{Animal} 클래스에 정의된 함수 객체를 가져와 \zsh{dog} 인스턴스를 첫 번째 인수로 전달한다.
+
+따라서 자식 클래스에서 오버라이딩했더라도 부모 클래스의 함수 객체 자체는 여전히 호출할 수 있다.
+
+하지만 실무에서 부모 메서드를 호출할 때는 일반적으로 \zsh{super()}를 사용한다.
+
+\begin{dhkcode}
+class Dog(Animal):
+    def speak(self):
+        super().speak()
+        print("Woof!")
+\end{dhkcode}
+
+\zsh{super()}는 단순히 부모 클래스 이름을 대체하는 문법이 아니다.
+
+MRO(Method Resolution Order)를 기반으로 다음 메서드를 찾는 메커니즘이다.
+
+이 부분은 2.9에서 자세히 다룰 것이다.
+
+현재는 오버라이딩이 부모 메서드를 삭제하거나 수정하는 것이 아니라는 점을 기억하면 충분하다.
+
+\subsubsection{\zsh{__init__()}도 상속되고 오버라이딩되는가?}
+
+2.6에서는 \zsh{__init__()}이 생성된 인스턴스를 초기화하는 특수 메서드라고 학습했다.
+
+그렇다면 \zsh{__init__()}도 상속될까?
+
+그렇다.
+
+\zsh{__init__()} 역시 클래스에 정의된 메서드이므로 상속 관계의 영향을 받는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+부모의 __init__()을 그대로 사용하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+
+class Dog(Animal):
+    pass
+
+
+dog = Dog("Buddy")
+
+print(dog.name)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Buddy
+\end{dhkzsh}
+
+\zsh{Dog}에는 \zsh{__init__()}이 정의되어 있지 않다.
+
+하지만 인스턴스를 생성할 때 상속 관계를 통해 \zsh{Animal.__init__()}이 사용된다.
+
+따라서 \zsh{dog} 인스턴스에 \zsh{name} 속성이 설정되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+자식이 __init__()을 오버라이딩하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        self.name = name
+        self.breed = breed
+\end{dhkcode}
+
+이제 \zsh{Dog}에는 자체적인 \zsh{__init__()}이 있다.
+
+\begin{dhkcode}
+dog = Dog("Buddy", "Beagle")
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'name': 'Buddy', 'breed': 'Beagle'}
+\end{dhkzsh}
+
+여기서는 자식 클래스가 직접 \zsh{name}과 \zsh{breed}를 초기화했다.
+
+그런데 다음 코드에서는 문제가 발생할 수 있다.
+
+\begin{dhkcode}
+class Animal:
+    def __init__(self, name):
+        self.name = name
+        self.alive = True
+
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        self.breed = breed
+
+dog = Dog("Buddy", "Beagle")
+
+print(dog.alive)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+AttributeError: 'Dog' object has no attribute 'alive'
+\end{dhkzsh}
+
+왜 이런 문제가 발생할까?
+
+\zsh{Dog.__init__()}이 \zsh{Animal.__init__()}을 오버라이딩했고, 부모의 초기화 메서드를 호출하지 않았기 때문이다.
+
+자식이 \zsh{__init__()}을 정의하면 부모의 \zsh{__init__()}이 자동으로 추가 실행되는 것은 아니다.
+
+이 점은 반드시 기억해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+부모 초기화를 활용하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Animal:
+    def __init__(self, name):
+        self.name = name
+        self.alive = True
+
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        super().__init__(name)
+        self.breed = breed
+\end{dhkcode}
+
+이제 다음 코드가 정상적으로 실행된다.
+
+\begin{dhkcode}
+dog = Dog("Buddy", "Beagle")
+
+print(dog.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{
+    'name': 'Buddy',
+    'alive': True,
+    'breed': 'Beagle'
+}
+\end{dhkzsh}
+
+\zsh{super().__init__(name)}을 통해 상속 계층의 다음 초기화 메서드를 호출했기 때문이다.
+
+이 구조는 PyTorch의 \zsh{super().__init__()}을 이해하는 데 직접적으로 연결된다.
+
+\subsubsection{다형성 - 같은 메서드 호출이 다른 동작을 수행하는 이유}
+
+이제 상속과 오버라이딩을 결합하면 중요한 객체지향 개념이 등장한다.
+
+바로 \zsh{다형성(Polymorphism)}이다.
+
+다형성은 같은 인터페이스를 통해 서로 다른 객체가 각자의 동작을 수행할 수 있다는 개념이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Animal:
+    def speak(self):
+        print("Animal sound")
+
+
+class Dog(Animal):
+    def speak(self):
+        print("Woof!")
+
+
+class Cat(Animal):
+    def speak(self):
+        print("Meow!")
+\end{dhkcode}
+
+이제 서로 다른 클래스의 인스턴스를 생성해 보자.
+
+\begin{dhkcode}
+animals = [
+    Animal(),
+    Dog(),
+    Cat()
+]
+\end{dhkcode}
+
+다음 반복문을 실행하면 어떻게 될까?
+
+\begin{dhkcode}
+for animal in animals:
+    animal.speak()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Animal sound
+Woof!
+Meow!
+\end{dhkzsh}
+
+반복문에서는 항상 같은 표현식을 사용했다.
+
+\begin{dhkcode}
+animal.speak()
+\end{dhkcode}
+
+하지만 실제 호출되는 메서드는 인스턴스의 타입에 따라 달라진다.
+
+왜 그럴까?
+
+각 인스턴스가 속한 클래스에서 \zsh{speak} 속성을 탐색하고, 해당 함수 객체를 인스턴스에 바인딩하기 때문이다.
+
+\begin{dhktable}
+|인스턴스|	실제 타입|	선택되는 메서드|
+|:---|:---|
+|Animal()|	Animal|	Animal.speak|
+|Dog()|	Dog|	Dog.speak|
+|Cat()|	Cat|	Cat.speak|
+\end{dhktable}
+
+여기서 중요한 사실이 있다.
+
+반복문은 \zsh{Dog}인지 \zsh{Cat}인지 직접 검사하지 않는다.
+
+\begin{dhkcode}
+if isinstance(animal, Dog):
+    ...
+elif isinstance(animal, Cat):
+    ...
+\end{dhkcode}
+
+이런 조건문 없이도 객체가 제공하는 \zsh{speak()}을 호출하면 각자의 동작이 실행된다.
+
+이것이 다형성의 핵심적인 활용 방식이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+다형성이 반드시 상속을 요구하는 것은 아니다
+\end{dhksmry}
+\end{dhknote}
+
+Python에서는 다음과 같은 코드도 가능하다.
+
+\begin{dhkcode}
+class Robot:
+    def speak(self):
+        print("Beep!")
+
+
+class Person:
+    def speak(self):
+        print("Hello!")
+\end{dhkcode}
+
+두 클래스 사이에는 직접적인 상속 관계가 없다.
+
+하지만 다음 함수는 두 객체를 모두 처리할 수 있다.
+
+\begin{dhkcode}
+def make_speak(obj):
+    obj.speak()
+
+
+make_speak(Robot())
+make_speak(Person())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Beep!
+Hello!
+\end{dhkzsh}
+
+Python에서는 이런 방식을 흔히 덕 타이핑(Duck Typing)이라고 부른다.
+
+객체의 구체적인 타입보다 필요한 동작을 제공하는가에 집중하는 방식이다.
+
+따라서 다형성은 상속과 오버라이딩으로 구현할 수도 있지만, 반드시 상속을 통해서만 구현되는 것은 아니다.
+
+\subsubsection{상속은 언제 사용하는 것이 적절한가?}
+
+여기서 상속의 설계 목적을 생각해 보자.
+
+상속은 단순히 중복 코드를 줄이기 위한 문법만은 아니다.
+
+기존 클래스가 제공하는 인터페이스와 동작을 유지하거나 확장하면서, 새로운 타입을 정의하는 수단이다.
+
+예를 들어 다음 관계는 자연스럽다.
+
+\begin{dhkcode}
+class Animal:
+    pass
+
+
+class Dog(Animal):
+    pass
+\end{dhkcode}
+
+\zsh{Dog}는 \zsh{Animal}의 한 종류라고 볼 수 있기 때문이다.
+
+이를 흔히 IS-A 관계라고 설명한다.
+
+반면 다음과 같은 관계는 상속보다 객체를 속성으로 보유하는 구성이 자연스러울 수 있다.
+
+\begin{dhkcode}
+class Engine:
+    pass
+
+
+class Car:
+    def __init__(self):
+        self.engine = Engine()
+\end{dhkcode}
+
+자동차는 엔진의 한 종류가 아니다.
+
+자동차가 엔진을 가지고 있는 관계이다.
+
+이런 구성을 \zsh{합성(Composition)}이라고 한다.
+
+\begin{dhktable}
+|구분|	상속|	합성|
+|:---|:---|:---|
+|관계|	IS-A|	HAS-A|
+|예시|	Dog(Animal)|	Car가 Engine을 보유|
+|구현|	부모 클래스를 지정|	다른 객체를 속성으로 보유|
+|주된 목적|	인터페이스와 동작의 확장·특수화|	여러 객체의 기능 조합|
+\end{dhktable}
+
+실제 프로그램 설계에서는 상속이 항상 합성보다 좋은 것도 아니고, 합성이 항상 상속보다 좋은 것도 아니다.
+
+중요한 것은 두 클래스 사이에 어떤 관계를 표현하려는지를 먼저 결정하는 것이다.
+
+이 구분은 PyTorch에서 특히 중요하다.
+
+\subsubsection{PyTorch와의 연결 - \zsh{nn.Module} 상속과 계층의 합성}
+
+이;제 다음 모델 코드를 살펴보자.
+
+\begin{dhkcode}
+import torch
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+이 코드에는 상속과 합성이 동시에 사용되고 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+상속 관계
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+\end{dhkcode}
+
+\zsh{MyModel}은 \zsh{nn.Module}을 상속한다.
+
+따라서 \zsh{MyModel}은 \zsh{nn.Module}의 하위 클래스다.
+
+\begin{dhkcode}
+print(issubclass(MyModel, nn.Module))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+그리고 생성된 모델 인스턴스 역시 \zsh{nn.Module}의 인스턴스로 인정된다.
+
+\begin{dhkcode}
+model = MyModel()
+
+print(isinstance(model, nn.Module))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\zsh{MyModel}은 \zsh{nn.Module}의 기능을 활용할 수 있다.
+
+예를 들어 다음과 같은 메서드들이 있다.
+
+\begin{dhkcode}
+model.parameters()
+model.state_dict()
+model.train()
+model.eval()
+model.to("cpu")
+\end{dhkcode}
+
+이러한 기능들은 \zsh{MyModel}에 직접 정의하지 않았어도 상속을 통해 사용할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+합성 관계
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+여기서 \zsh{nn.Linear} 인스턴스를 생성해 모델의 하위 모듈로 등록하고 있다.
+
+즉, \zsh{MyModel}이 \zsh{nn.Linear}를 상속하는 것이 아니다.
+
+\zsh{MyModel} 인스턴스가 \zsh{nn.Linear} 인스턴스를 포함하는 구조다.
+
+이를 그림으로 표현하면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) [accent] :: nn.Module
+node n2 (2,1) :: MyModel
+node n3 (2,2) :: model
+node n4 (3,2) [accent] :: nn.Linear
+
+group g1(n1) :: 부모 클래스
+group g2(n2) :: 자식 클래스
+group g3(n3) :: MyModel 인스턴스
+group g4(n4) :: 하위 모듈 인스턴스
+
+edge g2 -> g1 :: 상속
+edge g3 -> g2
+edge g3 -> g4 :: 포함
+
+caption :: Mymodel은 nn.Module을 상속하고, 생성된 모델 인스턴스는 nn.Linear 인스턴스를 하위 모듈로 포함한다.
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+forward()는 오버라이딩인가?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def forward(self, x):
+    return self.linear(x)
+\end{dhkcode}
+
+그렇다.
+
+\zsh{MyModel}은 \zsh{nn.Module}이 제공하는 \zsh{forward()} 인터페이스를 오버라이딩한다.
+
+\zsh{nn.Module}의 기본 \zsh{forward()}는 사용자가 모델에 맞는 계산을 정의하도록 마련된 메서드다.
+
+따라서 \zsh{MyModel}은 자신의 연산을 \zsh{forward()}에 정의한다.
+
+\begin{dhkcode}
+x = torch.randn(2, 10)
+
+output = model(x)
+\end{dhkcode}
+
+이때 \zsh{model(x)}는 \zsh{nn.Module}의 호출 메커니즘을 사용하고, 그 과정에서 실제 모델 인스턴스에 정의된 \zsh{MyModel.forward()}가 호출된다.
+
+이것은 상속된 호출 메커니즘과 오버라이딩된 메서드가 결합되는 사례다.
+
+다만 \zsh{model(x)}와 \zsh{model.forward(x)}는 내부 처리 경로가 완전히 같지는 않다.
+
+\zsh{model(x)}는 PyTorch의 Hook 등 추가적인 처리를 포함할 수 있기 때문이다.
+
+\subsubsection{핵심 정리}
+
+이번 학습의 핵심을 정리해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+상속은 클래스 객체 사이에 관계를 형성한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Dog(Animal):
+    pass
+\end{dhkcode}
+
+\zsh{Dog}는 \zsh{Animal}을 상속하는 별도의 클래스 객체다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+부모 클래스의 메서드는 자식 클래스에 복사되지 않는다.
+\end{dhksmry}
+\end{dhknote}
+
+자식 클래스는 상속 관계를 따라 부모 클래스의 속성과 메서드를 탐색할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+상속된 메서드의 self는 실제 호출 대상 인스턴스를 참조한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+dog.speak()
+\end{dhkcode}
+
+부모 클래스에 정의된 메서드라도 \zsh{self}는 \zsh{dog}를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오버라이딩은 
+
+자식 클래스에 같은 이름의 메서드를 새로 정의하는 것이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Dog(Animal):
+    def speak(self):
+        print("Woof!")
+\end{dhkcode}
+
+부모의 함수 객체를 수정하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__init__()도 상속과 오버라이딩의 영향을 받는다.
+\end{dhksmry}
+\end{dhknote}
+
+자식 클래스에서 \zsh{__init__()}을 재정의하면 부모 초기화가 자동으로 추가 실행되는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+super()는 상속 계층의 다른 구현을 활용할 때 사용한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+super().__init__()
+\end{dhkcode}
+
+정확한 탐색 방식은 MRO에 따라 결정된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+다형성은 동일한 인터페이스로 
+
+서로 다른 객체의 동작을 호출할 수 있게 한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+animal.speak()
+\end{dhkcode}
+
+실제 객체 타입에 따라 선택되는 메서드가 달라질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+상속과 합성은 서로 다른 객체 설계 방식이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}
+    - 상속 : IS-A 관계
+
+    - 합성 : HAS-A 관계
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch는 상속과 합성을 함께 사용한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+\end{dhkcode}
+
+\zsh{nn.Module}을 상속하고,
+
+\begin{dhkcode}
+self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+하위 모듈 인스턴스를 포함하며,
+
+\begin{dhkcode}
+def forward(self, x):
+\end{dhkcode}
+
+\zsh{forward()}를 오버라이딩한다.
+
+\subsubsection{2.8에서 반드시 이해해야 할 결론}
+
+이번 학습의 핵심 구조는 다음과 같다.
+
+\begin{dhksmry}[centered]
+Instance Attribute Access
+\da
+Current Class
+\da
+Inheritance Hierarchy
+\da
+Method Resolution
+\da
+Bound Method
+\da
+Execution
+\end{dhksmry}
+
+이것은 일반적인 인스턴스 메서드 탐색을 단순화한 흐름이다.
+
+실제 속성 탐색에는 2.7에서 학습한 디스크립터 우선순위도 적용된다.
+
+가장 중요한 사실은 다음 두 가지다.
+
+\begin{dhksmry}
+첫째, 상속은 부모 클래스의 메서드를 복사하는 것이 아니라,
+
+부모 클래스의 속성을 탐색할 수 있게 관계를 만드는 것이다.
+
+둘째, 오버라이딩은 부모 클래스의 메서드를 수정하는 것이 아니라,
+
+자식 클래스의 네임스페이스에 같은 이름의 새로운 메서드를 정의하는 것이다.
+\end{dhksmry}
+
+이 두 원리를 이해하면 PyTorch에서 \zsh{nn.Module}을 상속하고 \zsh{forward()}를 오버라이딩하는 구조를 자연스럽게 해석할 수 있다.
+
+다음 2.9에서는 지금까지 설명한 상속 계층의 메서드 탐색을 더 엄밀하게 다룰 것이다.
+
+특히 다중 상속에서 메서드 탐색 순서가 어떻게 결정되는지,
+
+\zsh{super()}가 왜 단순히 부모 클래스를 호출하는 문법이 아닌지,
+
+그리고 \zsh{super().__init__()}이 어떤 규칙으로 다음 메서드를 선택하는지 살펴볼 것이다.

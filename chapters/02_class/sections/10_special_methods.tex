@@ -1,0 +1,1419 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.10. 특수 메서드(Special Methods) — Python 문법은 객체의 어떤 동작을 호출하는가?
+% ==================================================
+
+\subsection{특수 메서드 - Python 문법은 객체의 어떤 동작을 호출하는가?}
+
+2.9에서는 Python이 MRO를 통해 클래스 계층에서 메서드를 탐색하는 과정과 \zsh{super()}의 동작을 학습했다.
+
+이번 2.10에서는 지금까지 학습한 객체 모델을 Python의 기본 문법과 연결할 것이다.
+
+예를 들어 다음 표현식들을 살펴보자.
+
+\begin{dhkcode}
+obj()
+len(obj)
+obj[0]
+for x in obj:
+    ...
+\end{dhkcode}
+
+겉으로 보면 서로 다른 문법이다.
+
+그런데 Python은 이러한 연산을 객체의 \zsh{특수 메서드(Special Method)}와 연결하는 프로토콜을 제공한다.
+
+이번 학습의 핵심은 다음 질문이다.
+
+\begin{dhksmry}[centered]
+Python의 연산자와 내장 문법은
+
+객체가 제공하는 특수 메서드와 어떻게 연결되는가?
+\end{dhksmry}
+
+특히 마지막에는 PyTorch에서 다음 코드가 실행되는 원리를 연결해 볼 것이다.
+
+\begin{dhkcode}
+output = model(x)
+\end{dhkcode}
+
+이 코드를 이해하려면 \zsh{__call__()}과 일반 메서드 호출의 차이를 정확하게 구분해야 한다.
+
+\subsubsection{특수 메서드란 무엇인가?}
+
+특수 메서드는 Python이 특정 문법이나 내장 연산을 처리할 때 사용하는, 미리 정해진 이름의 메서드다.
+
+일반적으로 이름의 앞뒤에 밑줄 두 개가 붙어 있다.
+
+\begin{dhkcode}
+__init__
+__call__
+__len__
+__getitem__
+__iter__
+__next__
+\end{dhkcode}
+
+이런 이름을 흔히 \zsh{Dunder Method}라고도 부른다.
+
+Dunder는 \zsh{Double Underscore}의 줄임말이다.
+
+일반적인 메서드와 비교해 보자.
+
+\begin{dhkcode}
+class Person:
+    def introduce(self):
+        print("Hello")
+\end{dhkcode}
+
+\zsh{introduce()}는 우리가 직접 이름을 정한 메서드다.
+
+\begin{dhkcode}
+p.introduce()
+\end{dhkcode}
+
+이 메서드를 호출하려면 일반적으로 해당 이름을 사용해야 한다.
+
+반면 다음 메서드는 조금 다르다.
+
+\begin{dhkcode}
+class Person:
+    def __str__(self):
+        return "Person instance"
+\end{dhkcode}
+
+이제 다음 코드를 실행하면
+
+\begin{dhkcode}
+p = Person()
+print(p)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Person instance
+\end{dhkzsh}
+
+우리는 \zsh{p.__str__()}을 직접 호출하지 않았다.
+
+하지만 \zsh{print()}가 객체의 문자열 표현을 얻는 과정에서 \zsh{__str__()}이 사용된 것이다.
+
+즉, 특수 메서드는 Python이 정해 놓은 연산 프로토콜에 참여하는 메서드다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+대표적인 특수 메서드
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|Python 문법|	관련 특수 메서드|	역할|
+|:---|:---|:---|
+|obj()|	__call__|	객체 호출|
+|len(obj)|	__len__|	길이 반환|
+|obj[key]|	__getitem__|	항목 조회|
+|obj[key] = value|	__setitem__|	항목 설정|
+|for x in obj|	__iter__, __next__|	반복|
+|a + b|	__add__ 등|	덧셈|
+|a == b|	__eq__|	동등성 비교|
+|str(obj)|	__str__|	문자열 표현|
+|repr(obj)|	__repr__|	개발자용 표현|
+|with obj:|	__enter__, __exit__|	컨텍스트 관리|
+\end{dhktable}
+
+여기서 중요한 점이 있다.
+
+특수 메서드는 일반 메서드처럼 직접 호출할 수도 있지만, Python의 내장 문법이 이를 처리하는 방식은 일반적인 인스턴스 속성 탐색과 다를 수 있다.
+
+이 차이를 먼저 이해하고 넘어가자.
+
+\subsubsection{특수 메서드는 어디에서 탐색되는가?}
+
+2.7에서는 다음과 같은 속성 탐색 구조를 학습했다.
+
+\begin{dhkcode}
+obj.attribute
+\end{dhkcode}
+
+일반적인 속성 접근은 디스크립터, 인스턴스 네임스페이스, 클래스 MRO 등을 고려한다.
+
+그런데 특수 메서드의 암묵적 호출에는 중요한 차이가 있다.
+
+Python은 일반적으로 \zsh{len(obj), obj()} 같은 특수 연산을 처리할 때 인스턴스 딕셔너리보다 객체의 타입과 그 MRO를 중심으로 특수 메서드를 탐색한다.
+
+다음 예제를 보자.
+
+\begin{dhkcode}
+class Box:
+    pass
+
+
+box = Box()
+
+box.__len__ = lambda: 10
+
+print(box.__len__())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+10
+\end{dhkzsh}
+
+인스턴스에 \zsh{__len__}이라는 속성을 직접 설정했으므로 명시적으로 호출할 수 있다.
+
+그렇다면 다음 코드는?
+
+\begin{dhkcode}
+print(len(box))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+TypeError: object of type 'Box' has no len()
+\end{dhkzsh}
+
+왜 이런 차이가 발생할까?
+
+\zsh{len(box)}는 일반적인 \zsh{box.__len__} 속성 조회를 그대로 수행하지 않기 때문이다.
+
+이 경우 Python은 \zsh{Box} 타입에서 사용할 수 있는 길이 프로토콜을 찾는데, \zsh{Box} 클래스에는 \zsh{__len__()}이 정의되어 있지 않다.
+
+반대로 다음처럼 클래스에 정의하면 동작한다.
+
+\begin{dhkcode}
+class Box:
+    def __len__(self):
+        return 10
+
+
+box = Box()
+
+print(len(box))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+10
+\end{dhkzsh}
+
+이 차이를 정리하면 다음과 같다.
+
+\begin{dhktable}
+|표현식|	주요 탐색 방식|
+|:---|:---|
+|obj.__len__()|	일반적인 속성 접근 후 호출|
+|len(obj)|	타입의 특수 메서드 프로토콜|
+|obj.__call__()|	일반적인 속성 접근 후 호출|
+|obj()|	타입의 호출 프로토콜|
+\end{dhktable}
+
+이것은 매우 중요한 구분이다.
+
+특히 \zsh{__call__()}을 이해할 때 다시 사용하게 될 것이다.
+
+\subsubsection{\zsh{__call__()} - 인스턴스를 함수처럼 호출하기}
+
+이번 학습에서 가장 중요한 특수 메서드다.
+
+2.5에서는 Python에서 함수도 객체이며, 호출 가능한 객체를 \zsh{Callable}이라고 부른다고 학습했다.
+
+그렇다면 사용자 정의 클래스의 인스턴스도 Callable이 될 수 있을까?
+
+가능하다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Calculator:
+    def __call__(self, a, b):
+        return a + b
+
+
+calc = Calculator()
+\end{dhkcode}
+
+이제 다음 표현식을 실행할 수 있다.
+
+\begin{dhkcode}
+result = calc(10, 20)
+
+print(result)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+30
+\end{dhkzsh}
+
+여기서 \zsh{calc}는 함수 객체가 아니다.
+
+\begin{dhkcode}
+print(type(calc))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Calculator'>
+\end{dhkzsh}
+
+\zsh{calc}는 \zsh{Calculator} 클래스의 인스턴스다.
+
+그런데도 \zsh{calc(10, 20)}이라는 함수 호출 형태의 문법을 사용할 수 있다.
+
+그 이유는 \zsh{Calculator} 클래스가 \zsh{__call__()}을 정의했기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+개념적인 호출 과정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+calc(10,20)
+\end{dhkcode}
+
+일반적인 경우 다음과 같은 효과를 가진다.
+
+\begin{dhkcode}
+type(calc).__call__(calc, 10, 20)
+\end{dhkcode}
+
+즉, 객체를 호출하면 그 객체의 타입에 정의된 호출 프로토콜이 사용된다.
+
+여기서 \zsh{self}는 \zsh{calc} 인스턴스를 참조한다.
+
+\begin{dhkcode}
+class Calculator:
+    def __call__(self, a, b):
+        print(self is calc)
+        return a + b
+
+
+calc = Calculator()
+calc(10, 20)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+2.5에서 학습한 인스턴스 메서드의 \zsh{self} 바인딩 개념이 그대로 연결되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Callable 여부 확인
+\end{dhksmry}
+\end{dhknote}
+
+Python은 객체가 호출 가능한지 확인하기 위해 \zsh{callable()}을 제공한다.
+
+\begin{dhkcode}
+class A:
+    pass
+
+
+class B:
+    def __call__(self):
+        return "Hello"
+
+
+a = A()
+b = B()
+
+print(callable(a))
+print(callable(b))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+\zsh{B} 인스턴스는 호출 프로토콜을 제공하기 때문에 Callable이다.
+
+다만 \zsh{callable(obj)}가 \zsh{True}라는 사실이 실제 호출이 반드시 성공한다는 것을 보장하지는 않는다.
+
+인수가 맞지 않거나 \zsh{__call__()} 내부에서 예외가 발생할 수 있기 때문이다.
+
+\subsubsection{클래스 호출과 인스턴스 호출은 같은 것인가?}
+
+이제 2.6에서 학습했던 내용과 연결해 보자.
+
+\begin{dhkcode}
+class Calculator:
+    def __init__(self):
+        print("__init__ 실행")
+
+    def __call__(self, x):
+        print("__call__ 실행")
+        return x * 2
+\end{dhkcode}
+
+다음 두 표현식은 서로 다른 동작을 한다.
+
+\begin{dhkcode}
+calc = Calculator()
+
+result = calc(10)
+\end{dhkcode}
+
+실행 순서를 확인해 보자.
+
+\begin{dhkcode}
+calc = Calculator()
+result = calc(10)
+
+print(result)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+__init__ 실행
+__call__ 실행
+20
+\end{dhkzsh}
+
+여기서 구분해야 할 객체가 두 개 있다.
+
+\begin{dhksmry}
+    - Calculator : 클래스 객체
+
+    - calc : Calculator의 인스턴스 객체
+\end{dhksmry}
+
+\zsh{Calculator()}는 클래스 객체의 호출이다.
+
+일반적인 클래스에서는 메타클래스 \zsh{type}의 호출 메커니즘을 통해 \zsh{__new__()}와 \zsh{__init__()}이 실행된다.
+
+반면 \zsh{calc(10)}은 인스턴스 객체의 호출이다.
+
+이때는 \zsh{Calculator.__call__()}이 사용된다.
+
+\begin{dhksmry}[centered]
+클래스 객체 호출
+Calculator()
+\da
+type.__call__
+\da
+__new__ \ra __init__
+\da
+인스턴스 반환
+\end{dhksmry}
+
+\begin{dhksmry}[centered]
+인스턴스 객체 호출
+calc(10)
+\da
+타입의 호출 프로토콜
+\da
+Calculator.__call__
+\da
+계산 결과 반환
+\end{dhksmry}
+
+이 둘은 모두 호출 문법 \zsh{()}를 사용하지만, 호출되는 객체가 다르기 때문에 실행 경로도 다르다.
+
+클래스의 인스턴스를 생성하는 호출과, 생성된 인스턴스를 함수처럼 사용하는 호출은 구분해야 한다.
+
+\subsubsection{\zsh{__len__()} - 길이 프로토콜}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Dataset:
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+dataset = Dataset([10, 20, 30])
+
+print(len(dataset))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+3
+\end{dhkzsh}
+
+여기서 \zsh{len(dataset)}은 \zsh{Dataset} 클래스가 제공하는 길이 프로토콜을 사용한다.
+
+\zsh{__len__()}의 반환값은 0 이상의 정수여야 한다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Dataset:
+    def __len__(self):
+        return -1
+
+dataset = Dataset()
+print(len(dataset))
+\end{dhkcode}
+
+실행하면 오류가 발생한다.
+
+\begin{dhkzsh}
+ValueError: __len__() should return >= 0
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__len__()과 참·거짓 평가
+\end{dhksmry}
+\end{dhknote}
+
+여기서 한 가지 연결되는 동작이 있다.
+
+Python은 객체의 참·거짓을 판단할 때 \zsh{__bool__()}을 우선 사용하고, 적절한 \zsh{__bool__()}이 없으면 \zsh{__len__()}을 사용할 수 있다.
+
+\begin{dhkcode}
+class Dataset:
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+
+a = Dataset([])
+b = Dataset([10, 20])
+
+print(bool(a))
+print(bool(b))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+길이가 0이면 거짓, 0보다 크면 참으로 평가되는 것이다.
+
+따라서 \zsh{__len__()}은 단순히 길이를 반환하는 것 외에도 객체의 불리언 평가에 영향을 줄 수 있다.
+
+\subsubsection{\zsh{__getitem__()}과 \zsh{__setitem__()} - 인덱싱과 항목 설정}
+
+다음 표현식을 보자.
+
+\begin{dhkcode}
+data[0]
+\end{dhkcode}
+
+우리는 리스트나 튜플에서 자주 사용하는 문법으로 알고 있다.
+
+하지만 사용자 정의 객체도 이 문법을 지원할 수 있다.
+
+\begin{dhkcode}
+class Dataset:
+    def __init__(self, data):
+        self.data = data
+
+    def __getitem__(self, index):
+        return self.data[index]
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+dataset = Dataset([10, 20, 30])
+
+print(dataset[0])
+print(dataset[2])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+10
+30
+\end{dhkzsh}
+
+개념적으로 다음 표현식은
+
+\begin{dhkcode}
+dataset[0]
+\end{dhkcode}
+
+객체의 타입이 제공하는 \zsh{__getitem__()} 프로토콜을 이용한다.
+
+\begin{dhkcode}
+Dataset.__getitem__(dataset, 0)
+\end{dhkcode}
+
+여기서 \zsh{index}는 단순한 정수만 의미하지 않는다.
+
+슬라이싱을 사용하면 \zsh{slice} 객체가 전달될 수도 있다.
+
+\begin{dhkcode}
+print(dataset[0:2])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+[10, 20]
+\end{dhkzsh}
+
+이 예제에서는 내부 리스트에 그대로 전달했기 때문에 슬라이싱도 지원되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+항목을 수정하려면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+dataset[0] = 100
+\end{dhkcode}
+
+이 문법을 지원하려면 \zsh{__setitem__()}을 정의해야 한다.
+
+\begin{dhkcode}
+class Dataset:
+    def __init__(self, data):
+        self.data = data
+
+    def __getitem__(self, index):
+        return self.data[index]
+
+    def __setitem__(self, index, value):
+        self.data[index] = value
+
+dataset = Dataset([10, 20, 30])
+
+dataset[0] = 100
+
+print(dataset[0])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+100
+\end{dhkzsh}
+
+여기서 2.7에서 학습한 속성 설정과 비교해 보자.
+
+\begin{dhktable}
+|표현식|	관련 메커니즘|
+|:---|:---|
+|obj.name = value|	속성 설정, __setattr__|
+|obj[key] = value|	항목 설정, __setitem__|
+|obj.name|	속성 탐색, __getattribute__ 등|
+|obj[key]|	항목 조회, __getitem__|
+\end{dhktable}
+
+두 문법은 겉으로 비슷해 보여도 서로 다른 프로토콜을 사용한다.
+
+\subsubsection{\zsh{__iter__()}와 \zsh{__next__()} - 반복 프로토콜}
+
+이 부분은 Iterator와 Generator 개념을 연결하는 내용이다.
+
+먼저 다음 코드를 보자.
+
+\begin{dhkcode}
+for x in [10, 20, 30]:
+    print(x)
+\end{dhkcode}
+
+\zsh{for}문은 내부적으로 반복 가능한 객체에서 Iterator를 얻고, 다음 값을 반복적으로 요청하는 구조를 사용한다.
+
+핵심 함수는 다음 두 가지다.
+
+\begin{dhkcode}
+iter(obj)
+next(iterator)
+\end{dhkcode}
+
+이 함수들과 연결되는 특수 메서드는 다음과 같다.
+
+\begin{dhkcode}
+__iter__()
+__next__()
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Iterable과 Iterator의 차이
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}
+- Iterable : iter()를 통해 Iterator를 얻을 수 있는 객체
+
+- Iterator : __next__()로 다음 값을 제공하고,
+            __iter__()가 자기 자신을 반환하는 객체
+\end{dhksmry}
+
+예제를 보자.
+
+\begin{dhkcode}
+class NumberIterator:
+    def __init__(self, limit):
+        self.limit = limit
+        self.current = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.current >= self.limit:
+            raise StopIteration
+
+        value = self.current
+        self.current += 1
+
+        return value
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+numbers = NumberIterator(3)
+
+for x in numbers:
+    print(x)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+0
+1
+2
+\end{dhkzsh}
+
+여기서 \zsh{NumberIterator} 인스턴스는 Iterator다.
+
+\zsh{__iter__()}가 자기 자신을 반환하고, \zsh{__next__()}가 다음 값을 제공하기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+for 문의 개념적 실행 과정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+iterator = iter(numbers)
+
+while True:
+    try:
+        value = next(iterator)
+    except StopIteration:
+        break
+
+    print(value)
+\end{dhkcode}
+
+이 코드는 앞의 \zsh{for} 문이 사용하는 반복 프로토콜을 이해하기 위한 단순화된 표현이다.
+
+실제 \zsh{for}문에는 \zsh{break}, \zsh{continue}, 예외 전파 등 추가적인 실행 규칙이 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Iterator가 소진되면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+numbers = NumberIterator(3)
+
+print(list(numbers))
+print(list(numbers))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+[0, 1, 2]
+[]
+\end{dhkzsh}
+
+Iterator는 소진된 상태를 그대로 유지할 수 있다.
+
+반면 일반적인 리스트는 반복할 때마다 새로운 Iterator를 얻을 수 있기 때문에 재반복이 가능하다.
+
+\subsubsection{Iterable과 Iterator를 별도로 설계하는 이유}
+
+실제 클래스 설계에서는 Iterable과 Iterator를 구분하는 경우가 많다.
+
+다음 예제를 보자.
+
+\begin{dhkcode}
+class Numbers:
+    def __init__(self, limit):
+        self.limit = limit
+
+    def __iter__(self):
+        return NumberIterator(self.limit)
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+numbers = Numbers(3)
+
+print(list(numbers))
+print(list(numbers))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+[0, 1, 2]
+[0, 1, 2]
+\end{dhkzsh}
+
+왜 이번에는 두 번 모두 값이 출력될까?
+
+\zsh{Numbers.__iter__()}가 호출될 때마다 새로운 \zsh{NumberIterator} 인스턴스를 반환하기 때문이다.
+
+즉, \zsh{Numbers} 인스턴스는 반복 가능한 객체지만, 그 자체가 Iterator는 아니다.
+
+이 구조를 그림으로 나타내면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,2) [accent] :: Numbers 인스턴스 // Iterable
+node n2 (2,1) :: Iterator 1 // 독립적인 current // 0 -> 1 -> 2
+node n3 (2,3) :: Iterator 2 // 독립적인 current // 0 -> 1 -> 2
+
+split n1 -> n2, n3
+
+caption :: iter(numbers)를 호출할 때마다 독립적인 Iterator 객체를 생성할 수 있다.
+\end{dhkgraph}
+
+이 설계는 같은 데이터셋을 여러 번 순회해야 하는 상황에서 유용하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__getitem__()만으로도 반복이 가능한가?
+\end{dhksmry}
+\end{dhknote}
+
+Python은 전통적인 시퀀스 반복 프로토콜도 지원한다.
+
+따라서 \zsh{__iter__()}가 없어도 정수 인덱스 0부터 시작하는 \zsh{__getitem__()}을 이용해 반복할 수 있는 경우가 있다.
+
+다만 이 방식에서는 적절한 시점에 \zsh{IndexError}가 발생해야 반복이 종료된다.
+
+현대적인 사용자 정의 Iterable에서는 의도를 명확하게 표현하기 위해 
+
+\zsh{__iter__()}를 정의하는 것이 일반적으로 더 적절하다.
+
+\subsubsection{\zsh{__add__()}와 \zsh{__eq__()} - 연산자 오버로딩}
+
+Python의 연산자도 특수 메서드와 연결된다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+a + b
+\end{dhkcode}
+
+일반적으로 덧셈이라고 생각하지만, 객체의 타입에 따라 의미가 달라질 수 있다.
+
+예를 들어 숫자는 산술 덧셈을 수행하고, 리스트는 이어 붙이기를 수행한다.
+
+사용자 정의 클래스에서도 덧셈 연산을 구현할 수 있다.
+
+\begin{dhkcode}
+class Vector2D:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __add__(self, other):
+        return Vector2D(
+            self.x + other.x,
+            self.y + other.y
+        )
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+v1 = Vector2D(1, 2)
+v2 = Vector2D(3, 4)
+
+v3 = v1 + v2
+
+print(v3.x, v3.y)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+4 6
+\end{dhkzsh}
+
+이때 \zsh{v1 + v2}는 \zsh{__add__()}를 활용하는 연산이다.
+
+개념적으로는 다음과 비슷하다.
+
+\begin{dhkcode}
+v1.__add__(v2)
+\end{dhkcode}
+
+다만 실제 Python의 이항 연산 처리에는 오른쪽 피연산자의 \zsh{__radd__()}와 \zsh{NotImplemented}를 이용한 대체 처리 등이 포함될 수 있다.
+
+따라서 모든 \zsh{a + b}를 단순히 \zsh{a.__add__(b)} 한 번의 호출로 동일시하면 안 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__eq__() - 값의 동등성
+\end{dhksmry}
+\end{dhknote}
+
+2.3에서는 \zsh{is}와 \zsh{==}의 차이를 학습했다.
+
+\begin{dhksmry}
+    is : 객체 동일성
+
+    == : 동등성 비교
+\end{dhksmry}
+
+\zsh{==} 연산은 \zsh{__eq__()} 프로토콜과 연결된다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, other):
+        if not isinstance(other, Person):
+            return NotImplemented
+
+        return self.name == other.name
+
+p1 = Person("Kim")
+p2 = Person("Kim")
+
+print(p1 is p2)
+print(p1 == p2)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+두 인스턴스는 서로 다른 객체다.
+
+하지만 \zsh{__eq__()}를 통해 이름이 같으면 동등하다고 판단하도록 정의했다.
+
+여기서 중요한 사실은 객체의 동일성과 동등성은 별도의 개념이라는 점이다.
+
+또한 \zsh{__eq__()}를 재정의하면 해시 가능성에도 영향을 줄 수 있다.
+
+기본적으로 \zsh{__hash__}가 비활성화되는 경우가 있으므로, 딕셔너리 키나 집합 원소로 사용할 객체를 설계할 때는 동등성과 해시 규약을 함께 고려해야 한다.
+
+\subsubsection{\zsh{__str__()}과 \zsh{__repr__()} - 객체의 문자열 표현}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+p = Person("Kim")
+
+print(p)
+\end{dhkcode}
+
+일반적인 출력은 다음과 비슷하다.
+
+\begin{dhkzsh}
+<__main__.Person object at 0x...>
+\end{dhkzsh}
+
+이 표현은 객체의 타입과 식별에 관한 기본적인 정보를 제공한다.
+
+하지만 사용자에게 더 의미 있는 문자열을 제공하고 싶다면 \zsh{__str__()}을 정의할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+    def __str__(self):
+        return f"Person(name={self.name})"
+
+p = Person("Kim")
+
+print(p)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Person(name=Kim)
+\end{dhkzsh}
+
+반면 \zsh{__repr__()}은 주로 개발자가 객체를 확인하고 디버깅할 때 사용할 표현을 제공한다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return f"Person(name={self.name!r})"
+
+p = Person("Kim")
+
+print(repr(p))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Person(name='Kim')
+\end{dhkzsh}
+
+두 메서드의 차이를 정리하면 다음과 같다.
+
+\begin{dhktable}
+|메서드|	주된 목적|
+|:---|:---|
+|__str__()|	읽기 쉬운 문자열 표현|
+|__repr__()|	개발자에게 유용한 객체 표현|
+\end{dhktable}
+
+\zsh{__str__()}이 정의되어 있지 않으면 기본적으로 \zsh{__repr__()}을 활용하는 동작도 있다.
+
+일반적으로 \zsh{__repr__()}은 가능하다면 객체의 상태를 명확하게 드러내도록 작성하는 것이 좋다.
+
+\subsubsection{\zsh{__enter__()}와 \zsh{__exit__()} - 컨텍스트 매니저}
+
+이전에 파일 입출력을 학습하면서 다음 문법을 사용했을 것이다.
+
+\begin{dhkcode}
+with open("data.txt", "w", encoding="utf-8") as f:
+    f.write("Hello")
+\end{dhkcode}
+
+여기서 \zsh{with}문은 컨텍스트 매니저(Context Manager) 프로토콜을 활용한다.
+
+대표적인 특수 메서드는 다음 두 가지다.
+
+\begin{dhkcode}
+__enter__()
+__exit__()
+\end{dhkcode}
+
+간단한 예제를 보자.
+
+\begin{dhkcode}
+class Resource:
+    def __enter__(self):
+        print("자원 획득")
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        print("자원 해제")
+
+with Resource() as resource:
+    print("작업 실행")
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+자원 획득
+작업 실행
+자원 해제
+\end{dhkzsh}
+
+이 과정은 개념적으로 다음과 같다.
+
+\begin{dhksmry}
+    1. Resource() 인스턴스를 생성한다.
+
+    2. __enter__()를 호출한다.
+
+    3. 반환값을 resource에 바인딩한다.
+
+    4. with 블록을 실행한다.
+
+    5. 블록을 빠져나가면서 __exit__()를 호출한다.
+\end{dhksmry}
+
+\zsh{with} 블록 내부에서 예외가 발생해도 \zsh{__exit__()}이 호출되어 정리 작업을 수행할 수 있다.
+
+또한 \zsh{__exit__()}의 반환값이 참이면 해당 예외를 억제할 수 있다.
+
+따라서 \zsh{with}문은 단순히 코드를 묶는 문법이 아니라 자원의 획득과 해제를 구조화하는 프로토콜이다.
+
+\subsubsection{PyTorch와의 연결 - \zsh{model(x)}는 왜 가능한가?}
+
+이제 지금까지의 내용을 PyTorch와 연결해 보자.
+
+다음 모델을 정의했다고 하자.
+
+\begin{dhkcode}
+import torch
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+모델 인스턴스를 생성해 보자.
+
+\begin{dhkcode}
+model = MyModel()
+\end{dhkcode}
+
+여기서 \zsh{model}은 \zsh{MyModel} 인스턴스다.
+
+\begin{dhkcode}
+print(type(model))
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class '__main__.MyModel'>
+\end{dhkzsh}
+
+그런데 다음 표현식이 가능하다.
+
+\begin{dhkcode}
+x = torch.randn(2, 10)
+
+output = model(x)
+\end{dhkcode}
+
+왜 그럴까?
+
+\zsh{MyModel}은 \zsh{nn.Module}을 상속하고 \zsh{nn.Module}은 인스턴스를 호출 가능하게 만드는 \zsh{__call__} 메커니즘을 제공하기 때문이다.
+
+따라서 \zsh{model}은 Callable이다.
+
+\begin{dhkcode}
+print(callable(model))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 흐름 
+\end{dhksmry}
+\end{dhknote}
+
+일반적인 \zsh{nn.Module}의 호출 과정은 다음과 같이 이해할 수 있다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: model(x) // MyModel 인스턴스 호출
+node n2 (2,1) :: nn.Module 호출 메커니즘 // __call__ 관련 처리
+node n3 (3,1) :: Hook 등 호출 처리 // 등록된 Hook이 있다면 처리
+node n4 (4,1) [accent] :: MyModel.forward(x) // 사용자가 오버라이딩한 연산
+node n5 (5,1) :: self.linear(x) // nn.Linear 모듈 호출
+node n6 (6,1) :: output 반환 // 최종 결과
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+edge n4 -> n5
+edge n5 -> n6
+
+caption :: PyTorch 모델 호출의 개념적 흐름 // Hook의 실행 여부와 세부 순서는 등록 상태 및 PyTorch 구현에 따라 달라진다.
+\end{dhkgraph}
+
+여기서 중요한 점은 \zsh{MyModel}에 \zsh{__call__()}을 직접 정의하지 않았다는 사실이다.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    ...
+\end{dhkcode}
+
+\zsh{nn.Module}에서 상속받은 호출 메커니즘을 사용하고 있는 것이다.
+
+반면 \zsh{forward()}는 \zsh{MyModel}에서 직접 정의했다.
+
+\begin{dhkcode}
+def forward(self, x):
+    return self.linear(x)
+\end{dhkcode}
+
+이것은 2.8에서 학습한 메서드 오버라이딩이다.
+
+따라서 PyTorch 모델 호출은 다음 개념들이 결합된 구조라고 볼 수 있다.
+
+\begin{dhksmry}
+    - 상속: MyModel(nn.Module)
+
+    - 메서드 오버라이딩: forward()
+
+    - 특수 메서드: __call__()
+
+    - Callable 객체: model
+
+    - 모듈 합성: self.linear = nn.Linear(...)
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+model(x)와 model.forward(x)의 차이
+\end{dhksmry}
+\end{dhknote}
+
+다음 두 표현식을 비교해 보자.
+
+\begin{dhkcode}
+output1 = model(x)
+
+output2 = model.forward(x)
+\end{dhkcode}
+
+두 코드 모두 모델의 계산 결과를 얻을 수 있다.
+
+하지만 실행 경로는 다르다.
+
+첫 번째는 \zsh{nn.Module}의 호출 메커니즘을 거쳐 \zsh{forward()}를 실행한다.
+
+두 번재는 일반적인 메서드 접근을 통해 \zsh{forward()}를 직접 호출한다.
+
+따라서 두 번째 방식은 \zsh{nn.Module}의 호출 과정에서 수행되는 Hook 등의 처리를 우회할 수 있다.
+
+PyTorch에서는 일반적으로 \zsh{model.forward(x)}보다 \zsh{model(x)}를 사용하는 것이 적절하다.
+
+이 차이는 단순한 코드 스타일의 문제가 아니라, Python의 객체 호출 프로토콜과 PyTorch의 모듈 설계에서 비롯된 차이다.
+
+\subsubsection{전체 개념 연결}
+
+지금까지 학습한 내용을 하나의 객체 모델로 연결해 보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+
+
+model = MyModel()
+output = model(x)
+\end{dhkcode}
+
+이 코드에는 2.2부터 2.10까지의 개념들이 포함되어 있다.
+
+\begin{dhktable}
+|학습 단원|	코드에서의 의미|
+|:---|:---|
+|2.2 클래스도 객체인가?|	MyModel은 클래스 객체|
+|2.3 클래스와 인스턴스|	model은 MyModel 인스턴스|
+|2.4 인스턴스 속성|	self.linear 속성|
+|2.5 메서드와 self|	forward(self, x)|
+|2.6 __new__, __init__|	모델 생성과 초기화|
+|2.7 속성 탐색|	self.linear 조회와 등록|
+|2.8 상속과 오버라이딩|	nn.Module 상속, forward 재정의|
+|2.9 super()와 MRO|	super().__init__()|
+|2.10 특수 메서드|	model(x)와 __call__()|
+\end{dhktable}
+
+이제 PyTorch의 모델 정의는 단순한 라이브러리 사용법이 아니라, Python의 객체 모델 위에서 구성된 설계로 이해할 수 있다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서 반드시 기억해야 할 내용을 정리해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+특수 메서드는 
+Python의 문법 및 내장 연산과 연결되는 프로토콜이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+obj()
+len(obj)
+obj[key]
+for x in obj:
+    ...
+\end{dhkcode}
+
+이러한 문법은 각각 대응하는 특수 메서드와 연결될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+특수 메서드의 암묵적 호출은
+인스턴스 속성 탐색과 다를 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+인스턴스에 \zsh{__len__} 속성을 설정했다고 해서 \zsh{len(obj)}가 반드시 동작하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__call__()을 제공하는 인스턴스는 Callable이 될 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Calculator:
+    def __call__(self, x):
+        return x * 2
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 호출과 인스턴스 호출은 구분해야 한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+calc = Calculator()
+result = calc(10)
+\end{dhkcode}
+
+첫 번재는 클래스 객체 호출이고, 두 번째는 인스턴스 객체 호출이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__len__()은 길이 프로토콜을 제공한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+len(obj)
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__getitem__()과 __setitem__()은 
+항목 조회 및 설정을 지원한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+obj[key]
+obj[key] = value
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__iter__()와 __next__()은 반복 프로토콜의 핵심이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+iter(obj)
+next(iterator)
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+연산자도 특수 메서드와 연결된다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+a + b
+a == b
+\end{dhkcode}
+
+다만 실제 연산자 처리에는 대체 메서드와 \zsh{NotImplemented} 등의 규칙이 존재할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+with 문은 컨텍스트 매니저 프로토콜을 사용한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+__enter__()
+__exit__()
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch의 model(x)는 상속된 호출 메커니즘과
+오버라이딩된 forward()가 결합된 구조다.
+\end{dhksmry}
+\end{dhknote}
+
+\subsubsection{2.10에서 반드시 이해해야 할 결론}
+
+이번 학습의 핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+Python Syntax
+\da
+Special Method Protocol
+\da
+Type and MRO-based Resolution
+\da
+Object Behavior
+\end{dhksmry}
+
+Python의 객체 모델에서 중요한 것은 객체가 단순히 데이터와 메서드를 보유하는 데 그치지 않는다는 점이다.
+
+객체가 특정 특수 메서드 프로토콜을 제공하면, Python의 기본 문법 자체가 그 객체의 동작을 사용할 수 있다.
+
+이제 다음 코드를 보면
+
+\begin{dhkcode}
+output = model(x)
+\end{dhkcode}
+
+단순히 모델을 실행한다고 이해하는 것을 넘어, 다음과 같이 해석할 수 있다.
+
+\begin{dhksmry}
+model은 MyModel 클래스의 인스턴스 객체다.
+
+MyModel은 nn.Module을 상속한다.
+
+nn.Module은 객체 호출을 위한 __call__ 메커니즘을 제공한다.
+
+model(x)는 그 호출 메커니즘을 사용한다.
+
+호출 과정에서 MyModel이 오버라이딩한 forward()가 실행된다.
+
+forward() 내부에서 하위 모듈인 nn.Linear 인스턴스도 호출된다.
+\end{dhksmry}
+
+이것이 Python 객체 모델과 PyTorch의 모델 실행 구조가 연결되는 지점이다.
+
+다음 2.11에서는 \zsh{self, cls, @classmethod, @staticmethod}를 비교한다.
+
+특히 2.5에서 학습한 바운드 메서드와 2.7에서 살펴본 디스크립터 프로토콜을 연결하면, 세 종류의 메서드가 서로 다르게 동작하는 이유를 구조적으로 이해할 수 있을 것이다.

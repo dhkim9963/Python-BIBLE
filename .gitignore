@@ -1,0 +1,12 @@
+# 루트의 모든 항목 제외
+/*
+
+# Git 관리 설정과 업로드할 폴더만 허용
+!/.gitignore
+!/.vscode/
+!/chapters/
+
+# 하위 폴더에서도 불필요한 파일 제외
+.DS_Store
+__pycache__/
+*.pyc

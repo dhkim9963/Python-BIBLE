@@ -1,0 +1,971 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.7. Environment Variables
+% ==================================================
+
+\subsection{Environment Variables (환경변수)}
+
+이번에는 Python 실행 환경에서 중요한 개념인 \textbf{환경변수}를 살펴본다.
+
+앞에서 다음 3 가지를 배웠다.
+
+\begin{dhksmry}
+    1. sys.argv       \ra 프로그램 실행 시 전달하는 인수
+    2. sys.path       \ra Python의 모듈 검색 경로
+    3. sys.executable \ra 현재 실행 중인 Python 인터프리터
+\end{dhksmry}
+
+그런데 프로그램이 실행될 때 외부에서 정보를 전달하는 방법이 하나 더 있다.
+
+바로 \zsh{환경변수(Environment Variable)}이다.
+
+\subsubsection{환경변수란 무엇인가?}
+
+환경변수는 운영체제가 프로세스에 제공하는 \textbf{이름과 값으로 구성된 설정 정보}이다.
+
+예를 들어:
+
+\begin{dhkcode}
+MODEL_NAME=distilbert-base-uncased
+BATCH_SIZE=32
+DATA_DIR=/Users/user/project/data
+\end{dhkcode}
+
+이런 형태로 구성된다.
+
+중요한 것은 환경변수가 Python만의 기능이 아니라는 것이다.
+
+\begin{dhkbranch}[in=10]
+node main :: 운영 체제
+arrow main
+node main :: Shell (zsh / PowerShell)
+arrow main :: 환경변수 설정
+node main :: Python Process
+arrow main
+node main :: Python 프로그램
+\end{dhkbranch}
+
+Python 프로그램은 실행될 때 전달받은 환경변수들을 읽어서 사용할 수 있다.
+
+\subsubsection{Python에서 환경변수 읽기}
+
+Python에서는 \zsh{os} 모듈을 사용한다.
+
+\begin{dhkcode}
+import os
+
+value = os.environ.get("MODEL_NAME")
+
+print(value)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkcode}
+os.environ
+\end{dhkcode}
+
+은 현재 프로세스의 환경변수에 접근할 수 있는 매핑 객체이다.
+
+딕셔너리와 비슷하게 사용할 수 있다.
+
+\begin{dhkcode}
+os.environ["MODEL_NAME"]
+\end{dhkcode}
+
+또는:
+
+\begin{dhkcode}
+os.environ.get("MODEL_NAME")
+\end{dhkcode}
+
+으로 값을 가져올 수 있다.
+
+다만 차이가 있다.
+
+\begin{dhkcode}
+os.environ["MODEL_NAME"]
+\end{dhkcode}
+
+은 해당 환경변수가 없으면 \zsh{KeyError}가 발생한다.
+
+반면:
+
+\begin{dhkcode}
+os.environ.get("MODEL_NAME")
+\end{dhkcode}
+
+은 없으면 기본적으로 \zsh{None}을 반환한다.
+
+딕셔너리의 접근 방식과 비슷하다.
+
+\subsubsection{환경변수의 값은 문자열이다}
+
+여기서 \zsh{sys.argv}와 공통점이 등장한다.
+
+환경변수도 기본적으로 \textbf{문자열 형태로 다룬다}는 것이다.
+
+예를 들어:
+
+\begin{dhkcode}
+BATCH_SIZE=32
+\end{dhkcode}
+
+라는 환경변수가 있다고 하자.
+
+\begin{dhkcode}
+import os
+
+batch_size = os.environ("BATCH_SIZE")
+
+print(batch_size)
+print(type(batch_size))
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+32
+<class 'str'>
+\end{dhkzsh}
+
+즉 숫자처럼 보이더라도 실제로는 문자열이다.
+
+그래서 ML 학습에 사용하려면:
+
+\begin{dhkcode}
+batch_size = int(os.environ.get("BATCH_SIZE", "32"))
+\end{dhkcode}
+
+처럼 변환해야 한다.
+
+여기서 "32"는 환경변수가 없을 때 사용하는 기본값이다.
+
+\subsubsection{macOS에서 환경변수 설정하기}
+
+터미널에서:
+
+\begin{dhkzsh}
+export MODEL_NAME=distilbert-base-uncased
+\end{dhkzsh}
+
+를 실행해보자.
+
+이 명령은 현재 셀 환경에서 \zsh{MODEL_NAME}이라는 변수를 설정하고,
+
+이후 실행하는 자식 프로세스에 전달할 수 있도록 한다.
+
+그다음:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+를 실행하면 Python 프로세스에서:
+
+\begin{dhkcode}
+import os
+
+print(os.environ.get("MODEL_NAME"))
+\end{dhkcode}
+
+을 통해 해당 값을 읽을 수 있다.
+
+\begin{dhkzsh}
+distilbert-base-uncased
+\end{dhkzsh}
+
+여기서 중요한 것은 \zsh{export}가 \textbf{Python 코드가 아니라 셸 명령}이라는 것이다.
+
+\begin{dhkdir}[in=6]
+zsh
+|export MODEL_NAME=...
+>python train.py
+|os.environ
+|MODEL_NAME
+\end{dhkdir}
+
+이 구조다.
+
+\subsubsection{환경변수는 어디까지 유지될까?}
+
+이 부분이 중요하다.
+
+터미널에서:
+
+\begin{dhkzsh}
+export BATCH_SIZE=32
+\end{dhkzsh}
+
+를 실행했다고 하자.
+
+그러면 해당 셸과 그 셸에서 실행하는 자식 프로세스에 적용된다.
+
+하지만 터미널을 종료하면 일반적으로 그 셸에서 설정한 환경변수도 사라진다.
+
+즉:
+
+\begin{dhkdir}
+Terminal A
+| export BATCH_SIZE=32
+> python train.py
+>> BATCH_SIZE=32
+\end{dhkdir}
+
+반면 별도로 실행한:
+
+\begin{dhkdir}
+Terminal B
+> python train.py
+>> BATCH_SIZE가 없을 수 있음
+\end{dhkdir}
+
+이 되는 것이다.
+
+환경변수는 컴퓨터 전체에 자동으로 영구 저장되는 설정이 아니다.
+
+필요하다면 셸 설정 파일 등을 이용해서 새로운 셸을 시작할 때 설정하도록 만들 수 있다.
+
+\subsubsection{그렇다면 \zsh{argparse}와 환경변수는 무엇이 다를까?}
+
+앞에서 우리는:
+
+\begin{dhkzsh}
+python train.py --batch-size 32
+\end{dhkzsh}
+
+를 배웠다.
+
+이건 커맨드라인 인수이다.
+
+환경변수는:
+
+\begin{dhkzsh}
+export BATCH_SIZE=32
+python train.py
+\end{dhkzsh}
+
+처럼 사용할 수 있다.
+
+둘 다 외부에서 설정을 전달하지만 목적이 조금 다르다
+
+\begin{dhktable}
+|구분|argparse|환경변수|
+|:---|:---|:---|
+|전달방식|명령줄 인수|프로세스 환경|
+|Python 접근|arg.batch_size|os.environ.get()|
+|대표 용도|실행별 학습 설정|실행 환경 및 외부 서비스 설정|
+|값의 기본 형태|문자열, type으로 변환가능|문자열|
+|설정 범위|해당 프로그램 호출|현재 프로세스 및 자식 프로세스 환경|
+\end{dhktable}
+
+예를 들어 ML 학습에서는:
+
+\begin{dhkzsh}
+python train.py \
+    --epochs 10 \
+    --batch-size 32 \
+    --learning-rate 0.001
+\end{dhkzsh}
+
+처럼 실험마다 달라지는 설정을 argparse로 전달하는 것이 자연스럽다.
+
+그렇다면 어떤 상황에서 환경변수를 사용하는 것이 적절할까?
+
+대표적인 사례는 세 가지다.
+
+\begin{dhktable}
+|용도|환경변수 예시|설명|
+|:---|:---|:---|
+|인증 정보|HF_TOKEN|Hugging Face 접근 토큰|
+|데이터베이스 연결|DATABASE_URL|PostgreSQL 연결 정보|
+|실행 환경 설정|APP_ENV|개발,테스트,운영 환경 구분|
+\end{dhktable}
+
+여기서 중요한 차이는 다음과 같다.
+
+\textbf{argparse는 특정 프로그램 실행에 필요한 인수를 명시적으로 전달할 때 적합하고,}
+
+\textbf{환경변수는 프로그램이 실행되는 환경에 따라 달라지는 설정을 제공할 때 유용하다.}
+
+물론 반드시 이렇게 구분해야 하는 것은 아니다.
+
+예를 들어 \zsh{BATCH_SIZE}는 \zsh{argparse}로 전달해도 되고 환경변수로 전달해도 된다.
+
+다만 프로그램을 설계할 때 설정의 성격에 따라 적절한 방법을 선택하는 것이다.
+
+예시: Hugging Face 토큰
+
+Hugging Face 모델을 다운로드하면서 인증 문제를 겪었다고 해보자.
+
+다음과 같이 토큰을 코드에 직접 작성할 수도 있다.
+
+\begin{dhkzsh}
+token = "hf_xxxxxxxxxxxxxx"
+\end{dhkzsh}
+
+하지만 이런 방식은 권장하지 않는다.
+
+코드를 GitHub에 올릴 때 토큰까지 공개될 위험이 있기 때문이다.
+
+대신 환경변수를 사용할 수 있다.
+
+macOS 터미널에서:
+
+\begin{dhkzsh}
+export HF_TOKEN="실제_토큰값"
+\end{dhkzsh}
+
+Python에서는:
+
+\begin{dhkcode}
+import os
+
+token = os.environ.get("HF_TOKEN")
+\end{dhkcode}
+
+이렇게 접근한다.
+
+여기서 중요한 점은 \textbf{Python 코드와 인증 정보를 분리했다는 것}이다.
+
+\begin{dhkbranch}[in=8]
+node main :: Python code
+arrow main :: os.environ.get("HF_TOKEN")
+node main :: 프로세스 환경변수
+arrow main
+node main :: 인증 토큰
+\end{dhkbranch}
+
+이렇게 하면 Python 소스코드에 실제 토큰을 기록할 필요가 없다.
+
+단, \textbf{환경변수가 토큰을 완벽하게 보호하는 보안 저장소는 아니다}.
+
+셸 기록이나 프로세스 환경 노출 등의 위험은 여전히 존재하므로 실제 운영 환경에서는 비밀 관리 도구를 사용하기도 한다.
+
+\subsubsection{환경변수는 프로세스 단위로 관리된다}
+
+이 부분은 조금 더 정확하게 이해할 필요가 있다.
+
+앞에서 배운 환경변수 구조를 다시 보자.
+
+\begin{dhkbranch}[in=8]
+node main :: 운영체제
+arrow main
+node main :: Shell
+arrow main :: export HF_TOKEN=...
+node main :: Python Process
+arrow main
+node main :: os.environ
+\end{dhkbranch}
+
+여기서 핵심은 각 프로세스가 자신의 환경변수 집합을 가진다는 것이다.
+
+그리고 일반적으로 새로운 프로세스가 생성될 때 부모 프로세스의 환경변수를 전달받을 수 있다.
+
+예를 들어:
+
+\begin{dhkzsh}
+export MODEL_NAME=distilbert-base-uncased
+python train.py
+\end{dhkzsh}
+
+라고 실행했다고 하자.
+
+이때 구조는 다음과 같다.
+
+\begin{dhkdir}[in=6]
+zsh 프로세스
+| MODEL_NAME=distilbert-base-uncased
+> Python 프로세스 실행
+>> MODEL_NAME 값 전달받음
+>> train.py 실행
+\end{dhkdir}
+
+이제 Python 코드에서:
+
+\begin{dhkcode}
+import os
+
+print(os.environ["MODEL_NAME"])
+\end{dhkcode}
+
+을 실행하면 값을 읽을 수 있다.
+
+\textbf{그렇다면 Python에서 환경변수를 변경하면 어떻게 될까?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+import os
+
+os.environ["MODEL_NAME"] = "bert-base-uncased"
+
+print(os.environ["MODEL_NAME"])
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+bert-base-uncased
+\end{dhkzsh}
+
+이렇게 Python에서도 환경변수를 변경할 수 있다.
+
+하지만 여기서 중요한 점이 있다.
+
+\textbf{Python 프로세스에서 환경변수를 변경했다고 해서 부모 프로세스의 zsh의 환경변수까지 변경되지는 않는다}.
+
+\begin{dhkdir}[in=6]
+zsh 프로세스
+| MODEL_NAME=distilbert-base-uncased
+> Python
+>> MODEL_NAME=bert-base-uncased
+\end{dhkdir}
+
+즉 환경변수는 하나의 전역 딕셔너리를 모든 프로세스가 공유하는 구조가 아니다.
+
+이 점은 이전에 배운 \textbf{객체의 참조와 재바인딩}을 떠올리면 이해하기 쉽다.
+
+다만 환경변수의 전달은 Python 객체의 참조 공유와는 다르다는 점도 기억해야 한다.
+
+새로운 프로세스는 환경변수의 값을 전달받는 것이지,
+
+부모 프로세스의 \zsh{os.environ} 객체를 공유하는 것이 아니다.
+
+\subsubsection{환경변수와 \zsh{PATH}, \zsh{sys.path}는 무엇이 다른가?}
+
+이전에 Python 실행 환경과 import를 공부할 때 다음을 배웠다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.path)
+\end{dhkcode}
+
+그런데 운영체제에도 \zsh{PATH}라는 환경변수가 있다.
+
+이름이 비슷해서 혼동하기 쉽다.
+
+
+1. \textbf{PATH 환경변수}
+
+macOS 터미널에서:
+
+\begin{dhkzsh}
+echo PATH
+\end{dhkzsh}
+
+를 실행해보면 다음과 비슷한 결과가 나올 수 있다.
+
+\begin{dhkzsh}
+/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+\end{dhkzsh}
+
+이것은 셸이 실행할 프로그램을 찾을 때 사용하는 경로 목록이다.
+
+예를 들어:
+
+\begin{dhkzsh}
+python train.py
+\end{dhkzsh}
+
+를 실행하면 셸은 \zsh{python}이라는 명령에 해당하는 실행 파일을 찾아야 한다.
+
+이때 \zsh{PATH} 환경변수가 사용될 수 있다.
+
+\begin{dhksmry}[centered]
+python train.py
+\da
+셸에서 python 명령 탐색
+\da
+PATH에 등록된 디렉터리 검색
+\da
+Python 실행 파일
+\end{dhksmry}
+
+정확히는 셸의 명령 탐색에는 별칭, 함수, 내장 명령 등도 관여하지만,
+
+외부 실행 파일을 찾는 데 \zsh{PATH}가 중요한 역할을 한다고 이해하면 된다.
+
+
+2. \textbf{sys.path}
+
+반면:
+
+\begin{dhkcode}
+import sys
+
+print(sys.path)
+\end{dhkcode}
+
+는 Python이 모듈을 import할 때 참조하는 검색 경로 목록이다.
+
+예를 들어:
+
+\begin{dhkcode}
+import pandas
+\end{dhkcode}
+
+를 실행하면 Python은 \zsh{sys.path}에 포함된 위치 등을 바탕으로 \zsh{Pandas} 패키지를 찾는다.
+
+
+3. \textbf{둘의 차이}
+
+\begin{dhktable}
+|구분|PATH|sys.path|
+|:---|:---|:---|
+|소속|운영체제의 환경변수|Python 런타임의 속성|
+|목적|실행 파일 검색|Python 모듈, 패키지 검색|
+|접근|os.environ["PATH"]|sys.path|
+|주요 대상|python, git 등|numpy, pandas 등|
+\end{dhktable}
+
+여기서 한 가지를 더 추가하자.
+
+
+4. \textbf{PYTHONPATH}
+
+Python에는 \zsh{PYTHONPATH}라는 환경변수도 있다.
+
+\begin{dhkzsh}
+export PYTHONPATH="/Users/user/my_project"
+\end{dhkzsh}
+
+이 환경변수는 Python의 모듈 검색 경로를 구성할 때 추가 경로를 제공할 수 있다.
+
+관계를 정리하면:
+
+\begin{dhksmry}
+    PATH
+    \ra 운영체제가 실행 파일을 찾는 데 사용
+
+
+    PYTHONPATH
+    \ra Python 모듈 검색 경로에 추가 경로 제공
+
+
+    sys.path
+    \ra 실행 중인 Python이 실제로 사용하는 모듈 검색 경로 목록
+\end{dhksmry}
+
+즉 \zsh{PYTHONPATH}와 \zsh{sys.path}는 관련이 있지만 같은 것은 아니다.
+
+그리고 일반적인 프로젝트에서는 \zsh{PYTHONPATH}를 무분별하게 설정하기보다는
+
+패키지 구조를 올바르게 구성하고 \zsh{python -m} 등을 사용하는 것이 좋다.
+
+\subsubsection{Conda 환경과 환경변수의 관계}
+
+이번에는 Conda 환경과 연결해보자.
+
+예를 들어 macOS에서:
+
+\begin{dhkzsh}
+conda activate transformer
+\end{dhkzsh}
+
+를 실행했다고 하자.
+
+그러면 터미널 프롬프트가:
+
+\begin{dhkzsh}
+(transformer) user@MacBook ~ %
+\end{dhkzsh}
+
+처럼 변경된다.
+
+그런데 단순히 화면에 \zsh{(transformer)}라는 문자열만 표시하는 것은 아니다.
+
+Conda는 활성화 과정에서 현재 셸의 환경변수 등을 변경한다.
+
+대표적으로:
+
+\begin{dhkzsh}
+PATH
+CONDA_PREFIX
+CONDA_DEFAULT_ENV
+\end{dhkzsh}
+
+같은 환경변수가 관련된다.
+
+Python에서 확인해보자.
+
+\begin{dhkcode}
+import os
+import sys
+
+print(os.environ.get("CONDA_DEFAULT_ENV"))
+print(os.environ.get("CONDA_PREFIX"))
+print(sys.executable)
+\end{dhkcode}
+
+예상 결과는 다음과 비슷하다.
+
+\begin{dhkzsh}
+transformer
+/Users/user/miniconda3/envs/transformer
+/Users/user/miniconda3/envs/transformer/bin/python
+\end{dhkzsh}
+
+설치 위치는 컴퓨터마다 다를 수 있다.
+
+여기서 중요한 것은 세 값의 의미이다.
+
+\begin{dhksmry}
+    CONDA_DEFAULT_ENV
+    \ra 현재 활성화된 Conda 환경의 이름을 나타낸다.
+
+
+    CONDA_PREFIX
+    \ra 활성화된 Conda 환경의 서맃 경로를 나타낸다.
+
+
+    sys.executable
+    \ra 현재 실행 중인 Python 인터프리터의 실제 경로를 나타낸다.
+\end{dhksmry}
+
+이 세 가지는 관련이 있지만 동일한 개념은 아니다.
+
+특히 VS Code나 Jupyter에서는 Conda 환경의 활성화 상태와 실제 Python 커널이 서로 다를 수 있다.
+
+따라서 실제로 어떤 Python이 실행되고 있는지 확인하려면:
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+을 확인하는 것이 가장 직접적이다.
+
+\subsubsection{\zsh{.env}파일은 무엇인가?}
+
+실제 Python 프로젝트에서는 환경변수를 매번 터미널에 입력하는 것이 번거로울 수 있다.
+
+그래서 \zsh{.env}파일을 사용하기도 한다.
+
+예를 들어 프로젝트 구조가 다음과 같다고 하자.
+
+\begin{dhkdir}
+my_project/
+> .env
+> train.py
+> requirements.txt
+\end{dhkdir}
+
+\zsh{.env}파일 내용:
+
+\begin{dhkcode}
+MODEL_NAME=distilbert-base-uncased
+BATCH_SIZE=32
+HF_TOKEN=your_token_here
+\end{dhkcode}
+
+그런데 여기서 중요한 사실이 있다.
+
+\zsh{.env}파일은 \textbf{Python이 자동으로 읽어주는 특별한 파일이 아니다}.
+
+단순히 환경변수 설정을 기록해둔 텍스트 파일이다.
+
+이 파일을 Python 프로세스의 환경변수로 반영하려면 별도의 처리가 필요하다.
+
+대표적으로 \zsh{python-dotenv} 라이브러리를 사용할 수 있다.
+
+설치:
+
+\begin{dhkzsh}
+pip install python-dotenv
+\end{dhkzsh}
+
+사용:
+
+\begin{dhkcode}
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+model_name = os.environ.get("MODEL_NAME")
+batch_size = int(os.environ.get("BATCH_SIZE", "32"))
+
+print(model_name)
+print(batch_size)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkcode}
+load_dotenv()
+\end{dhkcode}
+
+는 \zsh{.env}파일을 찾아 읽고 그 값을 프로세스 환경변수에 반영하는 역할을 한다.
+
+기본 설정에서는 이미 존재하는 환경변수 값을 덮어쓰지 않는다.
+
+\textbf{주의할 점}
+
+\zsh{.env}파일에 실제 API 토큰이나 비밀번호가 들어 있다면
+
+Github에 올리지 않도록 주의해야 한다.
+
+일반적으로 \zsh{.gitignore}에:
+
+\begin{dhkcode}
+.env
+\end{dhkcode}
+
+를 추가한다.
+
+다만 \zsh{.gitignore}는 아직 추적되지 않은 파일을 Git이 무시하도록 하는 설정이므로,
+
+이미 커밋한 비밀정보까지 자동으로 제거하지는 않는다.
+
+\subsubsection{\zsh{argparse} + 환경변수 + \zsh{pathlib} 실전 예제}
+
+이제 지금까지 배운 내용을 하나의 코드로 연결해보자.
+
+상황은 다음과 같다.
+
+\begin{dhksmry}
+    - 모델 이름은 환경변수로 관리한다.
+
+    - 배치 크기는 CLI 인수로 전달한다.
+
+    - 결과 저장 디렉터리도 CLI 인수로 전달한다.
+\end{dhksmry}
+
+\begin{dhkcode}
+import os
+import argparse
+from pathlib import Path
+
+# 1. CLI 인수 정의
+parser = argparse.ArgumentParser()
+
+parser.add_argument(
+    "--batch-size",
+    type=int,
+    default=32
+)
+
+parser.add_argument(
+    "--save-dir",
+    type=Path,
+    default=Path("results/run1")
+)
+
+args = parser.parse_args()
+
+# 2. 환경변수 읽기
+model_name = os.environ.get(
+    "MODEL_NAME",
+    "distilbert-base-uncased"
+)
+
+# 3. 저장 디렉터리 생성
+args.save_dir.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+# 4. 설정 출력
+print("Model:", model_name)
+print("Batch size:", args.batch_size)
+print("Save directory:", args.save_dir)
+\end{dhkcode}
+
+macOS 터미널에서:
+
+\begin{dhkzsh}
+export MODEL_NAME=bert-base-uncased
+
+python train.py \
+    --batch-size 16 \
+    --save-dir results/experiment1
+\end{dhkzsh}
+
+라고 실행하면:
+
+\begin{dhkzsh}
+Model: bert-base-uncased
+Batch size: 16
+Save directory: results/experiment1
+\end{dhkzsh}
+
+이 출력된다.
+
+\subsubsection{핵심 정리}
+
+환경변수는 프로그램 외부에서 실행 환경에 필요한 설정을 전달하는 방법이다.
+
+이번 장에서 특히 중요한 것은 다음 다섯 가지다.
+
+\begin{dhksmry}
+    1. os.environ은 현재 Python 프로세스의 
+        환경변수에 접근하는 매핑 객체다.
+
+
+    2. 환경변수는 기본적으로 문자열이며, 
+        숫자로 사용하려면 형 변환이 필요하다.
+
+
+    3. 부모 프로세스에서 자식프로세스로 환경변수가 전달될 수 있지만,
+        자식의 변경이 부모에게 자동으로 반영되지는 않는다.
+
+
+    4. PATH, PYTHONPATH, sys.path는 서로 다른 개념이다.
+
+
+    5. .env는 환경변수 설정을 기록한 파일이며,
+        Python이 자동으로 읽는 것은 아니다.
+\end{dhksmry}
+
+\subsubsection{번외. 바인딩과 매핑}
+
+이 내용은 변수가 객체를 참조하는 바인딩의 개념과,
+
+키-밸류 구조의 매핑의 개념에 대한 설명으로 건너뛰어도 좋다.
+
+1. \textbf{Binding - 이름과 객체의 연결}
+
+\begin{dhkcode}
+x = 10
+x = 20
+\end{dhkcode}
+
+Python에서는 이름 \zsh{x}가 어떤 객체를 참조하는지가 핵심이다.
+
+\begin{dhksmry}[centered]
+x \ra int(10)
+
+재바인딩 후
+
+x \ra int(20)
+\end{dhksmry}
+
+즉, \textbf{binding}은 이름과 객체 사이의 연결이고,
+
+\textbf{rebinding}은 기존 이름을 다른 객체에 연결하는 작업이다.
+
+2. \textbf{Mapping - 키와 값의 대응 관계}
+
+\begin{dhkcode}
+config = {"epochs": 10}
+config["epochs"] = 20
+\end{dhkcode}
+
+여기에는 두 관계가 동시에 존재한다.
+
+\begin{dhksmry}
+    1. Binding
+        config \ra dict 객체
+
+    2. Mapping
+        dict 객체 내부
+        "epochs" \ra 10
+\end{dhksmry}
+
+두 번째 대입 이후에는:
+
+\begin{dhksmry}[centered]
+config \ra 동일한 객체
+
+dict 객체 내부
+
+"epochs" \ra 20
+\end{dhksmry}
+
+이 되는 것이다.
+
+여기서 중요한 점은 \textbf{mapping은 키를 통해 값을 찾는 추상적인 대응 관계}고,
+
+\textbf{mutation은 객체의 상태를 변경하는 행위}라는 것이다.
+
+따라서 mapping과 mutation은 서로 대립하는 개념이 아니다.
+
+\begin{dhksmry}
+    - mapping : 객체가 어떤 방식으로 키와 값을 대응시키는가?
+
+    - mutation : 기존 객체의 상태가 변경되는가?
+
+    - rebinding : 이름이 참조하는 객체가 변경되는가?
+\end{dhksmry}
+
+서로 다른 질문에 답하는 개념이다.
+
+\zsh{os.environ}에 적용하면:
+
+\begin{dhkcode}
+import os
+
+env = os.environ
+env["MODEL_NAME"] = "bert-base-uncased"
+\end{dhkcode}
+
+이 코드에서는 다음과 같은 일이 일어난다.
+\dhkdiagramspacing{8mm}{3mm}
+\begin{dhkdiagram}[in=4]
+node oneone (1,1) :: env
+node twoone (2,1) :: os.environ
+node twotwo (2,2) :: _Environ 객체
+node threethree (3,3) :: "MODEL_NAME"
+node fourthree (4,3) :: "bert-base-uncased"
+
+edge oneone -> twotwo :: HV
+edge twoone -> twotwo :: straight
+edge twotwo -- threethree :: VH
+edge twotwo -- fourthree :: VH
+\end{dhkdiagram}
+
+이후:
+
+\begin{dhkcode}
+env["MODEL_NAME"] = "distilbert-base-uncased"
+\end{dhkcode}
+
+를 실행하면:
+
+\begin{dhksmry}
+    - env 라는 이름은 여전히 같은 _Environ 객체를 참조한다.
+
+    - _Environ 객체 내부의 "MODEL_NAME" 항목이 변경된다.
+
+    - 그 변경이 현재 프로세스의 환경변수에도 반영된다.
+\end{dhksmry}
+
+즉 매핑 객체의 mutation이 발생한 것이지,
+
+\zsh{env}라는 이름의 rebinding이 발생한 것은 아니다.
+
+참고로 매핑 객체가 항상 mutable인 것은 아니다.
+
+읽기 전용 매핑도 존재하므로,
+
+\begin{dhksmry}[centered]
+mapping이라는 자료구조의 성질과
+
+mutation이 가능한지 여부도 별개이다.
+\end{dhksmry}
+
+\textbf{최종 정리}
+
+내용을 수식처럼 표현하면 다음과 같다.
+
+\begin{dhksmry}
+    Binding : Name \ra Object
+
+    Mapping : Key \ra Value
+
+    Rebinding : Name \ra Another Object
+
+    Mutation : Object State \ra Modified State
+\end{dhksmry}
+
+결국 \zsh{os.environ}을 매핑 객체라고 부른 이유는 
+
+키와 값의 대응 관계를 제공하기 때문이고, 
+
+\zsh{os.environ["MODEL_NAME"] = ...}을 mutation이라고 설명한 이유는 
+
+기존 객체의 상태를 변경하기 때문이다.

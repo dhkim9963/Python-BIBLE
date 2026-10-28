@@ -1,0 +1,2329 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.5. Python File I/O
+% ==================================================
+
+
+\subsection{Python File I/O}
+
+가장 밑바닥인 \zsh{open()}과 file object가 정확히 무엇인가부터 시작한다.
+
+\subsubsection{\zsh{open()}은 무엇을 하는가?}
+
+가장 기본적인 코드는:
+
+\begin{dhkcode}
+f = open("data.txt", "r")
+\end{dhkcode}
+
+이다.
+
+흔히 이것을 그냥 "\zsh{data.txt}를 연다"라고 배우는데,
+
+객체 관점에서 보면 조금 더 정확하게 이해할 수 있다.
+
+\begin{dhkbranch}[in=8]
+node main :: "data.txt"
+arrow main :: 경로를 open()에 전달
+node main :: open("data.txt", "r")
+arrow main :: OS에 파일 접근 요청
+node main :: file object 생성
+arrow main
+node main :: f → file object
+\end{dhkbranch}
+
+즉,
+
+\begin{dhkcode}
+f = open("data.txt", "r")
+\end{dhkcode}
+
+에서 \zsh{f}가 파일 자체인 것은 아니다.
+
+\zsh{f}는 \textbf{열려 있는 파일과 상호작용하기 위한 Python의 file object}를 가리키는 이름이다.
+
+이건 지금까지 배운 객체 모델과 완전히 동일하다.
+
+\begin{dhkdir}
+f
+> file object
+>> 실제 파일과 연결
+\end{dhkdir}
+
+그래서 다음과 같은 메서드를 사용할 수 있다.
+
+\begin{dhkcode}
+f.read()
+f.readline()
+f.write(...)
+f.close()
+\end{dhkcode}
+
+\subsubsection{\zsh{"r"}은 무엇인가?}
+
+두 번째 인자는 \textbf{mode}이다.
+
+\begin{dhkcode}
+open("data.txt", "r")
+\end{dhkcode}
+
+여기서 \zsh{"r"}은 \textbf{read}.
+
+즉:
+
+\begin{dhksmry}
+이 파일을 읽기 위한 방식으로 열어라.
+\end{dhksmry}
+
+라는 뜻이다.
+
+대표적인 mode부터 보면:
+
+\begin{dhksmry}
+    "r" read   읽기
+    "w" write  쓰기
+    "a" append 뒤에 추가
+\end{dhksmry}
+
+예를 들어 파일 내용이:
+
+\begin{dhkcode}
+epoch 1
+epoch 2
+\end{dhkcode}
+
+일 때,
+
+\begin{dhkcode}
+f = open("log.txt", "a")
+f.write("\nepoch 3\n")
+\end{dhkcode}
+
+하면 기존 내용을 유지하면서 뒤에 추가해서:
+
+\begin{dhkzsh}
+epoch 1
+epoch 2
+epoch 3
+\end{dhkzsh}
+
+가 된다.
+
+반면:
+
+\begin{dhkcode}
+f = open("log.txt", "w")
+\end{dhkcode}
+
+의 \zsh{"w"}는 \textbf{기존 파일이 있으면 내용을 비우고 새로 쓰기 시작할 수 있기 때문에 주의해야 한다}.
+
+\subsubsection{파일을 읽어보자}
+
+\zsh{data.txt}:
+
+\begin{dhkcode}
+apple
+banana
+orange
+\end{dhkcode}
+
+Python:
+
+\begin{dhkcode}
+f = open("data.txt", "r")
+text = f.read()
+print(text)
+f.close()
+\end{dhkcode}
+
+\zsh{f.read()}는 파일에서 내용을 읽어 Python 객체로 가져온다.
+
+여기서는 text mode이므로 대략:
+
+\begin{dhkbranch}[in=8]
+node main :: disk
+node main :: data.txt
+arrow main :: read
+node main :: Python process
+node main :: text → "apple\nbanana\norange"
+\end{dhkbranch}
+
+처럼 \zsh{str}객체를 얻게 된다.
+
+그래서:
+
+\begin{dhkcode}
+type(text)
+\end{dhkcode}
+
+는:
+
+\begin{dhkzsh}
+str
+\end{dhkzsh}
+
+이다.
+
+\subsubsection{그런데 왜 \zsh{close()}가 필요한가?}
+
+이게 File I/O에서 중요한 부분이다.
+
+\begin{dhkcode}
+f = open(...)
+\end{dhkcode}
+
+하면 Python은 단순히 파일 이름을 기억하는 게 아니라 운영체제의 파일 자원을 사용하게 된다.
+
+그래서 사용이 끝났으면:
+
+\begin{dhkcode}
+f.close()
+\end{dhkcode}
+
+로 닫아줘야 한다.
+
+문제는 이런 코드다:
+
+\begin{dhkcode}
+f = open("data.txt", "r")
+
+text = f.read()
+
+# 여기에서 에러 발생
+some_function()
+
+f.close()
+\end{dhkcode}
+
+\zsh{some_function()}에서 예외가 발생하면?
+
+\begin{dhksmry}[centered]
+open
+
+\da
+
+read
+
+\da
+
+에러 발생
+
+\da
+
+프로그램 흐름 중단
+
+\da
+
+f.close()까지 못 감
+\end{dhksmry}
+
+이런 자원 관리 문제 때문에 Python에서 일반적으로 
+
+직접 \zsh{open()} $\rightarrow$ \zsh{close()}를 관리하기보다는 \zsh{with}를 사용한다.
+
+\subsubsection{\zsh{with open(...) as f}}
+
+실무에서 흔히 보는 형태가 이것이다.
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    text = f.read()
+
+print(text)
+\end{dhkcode}
+
+핵심은:
+
+\begin{dhksmry}[centered]
+with 블록 진입
+
+\da
+
+파일 열기
+
+\da
+
+f \ra file object
+
+\da
+
+f.read()
+
+\da
+
+with 블록 종료
+
+\da
+
+파일 자동 정리/close
+\end{dhksmry}
+
+중간에 예외가 발생하더라도 \zsh{with}가 자원 정리를 처리할 수 있다.
+
+그래서 보통:
+
+\begin{dhkcode}
+f = open(...)
+
+...
+
+f.close()
+\end{dhkcode}
+
+보다:
+
+\begin{dhkcode}
+with open(...) as f:
+    ...
+\end{dhkcode}
+
+를 선호한다.
+
+\subsubsection{그런데 \zsh{with}는 파일 전용 문법이 아니다}
+
+이 부분이 중요하다.
+
+처음 배우면:
+
+\begin{dhksmry}[centered]
+with \ra 파일 열 때 사용하는 문법
+\end{dhksmry}
+
+처럼 외우기 쉬운데 그렇지 않다.
+
+\zsh{with}는 \textbf{context manager}라는 더 일반적인 Python 개념과 관련된다.
+
+큰 그림은:
+
+\begin{dhksmry}[centered]
+어떤 자원을 사용하기 전에 준비
+
+\da
+
+사용
+
+\da
+
+사용이 끝나면 반드시 정리
+\end{dhksmry}
+
+같은 패턴을 안전하게 다루는 문법이다.
+
+파일이 대표적인 예일 뿐이다.
+
+\begin{dhkcode}
+with open(...) as f:
+    ...
+\end{dhkcode}
+
+를 개념적으로 읽으면:
+
+\begin{dhknote}
+\begin{dhksmry}
+이 context에 진입하면서 자원을 준비하고, 
+블록 안에서 사용한 뒤 context를 빠져나갈 때 정리한다.
+\end{dhksmry}
+\end{dhknote}
+
+라고 볼 수 있다.
+
+나중에 class를 더 배우면 \zsh{__enter__, __exit__}과 연결된다.
+
+\subsubsection{\zsh{Path}와도 바로 연결된다}
+
+앞에서 배운 \zsh{pathlib}을 그대로 사용할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+path = Path("data/train.txt")
+
+with path.open("r") as f:
+    text = f.read()
+\end{dhkcode}
+
+즉:
+
+\begin{dhkcode}
+open("data/train.txt", "r")
+\end{dhkcode}
+
+과
+
+\begin{dhkcode}
+path = Path("data/train.txt")
+path.open("r")
+\end{dhkcode}
+
+둘 다 파일을 여는 방식이다.
+
+그리고 단순히 텍스트 전체를 읽는 경우에는:
+
+\begin{dhkcode}
+text = path.read_text()
+\end{dhkcode}
+
+처럼 더 간단한 API도 있다.
+
+\subsubsection{여기서 첫 번째로 잡아야 할 핵심}
+
+지금은 메서드를 외우는 것보다 이 구조가 중요하다.
+
+\begin{dhkbranch}[in=8]
+node main :: file system
+arrow main :: path
+node main :: "data/train.txt" 또는 Path(...)
+arrow main
+node main :: open()
+arrow main
+node main :: file object
+branchline main -> read :: read()
+stop read
+branchline main -> rl :: readline()
+stop rl
+branchline main -> write :: write()
+stop write
+handoff main -> close :: close()
+stop close
+\end{dhkbranch}
+
+그리고:
+
+\begin{dhksmry}[centered]
+name f
+\da
+file object
+\da
+OS의 열린 파일 지원
+\da
+실제 filesystem의 파일
+\end{dhksmry}
+
+이렇게 \textbf{Python 객체 세계와 실제 filesystem 사이를 연결하는 객체가 file object}이다.
+
+다음은 \zsh{read(), readline(), readlines()}의 차이와
+
+왜 \textbf{file object가 iterator이기도 하는지}로 넘어간다.
+
+\subsubsection{\zsh{read()} - 파일 전체를 한 번에 읽기}
+
+\zsh{data.txt}가 다음과 같다고 하자.
+
+\begin{dhkcode}
+apple
+banana
+orange
+\end{dhkcode}
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    text = f.read()
+
+print(text)
+\end{dhkcode}
+
+\zsh{text}에는 하나의 \zsh{str}객체가 들어온다.
+
+\begin{dhkzsh}
+'apple\nbanana\norange'
+\end{dhkzsh}
+
+구조적으로는:
+
+\begin{dhkbranch}
+node main :: file
+arrow main :: f.read()
+node main :: 하나의 str 객체
+node main :: "apple\nbanana\norange"
+\end{dhkbranch}
+
+즉, \zsh{read()}는 \textbf{전체 파일 $\rightarrow$ 하나의 문자열}이라고 생각하면 된다.
+
+그래서 큰 파일에서는 문제가 생길 수 있다.
+
+\begin{dhkbranch}
+node main ::10GB file
+arrow main :: read()
+node main :: 10GB에 가까운 데이터를 메모리에 한 번에 올리려고 함
+\end{dhkbranch}
+
+\subsubsection{\zsh{readline()} - 한 줄씩 읽기}
+
+이번에는:
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    line1 = f.readline()
+    line2 = f.readline()
+
+print(line1)
+print(line2)
+\end{dhkcode}
+
+대략:
+
+\begin{dhkzsh}
+line1 == "apple\n"
+line2 == "banana\n"
+\end{dhkzsh}
+
+이 된다.
+
+여기서 중요한 현상이 하나 있다.
+
+첫 번째:
+
+\begin{dhkcode}
+f.readline()
+\end{dhkcode}
+
+은 \zsh{apple}을 읽었는데,
+
+두 번째:
+
+\begin{dhkcode}
+f.readline()
+\end{dhkcode}
+
+은 또 \zsh{apple}을 읽는 게 아니라 \zsh{banana}를 읽었다.
+
+왜 그럴까?
+
+\subsubsection{file object에는 현재 읽고 있는 위치가 있다}
+
+file object는 내부적으로 \textbf{현재 파일의 어느 위치까지 읽었는지}를 관리한다.
+
+개념적으로:
+
+\begin{dhkdir}
+apple\nbanana\norange
+>현재위치
+\end{dhkdir}
+
+첫 번째 \zsh{readline()}:
+
+\begin{dhkdir}
+apple\n@banana\norange
+>현재 위치
+\end{dhkdir}
+
+두 번째 \zsh{readline()}:
+
+\begin{dhkdir}
+apple\nbanana\n@orange
+>현재위치
+\end{dhkdir}
+
+처럼 진행된다.
+
+이 위치를 보통 \textbf{file position/file pointer}라고 부른다고 생각하자.
+
+실제로 확인할 수도 있다.
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    print(f.tell())
+
+    f.readline()
+
+    print(f.tell())
+\end{dhkcode}
+
+\zsh{tell()}은 현재 위치를 알려준다.
+
+그리고:
+
+\begin{dhkcode}
+f.seek(0)
+\end{dhkcode}
+
+처럼 \zsh{seek()}을 사용하면 위치로 이동할 수도 있다.
+
+\subsubsection{그래서 \zsh{read()}도 두 번 하면?}
+
+이제 결과를 예측할 수 있다.
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    a = f.read()
+    b = f.read()
+
+print(a)
+print(b)
+\end{dhkcode}
+
+a 에는:
+
+\begin{dhkzsh}
+apple
+banana
+orange
+\end{dhkzsh}
+
+가 들어가지만 b 는:
+
+\begin{dhkcode}
+''
+\end{dhkcode}
+
+빈 문자열이 된다.
+
+왜냐하면 첫 번째 \zsh{read()}가:
+
+\begin{dhksmry}
+    [apple banana orange]
+    \ua
+
+    f.read()
+
+    [apple banana orange]
+                        \ua
+                        EOF
+\end{dhksmry}
+
+파일 끝까지 위치를 이동시켰기 때문이다.
+
+\zsh{EOF}는 \textbf{End Of File}이다.
+
+따라서 두 번째 \zsh{read()}에는 더 이상 읽을 것이 없다.
+
+\subsubsection{\zsh{readlines()} - 모든 줄을 리스트로}
+
+이번에는:
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    lines = f.readlines()
+
+print(lines)
+\end{dhkcode}
+
+결과는 대략:
+
+\begin{dhkzsh}
+['apple\n', 'banana\n', 'orange']
+\end{dhkzsh}
+
+이다.
+
+즉:
+
+\begin{dhksmry}[centered]
+read()
+\da
+\zsh{"apple\nbanana\norange"}
+하나의 str
+
+
+readline()
+\da
+\zsh{"apple\n"}
+한 줄 str
+
+
+readlines()
+\da
+\zsh{['apple\n', 'banana\n', 'orange']}
+list[str]
+\end{dhksmry}
+
+여기까지만 보면 \zsh{readlines()}가 편해보인다.
+
+하지만 역시 파일 전체의 줄들을 리스트로 만들어야 하기에 큰 파일에서는 메모리를 사용하게 된다.
+
+\subsubsection{그런데 Python에서는 파일을 그냥 \zsh{for}에 넣을 수 있다}
+
+여기서 \zsh{iterator}가 등장한다.
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    for line in f:
+        print(line)
+\end{dhkcode}
+
+이 가능하다.
+
+왜?
+
+\textbf{file object는 iterato이기 때문이다}.
+
+그래서 개념적으로:
+
+\begin{dhkcode}
+iterator = iter(f)
+
+line1= next(iterator)
+line2= next(iterator)
+line3= next(iterator)
+\end{dhkcode}
+
+가 가능하다.
+
+실제로:
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    print(iter(f) is f)
+\end{dhkcode}
+
+는 일반적인 Python text file object에서:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+가 된다.
+
+즉 file object 자신이 \zsh{iterator}이다.
+
+\subsubsection{iterator protocol이 그대로 나온다}
+
+이터레이터 구조가:
+
+\begin{dhksmry}[centered]
+iterable
+
+\da
+
+iter()
+
+\da
+
+iterator
+
+\da
+
+next()
+
+\da
+
+다음 값
+
+\da
+
+...
+
+\da
+
+StopIteration
+\end{dhksmry}
+
+이다.
+
+file object에서는:
+
+\begin{dhksmry}[centered]
+file object
+
+\da
+
+iterator
+
+\da
+
+next(f)
+
+\da
+
+한 줄
+
+\da
+
+next(f)
+
+\da
+
+다음 한 줄
+
+\da
+
+...
+
+\da
+
+EOF
+
+\da
+
+StopIteration
+\end{dhksmry}
+
+이다.
+
+그래서:
+
+\begin{dhkcode}
+with open("data.txt", "r") as f:
+    print(next(f))
+    print(next(f))
+\end{dhkcode}
+
+하면:
+
+\begin{dhkzsh}
+apple
+banana
+\end{dhkzsh}
+
+순서로 읽힌다.
+
+\subsubsection{\zsh{for line in f}가 큰 파일에서 중요한 이유}
+
+예를 들어 학습 데이터가:
+
+\begin{dhkzsh}
+10GB trianing_data.txt
+\end{dhkzsh}
+
+라고 해보자.
+
+이걸:
+
+\begin{dhkcode}
+with open("training_data.txt") as f:
+    text = f.read()
+\end{dhkcode}
+
+하면 전체 파일을 한꺼번에 읽으려고 한다.
+
+\begin{dhksmry}[centered]
+10GB file
+\da
+read()
+\da
+거대한 str
+\da
+memory
+\end{dhksmry}
+
+반면:
+
+\begin{dhkcode}
+with open("training_data.txt") as f:
+    for line in f:
+        process(line)
+\end{dhkcode}
+
+이면 개념적으로:
+
+\begin{dhkdir}
+disk
+> line 1 -> memory -> 처리
+> line 2 -> memory -> 처리
+> line 3 -> memory -> 처리
+> ...
+\end{dhkdir}
+
+처럼 \textbf{전체 파일을 하나의 거대한 Python 문자열/리스트로 만들 필요가 없다}.
+
+물론 실제 OS/Python I/O는 성능을 위해 buffering을 사용하기 때문에
+
+디스크에서 정확히 물리적인 한 줄씩 읽는다는 뜻은 아니다.
+
+하지만 \textbf{Python 코드 관점에서는 한 줄씩 순차적으로 소비할 수 있다}는 것이 핵심이다.
+
+\subsubsection{여기서 아주 중요한 연결 하나}
+
+위에서:
+
+\begin{dhkcode}
+with open("data.txt") as f:
+    for line in f:
+        ...
+\end{dhkcode}
+
+에서 \zsh{f}가 \zsh{iterator}라고 했다.
+
+그러면:
+
+\begin{dhkcode}
+with open("data.txt") as f:
+    for line in f:
+        print(line)
+    
+    for line in f:
+        print(line)
+\end{dhkcode}
+
+두 번재 \zsh{for}문에서는 어떻게 될까?
+
+\textbf{아무것도 출력되지 않는다}.
+
+첫 번째 \zsh{for}가 이미:
+
+\begin{dhksmry}[centered]
+f
+\da
+apple
+\da
+banana
+\da
+orange
+\da
+EOF
+\end{dhksmry}
+
+까지 소비했기 때문이다.
+
+이것이:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+소진된 iterator는 다시 처음부터 시작하지 않는다.
+\end{dhksmry}
+\end{dhknote}
+
+와 정확히 같은 현상이다.
+
+처음부터 다시 읽으려면 예를 들어:
+
+\begin{dhkcode}
+f.seek(0)
+\end{dhkcode}
+
+으로 파일 위치를 처음으로 되돌려야 한다.
+
+\subsubsection{지금 단계에서 핵심 정리}
+
+\begin{dhktable}
+|함수|내용|
+|:---|:---|
+|read()|남은 내용을 하나의 str로 읽음|
+|readline()|현재 위치부터 한 줄을 str로 읽음|
+|readlines()|남은 줄들을 list[str]로 읽음|
+|for line in f|file iterator를 순차 소비|
+|next(f)|다음 한 줄|
+| tell()|현재 file position 확인|
+|seek(...)|file position 이동|
+\end{dhktable}
+
+그리고 가장 중요한 개념은:
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+파일 읽기는 단순히 파일에서 값을 복사해오는 것이 아니라,
+
+file object가 현재 읽기 위치라는 상태를 가지고 
+
+그 상태가 진행되는 과정이다.
+\end{dhksmry}
+\end{dhknote}
+
+이것을 이해하면 \zsh{read()} 두 번 했는데 왜 두 번째가 비어있는지,
+
+\zsh{readline()}이 왜 다음 줄로 넘어가는지,
+
+파일을 왜 \zsh{for}문으로 순회할 수 있는지가 전부 하나의 원리로 연결된다
+
+다음 단계에서는 쓰기(w, a, write)와 파일이 실제로 언제 만들어지고 언제 내용이 사라지는지 살펴본다.
+
+\subsubsection{\zsh{"w"} - 파일을 쓰기 모드로 열기}
+
+\begin{dhkcode}
+with open("result.txt", "w") as f:
+    f.write("epoch 1")
+\end{dhkcode}
+
+실행하면 \zsh{result.txt}에:
+
+\begin{dhkzsh}
+epoch 1
+\end{dhkzsh}
+
+이 저장된다.
+
+그런데 \zsh{"w"}에는 중요한 성질이 두 가지 있다.
+
+\textbf{파일이 없응면 새로 만들고, 파일이 이미 있으면 기존 내용을 비운다}.
+
+예를 들어 원래:
+
+\begin{dhkcode}
+epoch 1
+epoch 2
+epoch 3
+\end{dhkcode}
+
+였는데:
+
+\begin{dhkcode}
+with open("result.txt", "w") as f:
+    f.write("new training")
+\end{dhkcode}
+
+하면 결과는:
+
+\begin{dhkzsh}
+new training
+\end{dhkzsh}
+
+이다.
+
+즉 \zsh{"w"}는 기존 내용 뒤에 이어 쓰는 모드가 아니다.
+
+그래서 \zsh{"w"}는 잘못 사용하면 기존 파일 내용을 날릴 수 있다.
+
+\subsubsection{\zsh{"a"} - append}
+
+기존 내용을 보존하면서 \textbf{끝에 추가}하려면:
+
+\begin{dhkcode}
+with open("result.txt", "a") as f:
+    f.write("epoch 4\n")
+\end{dhkcode}
+
+을 사용한다.
+
+원래:
+
+\begin{dhkzsh}
+epoch 1
+epoch 2
+epoch 3
+\end{dhkzsh}
+
+이었다면:
+
+\begin{dhkzsh}
+epoch 1
+epoch 2
+epoch 3
+epoch 4
+\end{dhkzsh}
+
+가 된다.
+
+ML 학습 로그를 계속 누적한다고 생각하면 직관적이다.
+
+\begin{dhkcode}
+with open("training.log", "a") as f:
+    f.write("epoch=10 loss=0.231\n")
+\end{dhkcode}
+
+\subsubsection{\zsh{wirte()}는 자동으로 줄바꿈하지 않는다}
+
+이것도 자주 실수하는 부분이다.
+
+\begin{dhkcode}
+with open("result.txt", "w") as f:
+    f.write("apple")
+    f.write("banana")
+    f.write("orange")
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+applebananaorange
+\end{dhkzsh}
+
+\zsh{print()}처럼 자동 줄바꿈을 해주는 것이 아니다.
+
+따라서:
+
+\begin{dhkcode}
+f.write("apple\n")
+f.write("banana\n")
+f.write("orange\n")
+\end{dhkcode}
+
+처럼 줄바꿈 이스케이프 문자를 넣어야 한다.
+
+\subsubsection{\zsh{write()}는 무엇을 반환할까?}
+
+재미있는 부분인데:
+
+\begin{dhkcode}
+n = f.write("hello")
+\end{dhkcode}
+
+\zsh{n}에는 보통:
+
+\begin{dhkzsh}
+5
+\end{dhkzsh}
+
+가 들어간다.
+
+즉 \zsh{write()}는 \textbf{작성한 문자 수}를 반환한다.
+
+그래서 \zsh{write()}의 반환값은 \zsh{None}이 아니라는 것도 알아두면 좋다.
+
+\subsubsection{여러 문자열을 쓸 때 \zsh{writelines()}}
+
+예를 들어:
+
+\begin{dhkcode}
+lines = [
+    "epoch 1\n",
+    "epoch 2\n",
+    "epoch 3\n"
+]
+
+with open("result.txt", "w") as f:
+    f.writelines(lines)
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+epoch 1
+epoch 2
+epoch 3
+\end{dhkzsh}
+
+여기서도 \zsh{writelines()}가 자동으로 \zsh{\n}을 붙여주는 것은 아니다.
+
+즉:
+
+\begin{dhkcode}
+["apple", "banana", "orange"]
+\end{dhkcode}
+
+를 \zsh{writelines()} 하면:
+
+\begin{dhkzsh}
+applebananaorange
+\end{dhkzsh}
+
+가 된다.
+
+\subsubsection{그런데 \zsh{write()}하면 즉시 디스크에 기록되는가?}
+
+여기서 buffering이 등장한다.
+
+처음에 보기엔:
+
+\begin{dhksmry}[centered]
+f.write(...)
+\da
+disk
+\end{dhksmry}
+
+라고 생각하기 쉽지만 실제로는 보통 더 복잡하다.
+
+개념적으로는:
+
+\begin{dhksmry}[centered]
+Python program
+
+f.write("hello")
+\da
+buffer
+\da
+적절한 시점
+\da
+OS
+\da
+filesystem
+\end{dhksmry}
+
+중간에 buffer를 두는 것이다.
+
+왜 굳이 그럴까?
+
+디스크나 OS에 아주 작은 데이터를 쓸 때마다 계속 요청하는 것보다
+
+어느 정도 모아서 처리하는 것이 효율적이기 때문이다.
+
+예를 들어:
+
+\begin{dhkcode}
+f.write("a")
+f.write("b")
+f.write("c")
+f.write("d")
+\end{dhkcode}
+
+라고 해서 반드시 물리 저장장치에:
+
+\begin{dhkzsh}
+a 기록
+b 기록
+c 기록
+d 기록
+\end{dhkzsh}
+
+와 같은 식으로 각각 독립적으로 기록되는 것은 아니다.
+
+\subsubsection{\zsh{flush()}}
+
+그래서 등장하는 것이:
+
+\begin{dhkcode}
+f.flush()
+\end{dhkcode}
+
+이다.
+
+개념적으로는:
+
+\begin{dhksmry}[centered]
+Python 쪽에 버퍼링된 출력 데이터를 아래 계층으로 밀어내라.
+\end{dhksmry}
+
+정도로 이해하면 된다.
+
+예를 들어 장시간 학습 프로그램이:
+
+\begin{dhkcode}
+f = open("training.log", "w")
+for epoch in range(1000):
+    ...
+    f.write(f"epoch={epoch}, loss={loss}\n")
+\end{dhkcode}
+
+처럼 돌아간다고 해보자.
+
+프로그램이 몇 시간 동안 실행될 수도 있다.
+
+이때 로그를 외부에서 빨리 확인해야 한다면
+
+buffering 때문에 원하는 시점에 내용이 안 보이는 상황이 있을 수 있다.
+
+그럴 때:
+
+\begin{dhkcode}
+f.write(...)
+f.flush()
+\end{dhkcode}
+
+처럼 명시적으로 flush할 수도 있다.
+
+\subsubsection{그러면 \zsh{close()}와 \zsh{flush()}는 무슨 관계인가?}
+
+일반적으로 파일을 정상적으로 \zsh{close()}하면 필요한 \zsh{flush()}도 수행된다.
+
+즉:
+
+\begin{dhkcode}
+f.write(...)
+f.close()
+\end{dhkcode}
+
+에서는 close 과정에서 버퍼에 남아 있는 데이터를 내보내고 파일 자원을 정리한다.
+
+그리고 앞에서 배운:
+
+\begin{dhkcode}
+with open("result.txt", "w") as f:
+    f.write("hello")
+\end{dhkcode}
+
+도 블록을 정상적으로 빠져나오면서 file object가 정리되니까
+
+일반적인 파일 작업에서는 직접 \zsh{flush()}를 계속 호출할 필요가 없다.
+
+그래서 \zsh{with}가 다시 중요해진다.
+
+
+
+\begin{dhkbranch}[in=8]
+node main :: with open(...) as f:
+branch main -> write1 :: write
+stop write1
+branch main -> write2 :: write
+stop write2
+branch main -> write3 :: write
+stop write3
+node main :: with 종료
+arrow main
+node main :: 필요한 flush
+arrow main
+node main :: close
+arrow main
+node main :: 자원 정리
+\end{dhkbranch}
+
+\subsubsection{단, \zsh{flush()}가 물리 디스크에 영구 저장 완료는 아니다}
+
+이건 지금 단계에서는 구분만 해둔다.
+
+\begin{dhkcode}
+f.flush()
+\end{dhkcode}
+
+했다고 해서 반드시 그 순간 \textbf{SSD의 물리 셀까지 영구적으로 기록되었다}는 의미는 아니다.
+
+대략 여러 계층이 존재할 수 있다.
+
+\begin{dhksmry}[centered]
+Python
+
+\da
+
+Python buffering
+
+\da
+
+OS
+
+\da
+
+OS filesystem/cache
+
+\da
+
+storage device
+\end{dhksmry}
+
+\zsh{flush()}는 기본적으로 Python의 버퍼를 아래 계층으로 넘기는 것과 관련된 것이지,
+
+모든 하드웨어 계층까지 물리 기록 완료를 보장한다는 의미는 아니다.
+
+정말 그런 수준의 보장이 필요한 경우라면
+
+\zsh{os.fsync()}같은 별도의 개념이 등장하는데, 지금은 살펴볼 필요가 없다.
+
+\subsubsection{\zsh{"r", "w", "a"}를 하나로 정리하면}
+
+\begin{dhksmry}
+    "r"
+    읽기
+    파일이 없으면 \ra 오류
+    기존 내용 보존
+
+
+    "w"
+    쓰기
+    파일이 없으면 \ra 생성
+    파일이 있으면 \ra 기존 내용 제거
+    
+    
+    "a"
+    추가 쓰기
+    파일이 없으면 \ra 생성
+    파일이 있으면 \ra 기존 내용 보존 후 끝에 추가
+\end{dhksmry}
+
+이후에:
+
+\begin{dhksmry}
+    "x" 새 파일 생성, 이미 존재하면 오류
+
+
+    "+" 읽기 + 쓰기
+
+
+    "b" binary mode
+
+
+    "t" text mode
+\end{dhksmry}
+
+까지 붙으면 파일 mode 전체가 완성된다.
+
+\begin{dhksmry}[centered]
+    번외로, bytes와 encoding, decoding에 대한 내용
+
+    "r"
+    \da
+    읽겠다
+
+    text mode
+    \da
+    bytes를 문자로 해석하겠다
+
+
+
+    encoding="utf-8"
+    \da
+    그 bytes를 어떤 규칙으로 문자로 바꿀 것인가
+
+
+    파일의 bytes
+    \da
+    UTF-8 규칙으로 decode
+    \da
+    Python str
+    "안녕하세요"
+
+
+    text mode
+    \ra Python이 encoding/decoding을 대신 처리
+    \ra Python 코드에서는 str 사용
+
+    binary mode
+    \ra encoding/decoding하지 않음
+    \ra Python 코드에서는 bytes 사용
+
+
+    encoding은 정확히는 str \ra bytes 로 바꾸는 규칙
+    decoding은 그 반대인 bytes \ra str 로 해석하는 규칙
+
+
+    encoding='utf-8' 은 파일 타입을 지정하는 게 아니라
+    문자(str)와 파일에 저장되는 바이트(bytes) 사이를 
+    어떤 규칙으로 변환할지 지정한다
+    cp949 도 똑같은 역할인데 변환 규칙이 UTF-8과 다른 것
+
+
+    bytes 는 저수준 프로그래밍 언어가 아니라 
+    컴퓨터가 파일·네트워크 등에서 다루는 바이트 데이터 표현
+    머릿속에서는 간단하게:
+    사람이 다루는 문자(str) \ra encode \ra bytes \ra decode \ra 문자(str)
+\end{dhksmry}
+
+저수준의 File I/O는 이 정도로 끝내고,
+
+실제로 Python/ML/DL에서 자주만나는 구조화된 파일 형식으로 넘어간다.
+
+\subsubsection{JSON이 왜 필요한가?}
+
+지금까지는 이런 텍스트를 저장했다.
+
+\begin{dhkzsh}
+epoch=10
+batch_size = 32
+learning_rate = 0.001
+\end{dhkzsh}
+
+사람은 이해할 수 있지만 Python 입장에서는 그냥 하나의 문자열이다.
+
+ML 설정을 생각해보자.
+
+\begin{dhkzsh}
+config = {
+    "epochs": 10,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "hidden_sizes": [512, 256, 128]
+}
+\end{dhkzsh}
+
+이런 \textbf{구조화된 데이터}를 파일로 저장하고 다시 불러오고 싶을 수 있다.
+
+JSON은 이런 데이터를 표현하기 위한 대표적인 형식이다.
+
+\zsh{config.json}:
+
+\begin{dhkzsh}
+{
+    "epochs": 10,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "hidden_sizes": [512, 256, 128]
+}
+\end{dhkzsh}
+
+Python Dictionary와 상당히 비슷하게 생겼다.
+
+하지만 중요한 차이가 존재한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+JSON 자체는 Python dictionary가 아니다.
+\end{dhksmry}
+\end{dhknote}
+
+그냥 JSON이라는 데이터 형식이다.
+
+\subsubsection{JSON 파일 $\rightarrow$ Python 객체}
+
+Python에서는 표준 라이브러리 \zsh{json}을 사용한다.
+
+\begin{dhkcode}
+import json
+
+with open("config.json", "r", encoding="utf-8") as f:
+    config = json.load(f)
+\end{dhkcode}
+
+그러면:
+
+\begin{dhkcode}
+print(type(config))
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+<class 'dict'>
+\end{dhkzsh}
+
+그리고:
+
+\begin{dhkcode}
+print(config['learning_rate'])
+\end{dhkcode}
+
+\begin{dhkzsh}
+0.01
+\end{dhkzsh}
+
+처럼 사용할 수 있다.
+
+흐름을 보면:
+
+\begin{dhksmry}[centered]
+config.json
+
+\da
+
+file object f
+
+\da
+
+json.load(f)
+
+\da
+
+Python 객체
+
+\da
+
+config
+
+\da
+
+dict
+\end{dhksmry}
+
+즉 \zsh{json.load()}는 JSON 형식의 데이터를 읽어서 적절한 Python 객체로 변환해준다.
+
+\subsubsection{JSON과 Python 타입은 서로 대응한다}
+
+대표적으로:
+
+\begin{dhktable}
+|JSON|Python|
+|:---|:---|
+|object|dict|
+|array|list|
+|string|str|
+|number|int/float|
+|true|True|
+|false|False|
+|null|None|
+\end{dhktable}
+
+그래서 JSON:
+
+\begin{dhkzsh}
+{
+    "use_gpu": true,
+    "dropout": null,
+    "layers": [512, 256]
+}
+\end{dhkzsh}
+
+을 읽으면 Python에서는 대략:
+
+\begin{dhkzsh}
+{
+    "use_gpu": True,
+    "dropout": None,
+    "layers": [512, 256]
+}
+\end{dhkzsh}
+
+가 된다.
+
+\subsubsection{반대로 Python 객체 $\rightarrow$ JSON 파일}
+
+이번에는:
+
+\begin{dhkzsh}
+config = {
+    "epochs": 20,
+    "batch_size": 64,
+    "learning_rate": 0.001
+}
+\end{dhkzsh}
+
+를 저장해보자.
+
+\begin{dhkcode}
+import json
+
+with open("config.json", "w", encoding="utf-8") as f:
+    json.dump(config, f)
+\end{dhkcode}
+
+방향이 반대다.
+
+\begin{dhksmry}[centered]
+Python dict
+
+\da
+
+json.dump()
+
+\da
+
+JSON 형식
+
+\da
+
+config.json
+\end{dhksmry}
+
+그래서 이름도 꽤 직관적이다.
+
+\begin{dhksmry}
+    load
+    파일에서 Python으로 불러옴
+
+    dump
+    Python 객체를 파일로 내보냄
+\end{dhksmry}
+
+\subsubsection{\zsh{load()}와 \zsh{loads()}는 다르다}
+
+여기서 Python에서 상당히 헛갈리는 이름이 등장한다.
+
+\begin{dhkcode}
+json.load(...)
+json.loads(...)
+\end{dhkcode}
+
+s 하나 차이인데 의미가 다르다.
+
+\textbf{json.load()}
+
+파일 객체에서 읽는다.
+
+\begin{dhkcode}
+with open("config.json") as f:
+    config = json.load(f)
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+file object
+\da
+json.load()
+\da
+Python object
+\end{dhksmry}
+
+
+\textbf{json.loads()}
+
+이미 가지고 있는 \textbf{JSON 문자열}을 Python 객체로 변환한다.
+
+\begin{dhkzsh}
+text = '{"epochs": 10, "batch_size": 32}'
+config = json.loads(text)
+\end{dhkzsh}
+
+여기서는 파일이 없다.
+
+\begin{dhksmry}[centered]
+JSON str
+\da
+json.loads()
+\da
+Python dict
+\end{dhksmry}
+
+여기서 \zsh{loads}의 s는 \textbf{string}이라고 기억하면 편하다.
+
+\subsubsection{반대쪽에도 \zsh{dump()}와 \zsh{dumps()}가 있다}
+
+\begin{dhkcode}
+json.dump(...)
+json.dumps(...)
+\end{dhkcode}
+
+\textbf{dump()}:
+
+\begin{dhksmry}[centered]
+Python object
+\da
+JSON
+\da
+file object
+\end{dhksmry}
+
+\textbf{dumps()}:
+
+\begin{dhksmry}[centered]
+Python object
+\da
+JSON str
+\end{dhksmry}
+
+예를 들어:
+
+\begin{dhkcode}
+config = {
+    "epochs": 10,
+    "batch_size": 32
+}
+
+text = json.dumps(config)
+print(type(text))
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+<class 'str'>
+\end{dhkzsh}
+
+즉 전체를 하나로 정리하면:
+
+\begin{dhktable}
+||파일|문자열|
+|:---|:---|:---|
+|읽기|json.load()|json.loads()|
+||↓|↓|
+||Python object|Python object|
+|||
+|쓰기|json.dump()|json.dumps()|
+||↑|↑|
+||Python object|Python object|
+\end{dhktable}
+
+\subsubsection{ML/DL에서는 어디에 쓰일까?}
+
+예를 들어 학습 설정을:
+
+\begin{dhkzsh}
+{
+    "model_name": "distilbert-base-uncased",
+    "epochs": 3,
+    "batch_size": 16,
+    "learning_rate": 0.00002
+}
+\end{dhkzsh}
+
+로 저장하고:
+
+\begin{dhkcode}
+import json
+
+with open("config.json", encoding="utf-8") as f:
+    config = json.load(f)
+
+model_name = config["model_name"]
+epochs = config["epochs"]
+\end{dhkcode}
+
+처럼 사용할 수 있다.
+
+또 학습 결과를:
+
+\begin{dhkcode}
+metrics = {
+    "accuracy": 0.91,
+    "f1": 0.89,
+    "loss": 0.21
+}
+
+with open("metric.json", "w", encoding="utf-8") as f:
+    json.dump(metrics, f, indent=4)
+\end{dhkcode}
+
+처럼 저장할 수도 있다.
+
+\zsh{indent=4}를 사용하면 사람이 읽기 좋게 들여쓰기해서 저장해준다.
+
+\subsubsection{그런데 여기서 \zsh{argparse}와 연결된다}
+
+우리가 이전에 배운:
+
+\begin{dhkzsh}
+python train.py \
+    --epochs 10 \
+    --batch-size 32 \
+    --learning-rate 0.001
+\end{dhkzsh}
+
+도 결국 \textbf{프로그램 외부에서 설정을 넣는 방법}이었다.
+
+JSON도 비슷한 목적에 사용할 수 있다.
+
+\begin{dhkzsh}
+python train.py --config config.json
+\end{dhkzsh}
+
+그리고:
+
+\begin{dhkcode}
+import argparse
+import json
+from pathlib import Path
+
+parser = argparse.Argumentparser()
+parser.add_argument(
+    "--config",
+    type=Path,
+    required=True
+)
+
+args = parser.parse_args()
+
+with args.config.open(encoding='utf-8') as f:
+    config = json.load(f)
+
+print(config['learning_rate'])
+\end{dhkcode}
+
+이제 지금까지 따로 배웠던 것들이:
+
+\begin{dhksmry}[centered]
+Terminal
+\da
+argparse
+\da
+Path
+\da
+file object
+\da
+JSON
+\da
+dict
+\da
+ML training configuration
+\end{dhksmry}
+
+으로 하나로 연결된다.
+
+이게 앞에서:
+
+\begin{dhksmry}[centered]
+argparse \ra pathlib \ra filesystem \ra File I/O    
+\end{dhksmry}
+
+를 순서대로 공부한 이유이기도 하다.
+
+다음은 CSV를 Python 표준 \zsh{csv} 모듈 관점에서 짧게 보고,
+
+왜 ML/Data Science에서는 보통 그것보다
+
+\zsh{pandas.read_csv()}를 쓰는지 연결해서 볼 것이다.
+
+\subsubsection{CSV는 사실 텍스트 파일이다}
+
+예를 들어 \zsh{scores.csv}:
+
+\begin{dhkzsh}
+name,math,english
+kim,90,85
+lee,80,92
+park,95,88
+\end{dhkzsh}
+
+CSV는 \textbf{Comma-Separated Values}이다.
+
+특별한 Python 객체가 저장되어 있는 게 아니라
+
+기본적으로 이런 \textbf{텍스트 데이터}이다.
+
+그래서 원한다면:
+
+\begin{dhkcode}
+with open("scores.csv", "r", encoding="utf-8") as f:
+    print(f.read())
+\end{dhkcode}
+
+로도 읽을 수 있다.
+
+다만 우리가 원하는 건 보통 문자열 전체가 아니라:
+
+\begin{dhktable}
+|name|math|english|
+|:---|:---|:---|
+|kim|90|85|
+|lee|80|92|
+|park|95|88|
+\end{dhktable}
+
+같은 \textbf{표 구조}이다.
+
+그래서 CSV 형식을 해석하는 도구가 필요하다.
+
+\subsubsection{Python에는 표준 \zsh{csv}모듈이 있다}
+
+\begin{dhkcode}
+import csv
+
+with open("scores.csv", "r", encoding="utf-8") as f:
+    reader = csv.reader(f)
+
+    for row in reader:
+        print(row)
+\end{dhkcode}
+
+결과는:
+
+\begin{dhkzsh}
+['name', 'math', 'english']
+['kim', '90', '85']
+['lee', '80', '92']
+['park', '95', '88']
+\end{dhkzsh}
+
+여기서 중요한 부분이 하나 보인다
+
+\begin{dhkzsh}
+'90'
+\end{dhkzsh}
+
+이지:
+
+\begin{dhkzsh}
+90
+\end{dhkzsh}
+
+이 아니다.
+
+CSV 자체는 텍스트이기 때문에 \zsh{csv.reader()}가 기본적으로 읽어온 필드들도 문자열로 다뤄진다.
+
+필요하면 우리가:
+
+\begin{dhkcode}
+math = int(row[1])
+\end{dhkcode}
+
+처럼 변환할 수 있다.
+
+\subsubsection{\zsh{csv.reader(f)}와 \zsh{iterator}}
+
+여기서 배운 내용이 연결된다.
+
+\begin{dhkcode}
+reader = csv.reader(f)
+\end{dhkcode}
+
+\zsh{reader}도 순차적으로 row를 제공하는 iterable/iterator 계열 객체다.
+
+그래서:
+
+\begin{dhkcode}
+for row in reader:
+    ...
+\end{dhkcode}
+
+가 자연스럽게 가능하다.
+
+흐름은:
+
+\begin{dhksmry}[centered]
+file object
+\da
+csv.reader
+\da
+row
+\da
+row
+\da
+row
+\da
+...
+\end{dhksmry}
+
+즉 Python의 \zsh{iterator}모델이 여기서도 계속 나타난다.
+
+\subsubsection{그런데 ML/Data Science에서는 \zsh{Pandas}를 훨씬 많이 쓴다}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.read_csv("scores.csv")
+\end{dhkcode}
+
+가 등장한다.
+
+이 경우 Pandas가 상당히 많은 일을 대신 처리한다.
+
+\begin{dhksmry}[centered]
+CSV file
+\da
+파일 읽기
+\da
+CSV parsing
+\da
+header 처리
+\da
+dtype 추론
+\da
+결측값 처리
+\da
+DataFrame 생성
+\end{dhksmry}
+
+그래서:
+
+\begin{dhkcode}
+df.info()
+df.describe()
+df["math"].mean()
+\end{dhkcode}
+
+같은 데이터 분석 작업으로 바로 넘어갈 수 있다.
+
+\subsubsection{CSV에서 실제로 알아둘 옵션}
+
+ML/Data Science 기준으로는 이 정도면 충분하다.
+
+\begin{dhkcode}
+df = pd.read_csv(
+    "data.csv",
+    encoding='utf-8'
+)
+\end{dhkcode}
+
+한글 파일이면 상황에 따라:
+
+\begin{dhkcode}
+df = pd.read_csv(
+    "data.csv",
+    encoding='cp949'
+)
+\end{dhkcode}
+
+를 만날 수 있다.
+
+쉼표가 아닌 다른 구분자를 사용하는 파일도 있다.
+
+예를 들어:
+
+\begin{dhkzsh}
+name|math|english
+kim|90|85
+lee|80|92
+\end{dhkzsh}
+
+이면:
+
+\begin{dhkcode}
+df = pd.read_csv(
+    "data.csv",
+    sep="|"
+)
+\end{dhkcode}
+
+처럼 delimiter를 지정할 수 있다.
+
+\zsh{sep} = separator라고 보면 된다.
+
+\subsubsection{DataFrame $\rightarrow$ CSV도 가능하다}
+
+반대 방향:
+
+\begin{dhkcode}
+df.to_csv("result.csv")
+\end{dhkcode}
+
+그런데 Pandas에서 흔히:
+
+\begin{dhkcode}
+df.to_csv(
+    "result.csv",
+    index=False,
+    encoding="utf-8"
+)
+\end{dhkcode}
+
+를 많이 본다.
+
+\zsh{index=False}는 DataFrame의 index를 별도 CSV열로 저장하지 않겠다는 뜻이다.
+
+예를 들어:
+
+\begin{dhksmry}
+        name score
+    0   kim    90
+    1   lee    80
+\end{dhksmry}
+
+를 그냥 저장하면 index까지 포함될 수 있는데,
+
+\begin{dhkzsh}
+index = False
+\end{dhkzsh}
+
+로 하면:
+
+\begin{dhkzsh}
+name,score
+kim,90
+lee,80
+\end{dhkzsh}
+
+처럼 실제 데이터 열만 저장할 수 있다.
+
+\subsubsection{그러면 CSV는 이 정도면 끝이다}
+
+기억할 것은:
+
+\begin{dhksmry}[centered]
+CSV
+\da
+텍스트 기반의 표 형식
+
+
+Python 기본 기능
+\da
+csv.reader / csv.writer
+
+
+Data Science / ML
+\da
+보통 Pandas 이용
+
+
+pd.read_csv()
+\da
+DataFrame
+
+
+df.to_csv()
+\da
+CSV
+\end{dhksmry}
+
+이 정도면 충분하다.
+
+\subsubsection{이제 Binary I/O}
+
+\textbf{Text mode와 Binary mode}
+
+지금까지:
+
+\begin{dhkcode}
+open("data.txt", "r")
+\end{dhkcode}
+
+라고 썼다.
+
+사실 기본적으로 text mode라는 의미가 포함되어 있다.
+
+명시하면:
+
+\begin{dhkcode}
+open("data.txt", "rt")
+\end{dhkcode}
+
+라고도 할 수 있다.
+
+\zsh{t} = text
+
+반면:
+
+\begin{dhkcode}
+open("image.jpg", "rb")
+\end{dhkcode}
+
+에서는:
+
+\begin{dhksmry}[centered]
+    r = read
+    b = binary
+\end{dhksmry}
+
+즉 \textbf{binary read}이다.
+
+\subsubsection{가장 중요한 차이는 반환되는 Python 객체}
+
+\textbf{Text}:
+
+\begin{dhkcode}
+with open("data.txt", "r", encoding="utf-8") as f:
+    data = f.read()
+
+print(type(data))
+\end{dhkcode}
+
+\begin{dhkzsh}
+str
+\end{dhkzsh}
+
+\textbf{Binary}:
+
+\begin{dhkcode}
+with open("image.jpg", "rb") as f:
+    data = f.read()
+
+print(type(data))
+\end{dhkcode}
+
+\begin{dhkzsh}
+bytes
+\end{dhkzsh}
+
+즉:
+
+\begin{dhksmry}[centered]
+text mode
+
+file bytes
+\da
+decoding
+\da
+Python str
+
+
+
+binary mode
+
+file bytes
+\da
+그대로
+\da
+Python bytes
+\end{dhksmry}
+
+이게 핵심이다.
+
+\subsubsection{Binary에서는 encoding을 지정하지 않는다}
+
+예를 들어:
+
+\begin{dhkcode}
+open("image.jpg", "rb", encoding="utf-8")
+\end{dhkcode}
+
+처럼 생각하면 \textbf{안된다}.
+
+Binary mode에서는:
+
+\begin{dhksmry}[centered]
+bytes
+\da
+그대로 사용
+\end{dhksmry}
+
+하기 때문이다.
+
+encoding은:
+
+\begin{dhksmry}
+bytes \lra str
+\end{dhksmry}
+
+변환 규칙이다.
+
+Binary mode는 그 변환 자체를 하지 않는다.
+
+\subsubsection{그런데 ML/DL에서는 보통 직접 안 한다}
+
+예를 들어 NumPy array를 저장한다고 하자.
+
+우리가 직접:
+
+\begin{dhkcode}
+with open("array.npy", "wb") as f:
+    ...
+\end{dhkcode}
+
+하면서 NumPy binary format을 구현하지 않는다.
+
+그냥:
+
+\begin{dhkcode}
+import numpy as np
+
+np.save("array.npy", arr)
+\end{dhkcode}
+
+하고:
+
+\begin{dhkcode}
+arr = np.load("array.npy")
+\end{dhkcode}
+
+한다.
+
+PyTorch도:
+
+\begin{dhkcode}
+torch.save(...)
+torch.load(...)
+\end{dhkcode}
+
+이미지도:
+
+\begin{dhkcode}
+Image.open(...)
+\end{dhkcode}
+
+Pandas Parquet도:
+
+\begin{dhkcode}
+pd.read_parquet(...)
+\end{dhkcode}
+
+처럼 사용한다.
+
+즉:
+
+\begin{dhksmry}[centered]
+저수준
+
+open(..., 'rb')
+open(..., 'wb')
+\da
+bytes 직접 처리
+
+
+
+고수준
+
+np.load()
+torch.load()
+Image.open()
+pd.rad_parquet()
+\da
+라이브러리가 binary format 처리
+\end{dhksmry}
+
+그렇기에 ML/DL 하면서 \zsh{'rb'}를 거의 못 본것이 이상한 것은 아니다.
+
+\subsubsection{File I/O 전체가 이제 하나로 연결된다}
+
+전체 구조를 보면:
+
+\begin{dhktree}
+file system
+>Path
+>>open()
+>>>file object
+>>>>binary mode
+>>>>>bytes
+>>>>>>보통 전용 라이브러리
+>>>>>>>NumPy
+>>>>>>>Pytorch
+>>>>>>>Image
+>>>>text mode
+>>>>>decoding
+>>>>>>str
+>>>>>>>TXT
+>>>>>>>JSON
+>>>>>>>>Dict
+>>>>>>>CSV
+>>>>>>>>DataFrame
+\end{dhktree}
+
+이정도면 File I/O를 거의 완료했다고 봐도 된다.
+
+특히 중요한 건 API를 암기하는 것이 아니라:
+
+\begin{dhkbranch}[in=8]
+node main :: Path
+arrow main
+node main :: file object
+branch main -> text :: text라면 str/encoding
+arrow text
+node text :: JSON, CSV 같은 구조 해석
+stop text
+handoff main -> binary :: binary라면 bytes
+arrow binary
+node binary :: 보통 전용 라이브러리가 해석
+stop binary
+\end{dhkbranch}
+
+이라는 전체 레이어를 이해하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}
+    번외로, \zsh{iterator}에 대한 한 문장 설명을 추가하자면,
+
+    Iterator는 for 문을 돌릴 수 없는 객체가 아니라, 
+
+    for 문이 실제로 값을 하나씩 꺼내기 위해 사용하는 객체다.
+\end{dhksmry}
+\end{dhknote}

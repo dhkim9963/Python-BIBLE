@@ -1,0 +1,981 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.2. 클래스도 객체인가? - class 정의를 실행하면 무엇이 생성되는가?
+% ==================================================
+
+\subsection{클래스도 객체인가? - class 정의를 실행하면 무엇이 생성되는가?}
+
+이번에는 Python의 \zsh{class}문을 단순히 클래스를 선언하는 문법으로 이해하는 것이 아니라, Python이 \zsh{class}문을 실행할 때 어떤 객체를 생성하고, 그 객체를 어떤 이름에 바인딩하는지 살펴본다.
+
+함수와 데코레이터에서 다음 개념을 학습했을 것이다.
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+이 코드를 실행하면 Python은 함수 객체를 생성하고 \zsh{add}라는 이름에 바인딩한다.
+
+클래스도 비슷한 관점에서 이해할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    pass
+\end{dhkcode}
+
+이 코드를 실행하면 Python은 \zsh{클래스 객체(Class Object)}를 생성하고 \zsh{Person}이라는 이름에 바인딩한다.
+
+다만 함수 객체와 클래스 객체는 서로 다른 종류의 객체이며, 생성 과정과 역할에도 차이가 있다.
+
+이번에는 그 차이를 순서대로 살펴본다.
+
+\subsubsection{개념 정의 - Python에서 클래스도 객체다}
+
+Python에서는 정수, 문자열, 리스트, 함수뿐 아니라 클래스도 객체로 취급한다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+print(Person)
+print(type(Person))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+<class 'type'>
+\end{dhkzsh}
+
+첫 번째 출력은 \zsh{Person}이라는 이름이 클래스 객체를 참조하고 있다는 사실을 보여준다.
+
+두 번째 출력은 해당 클래스 객체의 타입이 \zsh{type}이라는 사실을 보여준다.
+
+여기서 중요한 구분이 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체(class object)
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Person
+\end{dhkcode}
+
+\zsh{Person}은 클래스 객체를 참조하는 이름이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 객체(Instance Object)
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Person()
+\end{dhkcode}
+
+\zsh{Person()}은 클래스 객체를 호출하는 표현식이다.
+
+기본적인 클래스에서는 이 호출을 통해 새로운 인스턴스가 생성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스를 참조하는 이름
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+생성된 인스턴스 객체를 \zsh{p}라는 이름에 바인딩한다.
+
+따라서 다음과 같이 구분할 수 있다.
+
+\begin{dhkdiagram}[in=10]
+node p (1,1) :: Person
+node c (3,1) :: 클래스 객체
+node i (5,1) :: 인스턴스 객체
+node s (7,1) :: p
+
+edge p -> c
+edge c -> i :: Person() 호출
+edge s -> i
+\end{dhkdiagram}
+
+여기서 \zsh{Person}과 \zsh{p}는 모두 이름이지만, 참조하는 객체의 종류가 다르다.
+
+\begin{dhktable}
+|표현식|	의미|	참조하거나 반환하는 객체|
+|:---|:---|:---|
+|Person|	클래스 이름을 평가|	클래스 객체|
+|Person()|	클래스 객체 호출|	일반적으로 새로운 //*인스턴스 객체|
+|p = Person()|	반환된 객체를//*이름에 바인딩|	p가 인스턴스를 참조|
+|type(Person)|	클래스 객체의 //*타입 확인|	type|
+|type(p)|	인스턴스 객체의 //*타입 확인|	Person|
+\end{dhktable}
+
+이 관계를 실제 코드로 확인해 보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+
+print(type(Person))
+print(type(p))
+
+print(isinstance(p, Person))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'type'>
+<class '__main__.Person'>
+True
+\end{dhkzsh}
+
+여기서 \zsh{isinstance(p, Person)}은 \zsh{p}가 \zsh{Person} 클래스의 인스턴스인지 확인하는 표현식이다.
+
+상속 관계까지 고려하므로 단순히 \zsh{type(p) is Person}과 항상 같은 검사는 아니다.
+
+핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+Python에서 클래스는 객체를 만들기 위한 정의이면서 동시에, 
+
+Python 프로그램 안에서 참조하고 전달할 수 있는 객체이기도 하다.
+\end{dhksmry}
+
+\subsubsection{\zsh{class}문은 단순한 선언이 아니라 실행되는 문장이다}
+
+이 부분이 이번 학습에서 가장 중요하다.
+
+Python의 \zsh{class}문은 프로그램 실행 과정에서 평가되고 실행된다.
+
+예를 들어 다음 코드를 보자.
+
+\begin{dhkcode}
+print("A")
+
+class Person:
+    print("B")
+
+print("C")
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+A
+B
+C
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{class Person:}아래의 본문은 인스턴스를 생성할 때 실행되는 것이 아니라, 클래스 정의문 자체가 실행될 때 실행되기 때문이다.
+
+실행 흐름을 살펴보자.
+
+\begin{dhksmry}[centered]
+Python 프로그램 실행
+\da
+print("A")
+\da
+class Person: 진입
+\da
+클래스 본문 실행
+\da
+print("B")
+\da
+클래스 객체 생성
+\da
+Person 이름에 클래스 객체 바인딩
+\da
+print("C")
+\end{dhksmry}
+
+따라서 클래스 본문에 작성된 일반적인 문장은 클래스 정의 시점에 실행된다.
+
+반면 다음 코드는 조금 다르다.
+
+\begin{dhkcode}
+class Person:
+
+    print("클래스 본문 실행")
+
+    def introduce(self):
+        print("메서드 실행")
+
+
+p = Person()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+클래스 본문 실행
+\end{dhkzsh}
+
+\zsh{Person()}을 호출했지만 \zsh{introduce()} 내부의 출력문은 실행되지 않았다.
+
+왜냐하면 \zsh{def introduce(self):}는 함수 본문을 즉시 실행하는 것이 아니라, 함수 객체를 만들어 클래스의 네임스페이스에 등록하는 과정이기 때문이다.
+
+\zsh{introduce()}의 본문은 해당 메서드가 호출될 때 실행된다.
+
+\begin{dhkcode}
+p.introduce()
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+메서드 실행
+\end{dhkzsh}
+
+여기서 함수 정의와 클래스 정의 사이의 차이점이 드러난다.
+
+\begin{dhktable}
+|구분|	정의문이 실행될 때|	함수·메서드 본문 실행 시점|
+|:---|:---|:---|
+|def|	함수 객체 생성 및 이름 바인딩|	함수 호출 시|
+|class|	클래스 본문 실행 후 클래스 객체 생성 및 이름 바인딩|	클래스 본문의 메서드는 별도 호출 시|
+\end{dhktable}
+클래스 본문 실행과 인스턴스 생성은 서로 다른 사건이라는 점을 구분해야 한다.
+
+\subsubsection{클래스 객체는 어떻게 만들어지는가?}
+
+이번에는 클래스 객체가 만들어지는 과정을 조금 더 자세히 살펴보자.
+
+다음 코드를 사용하겠다.
+
+\begin{dhkcode}
+class Person:
+
+    species = "Human"
+
+    def introduce(self):
+        print("Hello")
+\end{dhkcode}
+
+Python은 이 클래스 정의를 처리할 때 대략 다음 과정을 거친다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 본문에서 실행하기 위한 네임스페이스 준비
+\end{dhksmry}
+\end{dhknote}
+
+클래스는 본문에서 정의되는 이름들을 관리할 공간을 준비한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 본문 실행
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+species = "Human"
+\end{dhkcode}
+
+문자열 객체 \zsh{"Human"}을 \zsh{species}라는 이름에 연결한다.
+
+\begin{dhkcode}
+def introduce(self):
+    print("Hello")
+\end{dhkcode}
+
+함수 객체를 생성하고 \zsh{introduce}라는 이름에 연결한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+클래스 본문의 실행 결과와 클래스 이름, 상속 정보 등을 사용해 클래스 객체를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체를 Person이라는 이름에 바인딩
+\end{dhksmry}
+\end{dhknote}
+
+생성된 클래스 객체가 현재 네임스페이스의 \zsh{Person}이라는 이름에 연결된다.
+
+이 과정을 개념적으로 나타내면 다음과 같다.
+
+\begin{dhksmry}
+                class Person:
+                    species = "Human"
+
+                    def introduce(self):
+                        print("Hello")
+
+                            \da
+
+                    클래스 본문 실행
+
+                            \da
+                    
+                    클래스 네임 스페이스
+                        species   \ra "Human"
+                        introduce \ra 함수 객체
+
+                            \da
+                    
+                    클래스 객체 생성
+
+                            \da
+
+                    Person \ra 클래스 객체
+\end{dhksmry}
+
+실제 클래스 생성 과정에는 메타클래스, 상속 처리, 클래스 네임스페이스 준비 등의 절차가 더 포함되지만, 지금은 클래스 본문 실행 → 클래스 객체 생성 → 이름 바인딩이라는 구조를 이해하는 것이 중요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 네임스페이스 확인하기
+\end{dhksmry}
+\end{dhknote}
+
+클래스 객체가 생성된 뒤에는 다음과 같이 클래스의 속성을 확인할 수 있다.
+
+\begin{dhkcode}
+class Person:
+
+    species = "Human"
+
+    def introduce(self):
+        print("Hello")
+
+
+print(Person.__dict__)
+\end{dhkcode}
+
+\zsh{Person.__dict__}에는 클래스가 관리하는 속성들이 들어 있다.
+
+개념적으로는 다음과 같은 구조다.
+
+\begin{dhkzsh}
+Person.__dict__
+
+{
+    "__module__": "__main__",
+    "species": "Human",
+    "introduce": <function ...>,
+    "__dict__": ...,
+    "__weakref__": ...,
+    "__doc__": None
+}
+\end{dhkzsh}
+
+실제 출력 형태는 Python 버전과 실행 환경에 따라 달라질 수 있으며, 일반적인 클래스의 \zsh{__dict__}는 읽기 전용 매핑 뷰인 \zsh{mappingproxy}로 제공된다.
+
+여기서 중요한 것은 \zsh{species}와 \zsh{introduce}가 클래스의 속성으로 존재한다는 사실이다.
+
+특히 \zsh{introduce}는 함수 객체라는 점을 기억하자.
+
+\begin{dhkcode}
+print(Person.__dict__["introduce"])
+\end{dhkcode}
+
+이 표현식은 클래스 네임스페이스에 저장된 함수 객체를 확인한다.
+
+이후 2.5에서는 이 함수 객체가 인스턴스를 통해 접근될 때 어떻게 바운드 메서드로 연결되는지 살펴볼 것이다.
+
+\subsubsection{클래스 객체도 이름을 바꾸거나 다른 변수에 전달할 수 있다}
+
+이전에 함수도 일급 객체라는 개념을 공부했다.
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+
+another_add = add
+\end{dhkcode}
+
+이 코드는 함수 객체를 복사하는 것이 아니라, 동일한 함수 객체를 다른 이름으로도 참조하도록 만드는 것이다.
+
+클래스 객체도 마찬가지다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+Human = Person
+
+print(Human is Person)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+여기서 \zsh{Human}과 \zsh{Person}은 동일한 클래스 객체를 참조한다.
+
+\begin{dhkdiagram}[in=6]
+node p (1,1) :: Person
+node c (2,2) :: 클래스 객체
+node h (3,1) :: Human
+
+edge p -> c :: HV
+edge h -> c :: HV
+\end{dhkdiagram}
+
+따라서 다음 코드도 가능하다.
+
+\begin{dhkcode}
+p1 = Person()
+p2 = Human()
+
+print(type(p1) is type(p2))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+두 이름은 같은 클래스 객체를 참조하므로 같은 클래스의 인스턴스를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체를 함수의 인수로 전달하기
+\end{dhksmry}
+\end{dhknote}
+
+클래스 객체는 함수의 인수로도 전달할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+def create_instance(cls):
+    return cls()
+
+p = create_instance(Person)
+
+print(type(p))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+여기서 실행 흐름을 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Person 평가
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+create_instance(Person)
+\end{dhkcode}
+
+\zsh{Person}이라는 이름을 평가해 클래스 객체를 가져온다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+매개변수 cls에 바인딩
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def create_instance(cls):
+\end{dhkcode}
+
+\zsh{cls}는 전달된 클래스 객체를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+return cls()
+\end{dhkcode}
+
+\zsh{cls}가 참조하는 클래스 객체를 호출해 인스턴스를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 반환
+\end{dhksmry}
+\end{dhknote}
+
+생성된 인스턴스가 반환되어 \zsh{p}에 바인딩된다.
+
+이 구조는 이후 머신러닝 프로젝트에서 유용하게 활용된다.
+
+예를 들어 모델 클래스를 함수에 전달해 원하는 모델을 생성할 수 있다.
+
+\begin{dhkcode}
+def build_model(model_class, *args, **kwargs):
+    return model_class(*args, **kwargs)
+\end{dhkcode}
+
+
+이 함수는 특정 모델 클래스에 종속되지 않는다.
+
+전달받은 클래스 객체를 호출해 모델 인스턴스를 생성한다.
+
+즉, 클래스 객체 자체를 데이터처럼 전달하고 사용할 수 있다.
+
+\subsubsection{\zsh{type}은 무엇인가?}
+
+앞에서 다음 결과를 확인했다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+print(type(Person))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'type'>
+\end{dhkzsh}
+
+여기서 자연스럽게 다음 질문이 발생한다.
+
+클래스 객체의 타입이 왜 \zsh{type}일까?
+
+Python에서 \zsh{type}은 일반적인 클래스 객체를 생성하는 기본 메타클래스(Metaclass)다.
+
+메타클래스는 클래스 객체의 생성과 동작을 정의하는 클래스라고 이해하면 된다.
+
+다음 관계를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+
+print(type(p))
+print(type(Person))
+print(type(type))
+\end{dhkcode}
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+<class 'type'>
+<class 'type'>
+\end{dhkzsh}
+
+이 관계를 구조적으로 표현하면 다음과 같다.
+
+\begin{dhkdiagram}[in=12]
+node t (1,2) :: type
+node p (2,2) :: Person
+node pp (3,2) :: p
+
+edge t->p :: 인스턴스 관계
+edge p ->pp :: 인스턴스 관계
+\end{dhkdiagram}
+
+여기서 화살표는 상속 관계가 아니라 타입과 인스턴스의 관계를 나타낸다.
+
+\begin{dhksmry}
+    - p는 Person의 인스턴스다.
+
+    - Person은 type의 인스턴스다.
+
+    - type 자체도 type의 인스턴스다.
+\end{dhksmry}
+
+마지막 관계는 처음 보면 조금 특이할 수 있다.
+
+하지만 Python의 객체 모델에서는 \zsh{type}이 자기 자신을 타입으로 갖는 구조가 성립한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+type으로 클래스 객체를 직접 생성하기
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{type}은 인수를 하나 전달하면 객체의 타입을 확인하는 용도로 사용할 수 있다.
+
+\begin{dhkcode}
+type(10)
+\end{dhkcode}
+
+하지만 세 개의 인수를 전달하면 클래스 객체를 생성하는 데 사용할 수도 있다.
+
+\begin{dhkcode}
+Person = type(
+    "Person",
+    (),
+    {"species": "Human"}
+)
+\end{dhkcode}
+
+이 코드는 기본적인 경우 다음 클래스 정의와 유사한 결과를 만든다.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+\end{dhkcode}
+
+세 인수의 의미는 다음과 같다.
+
+\begin{dhktable}
+|인수|	의미|
+|:---|:---|
+|"Person"|	생성할 클래스의 이름|
+|()|	상속할 기본 클래스들의 튜플|
+|{"species": "Human"}|	클래스의 속성을 담은 딕셔너리|
+\end{dhktable}
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+Person = type(
+    "Person",
+    (),
+    {"species": "Human"}
+)
+
+print(Person)
+print(type(Person))
+print(Person.species)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+<class 'type'>
+Human
+\end{dhkzsh}
+
+이것은 \zsh{class}문이 단순히 텍스트 수준의 선언이 아니라, 실행 결과로 클래스 객체를 만들어 낸다는 사실을 보여주는 예제다.
+
+다만 일반적인 \zsh{class}문과 \zsh{type()}을 직접 호출하는 방식이 모든 상황에서 완전히 동일한 것은 아니다.
+
+클래스 정의문에는 클래스 본문 실행, 메타클래스 선택, \zsh{__class__} 참조 처리 등의 추가적인 의미가 있기 때문이다.
+
+현재 단계에서는 메타클래스를 직접 작성하는 방법까지 공부할 필요는 없다.
+
+우선 다음 관계만 이해하면 충분하다.
+
+\begin{dhkdiagram}[in=6]
+node i (1,1) :: Instance
+node c (1,3) :: Class
+node m (1,5) :: Metaclass
+
+edge i -> c :: type
+edge c -> m :: type
+\end{dhkdiagram}
+
+\subsubsection{함수 객체와 클래스 객체의 공통점과 차이}
+
+이번에는 함수 객체와 클래스 객체를 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+함수 정의
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+이 코드를 실행하면 함수 객체가 생성되고 \zsh{add}라는 이름에 바인딩된다.
+
+\begin{dhksmry}
+    add \ra 함수 객체
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 정의
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Calculator:
+    pass
+\end{dhkcode}
+
+이 코드를 실행하면 클래스 객체가 생성되고 \zsh{Calculator}라는 이름에 바인딩 된다.
+
+\begin{dhksmry}
+    Calculator \ra 클래스 객체
+\end{dhksmry}
+
+두 객체 모두 Python 프로그램 안에서 참조하거나 다른 함수에 전달할 수 있다.
+
+하지만 호출했을 때의 기본적인 역할은 다르다.
+
+\begin{dhkcode}
+add(1, 2)
+\end{dhkcode}
+
+함수 객체를 호출하면 함수 본문이 실행된다.
+
+반면 다음 코드에서는
+
+\begin{dhkcode}
+Calculator()
+\end{dhkcode}
+
+클래스 객체를 호출해 일반적으로 새로운 인스턴스를 생성하고 초기화한다.
+
+정리하면 다음과 같다.
+
+\begin{dhktable}
+|구분|	함수 객체|	클래스 객체|
+|:---|:---|:---|
+|정의 문법|	def	|class|
+|정의 결과|	함수 객체	|클래스 객체|
+|일반적인 타입|	function	|type|
+|이름에 바인딩|	가능	|가능|
+|인수로 전달|	가능	|가능|
+|반환값으로 사용|	가능	|가능|
+|() 호출|	함수 본문 실행	|일반적으로 인스턴스 생성 및 초기화|
+|주요 역할|	연산과 동작 수행	|인스턴스의 구조와 //*동작 정의|
+\end{dhktable}
+
+여기서 주의할 점이 있다.
+
+함수와 클래스 모두 호출 가능한 객체라는 공통점이 있지만,
+
+모든 Callable 객체가 함수이거나 클래스인 것은 아니다.
+
+예를 들어 \zsh{__call__()}을 구현한 인스턴스 역시 Callable 객체가 될 수 있다.
+
+이 내용은 2.10에서 다시 연결할 것이다.
+
+\subsubsection{PyTorch와의 연결 - 모델 클래스도 객체다}
+
+이제 처음에 살펴봤던 PyTorch 코드로 돌아가 보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+여기서 다음 표현식에 주목하자.
+
+\begin{dhkcode}
+MyModel
+\end{dhkcode}
+
+이것은 모델 인스턴스가 아니다.
+
+모델 클래스를 나타내는 클래스 객체다.
+
+반면 다음 코드는
+
+\begin{dhkcode}
+model = MyModel()
+\end{dhkcode}
+
+\zsh{MyMdodel} 클래스 객체를 호출해 모델 인스턴스를 생성한다.
+
+따라서 다음과 같이 구분할 수 있다.
+
+\begin{dhkbranch}[in=8]
+node main :: MyModel
+arrow main
+node main :: 모델 클래스 객체
+arrow main :: MyModel() 호출
+node main :: 모델 인스턴스 객체
+arrowup main
+node main :: model
+\end{dhkbranch}
+
+이 차이는 머신러닝 코드를 작성할 때 중요하다.
+
+예를 들어 다음 함수를 보자.
+
+\begin{dhkcode}
+def create_model(model_class):
+    return model_class()
+\end{dhkcode}
+
+이 함수에는 클래스 객체를 전달한다.
+
+\begin{dhkcode}
+model = create_model(MyModel)
+\end{dhkcode}
+
+반대로 이미 생성된 모델 인스턴스를 전달하는 경우도 있다.
+
+\begin{dhkcode}
+def count_parameters(model):
+    return sum(
+        p.numel()
+        for p in model.parameters()
+    )
+\end{dhkcode}
+
+이 함수는 모델 클래스가 아니라 모델 인스턴스를 전달받는 것을 전제로 한다.
+
+\begin{dhkcode}
+model = MyModel()
+
+count = count_parameters(model)
+\end{dhkcode}
+
+따라서 PyTorch 코드를 읽을 때는 다음을 구분해야 한다.
+
+\begin{dhksmry}
+    1. 클래스 객체를 전달하는가?
+
+    2. 클래스 객체를 호출해 인스턴스를 생성하는가?
+
+    3. 이미 생성된 인스턴스를 전달하는가?
+
+    4. 인스턴스를 Callable 객체로 호출하는가?
+\end{dhksmry}
+
+이 구분이 가능해지면 Hugging Face나 PyTorch에서 클래스를 인수로 전달하거나 모델을 동적으로 생성하는 코드도 훨씬 이해하기 쉬워질 것이다.
+
+\subsubsection{핵심 정리}
+
+이번에는 Python에서 클래스도 객체라는 사실을 중심으로 \zsh{class} 정의문의 실행 과정을 살펴보았다.
+
+핵심 내용을 정리하면 다음과 같다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스도 Python 객체다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    pass
+\end{dhkcode}
+
+이 코드를 실행하면 클래스 객체가 생성되고 \zsh{Person}이라는 이름에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 정의문은 실행된다.
+\end{dhksmry}
+\end{dhknote}
+
+클래스 본문은 클래스 정의 시점에 실행되며, 그 결과가 클래스 객체를 구성하는 데 사용된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체와 인스턴스 객체는 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Person      # 클래스 객체
+Person()    # 일반적으로 인스턴스 생성
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체도 다른 이름에 바인딩하거나 함수에 전달할 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Huamn = Person
+\end{dhkcode}
+
+이 경우 두 이름은 동일한 클래스 객체를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+일반적인 클래스 객체의 타입은 type이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+type(Person)
+\end{dhkcode}
+
+\zsh{type}은 Python에서 기본적인 메타클래스 역할을 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체를 호출하면 일반적으로 인스턴스 생성 과정이 시작된다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+인스턴스 생성과 초기화의 구체적인 과정은 이후 \zsh{__new__()}와 \zsh{__init__()}을 학습하면서 자세히 살펴본다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch의 모델 클래스 역시 클래스 객체다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    ...
+\end{dhkcode}
+
+여기서 \zsh{MyModel}은 클래스 객체이며, \zsh{MyModel()}을 호출하면 일반적으로 모델 인스턴스가 생성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+반드시 이해해야 할 결론
+\end{dhksmry}
+\end{dhknote}
+
+이전에 함수 객체를 공부하며 다음 구조를 이해했다.
+
+\begin{dhksmry}[centered]
+def \ra Function Object \ra Name Binding
+\end{dhksmry}
+
+이번에는 여기에 대응하는 새로운 구조를 배웠다.
+
+\begin{dhksmry}[centered]
+class \ra Class Body Execution \ra Class Object \ra Name Binding
+\end{dhksmry}
+
+즉, Python의 \zsh{class}는 클래스 객체를 생성하는 실행 가능한 문장이며,
+
+생성된 클래스 객체는 다른 Python 객체들과 마찬가지로 이름에 바인딩하고 전달하고 호출할 수가 있다.
+
+이것이 이번 학습에서 가장 중요한 개념이다.
+
+다음 \zsh{2.3. 클래스와 인스턴스}에서는
+
+이 개념을 기반으로 \zsh{Person}과 \zsh{Person()}이 구체적으로 어떻게 다른지, 
+
+클래스 객체를 호출했을 때 인스턴스가 생성되고 이름에 바인딩되는 과정을 더 자세히 살펴볼 것이다.

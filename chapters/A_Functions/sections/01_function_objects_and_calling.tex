@@ -1,0 +1,1536 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.1. 함수 객체, 이름 바인딩, callable, 호출과 반환
+% ==================================================
+
+\subsection{함수 객체, 이름 바인딩, callable, 호출과 반환}
+
+\subsubsection{클래스 객체 모델과의 연결}
+
+클래스 객체 모델에서 이런 코드를 살펴볼 수 있다.
+
+\begin{dhkcode}
+class Person:
+    def introduce(self):
+        return "Hello"
+
+
+p = Person()
+
+method = p.introduce
+
+print(method.__self__ is p)
+print(method.__func__ is Person.introduce)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+우리는 이 결과를 디스크립터 프로토콜(Descriptor Protocol)을 통해 설명한다.
+
+\zsh{Person.__dict__["introduce"]}에는 함수 객체가 저장되고,
+
+\zsh{p.introduce}에 접근하면 함수가 인스턴스에 바인딩된 메서드 객체를 얻는다.
+
+그런데 여기에는 아직 독립적으로 설명하지 않은 전제가 있다.
+
+클래스 네임스페이스에 저장된 함수 객체는 애초에 어떻게 생성되었으며, Python은 그 객체를 어떻게 호출하는가?
+
+또한 다음 표현식을 이미 사용하고 있었다.
+
+\begin{dhkcode}
+Person.introduce
+Person.introduce(p)
+\end{dhkcode}
+
+두 표현식은 괄호의 유무만 다른 것처럼 보이지만, 실제로는 서로 다른 객체 연산을 나타낸다.
+
+첫 번째는 속성 탐색으로 얻은 함수 객체를 평가하고, 두 번째는 그 함수 객체를 호출한다.
+
+이번 학습에서는 이 차이를 출발점으로 삼을 것이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서 설명할 수 있어야 하는 핵심 질문은 다음과 같다.
+
+\begin{dhksmry}
+- def는 함수 본문을 실행하는가, 함수 객체를 생성하는가?
+
+- 함수의 이름과 함수 객체는 어떤 관계인가?
+
+- func와 func()는 각각 무엇을 평가하는가?
+
+- 함수 객체가 아닌데도 ()로 호출할 수 있는 객체는 무엇인가?
+
+- 호출할 때 인수는 어떻게 전달되며 return은 무엇을 반환하는가?
+
+- 이름을 재바인딩하면 기존 함수 객체에도 영향을 주는가?
+\end{dhksmry}
+
+이 질문들은 독립적으로 보이지만 모두 하나의 실행 모델로 연결된다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: def -> function 객체 생성
+node n2 (2,1) :: 함수 이름 -> 함수 객체 참조
+node n3 (3,1) :: 이름 탐색 -> callable 호출 -> 결과 반환
+group g1(n1) :: 1. 함수 정의문 실행
+group g2(n2) [accent] :: 2. 이름 바인딩
+group g3(n3) :: 3. 호출과 반환
+
+edge g1 -> g2
+edge g2 -> g3
+
+caption :: 함수 정의, 이름 바인딩, 호출은 서로 연결되지만 별개로 분석해야 하는 실행 단계다.
+\end{dhkgraph}
+
+이제 각 단계를 실제 Python 객체 모델에 대응시켜 보자.
+
+\subsubsection{함수 객체(Function Object)의 정확한 정의}
+
+Python에서 함수(Function)는 단순한 코드 블록이 아니다.
+
+함수 객체(Function Object)는 호출 가능한 객체로, 실행할 코드와 함수 실행에 필요한 메타데이터 및 관련 네임스페이스 정보를 가진 객체다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def add(a,b):
+    return a + b
+\end{dhkcode}
+
+이 코드를 실행하면 Python은 \zsh{add()}의 본문을 즉시 실행하지 않는다.
+
+대신 \zsh{def} 정의문을 실행하면서 새로운 함수 객체를 만들고, 현재 네임스페이스의 \zsh{add}라는 이름을 그 객체에 바인딩한다.
+
+이 과정을 구분하면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+group g1(n1) :: 모듈 네임스페이스
+node n1 (1,1) :: add
+
+group g2(n2) [accent] :: 함수 객체
+node n2 (1,2) :: type: function // __name__: "add" // __code__: 실행 코드
+
+edge g1 -> g2
+
+explain :: add -> 함수 객체에 대한 참조 // 함수 본문은 아직 실행되지 않음 // 정의문 실행 시점의 구조
+\end{dhkgraph}
+
+여기서 구분해야 할 것은 세 가지다.
+
+\begin{dhktable}
+|구성 요소|의미|
+|:---|:---|
+|add|함수 객체를 참조하는 이름(Name)|
+|함수 객체|실제로 생성된 function 타입의 객체|
+|함수 본문|해당 함수가 호출될 때 실행되는 코드|
+\end{dhktable}
+
+함수 객체와 그 객체를 가리키는 이름은 동일한 것이 아니다.
+
+이것은 클래스 객체 모델에서 학습하는 다음 구조와 본질적으로 같다.
+
+\begin{dhkcode}
+p = Person("Kim")
+\end{dhkcode}
+
+\zsh{p}라는 이름이 \zsh{Person} 인스턴스를 참조하는 것처럼, \zsh{add}라는 이름도 함수 객체를 참조하는 것이다.
+
+다만 생성되는 객체의 타입과 기능이 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+함수 객체의 타입 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+from types import FunctionType
+
+def add(a, b):
+    return a + b
+
+print(type(add))
+print(isinstance(add, FunctionType))
+print(callable(add))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+<class 'function'>
+True
+True
+\end{dhkzsh}
+
+여기에서 확인할 수 있는 사실은 다음과 같다.
+
+\zsh{add}는 이름이면서 표현식으로 사용될 때 함수 객체를 참조한다.
+
+\zsh{type(add)}는 그 객체의 실제 타입을 반환하고, \zsh{callable(add)}는 그 객체가 호출 가능한지를 검사한다.
+
+또한 \zsh{FunctionType}은 Python에서 사용자 정의 함수 객체를 나타내므로,
+
+\zsh{isinstance(add, FunctionType)}이 \zsh{True}가 되는 것이다.
+
+중요한 것은 함수 정의문을 실행한 것만으로도 호출 가능한 객체가 만들어진다는 점이다.
+
+\subsubsection{\zsh{def}는 실행문이다 - 함수 생성과 함수 실행의 구분}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def add(a, b):
+    print("함수 본문 실행")
+    return a + b
+
+
+print("함수 정의 완료")
+
+result = add(3, 5)
+
+print(result)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+함수 정의 완료
+함수 본문 실행
+8
+\end{dhkzsh}
+
+왜 이런 순서가 발생할까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1단계. 함수 정의문 실행
+\end{dhksmry}
+\end{dhknote}
+
+Python이 다음 문장을 만났다.
+
+\begin{dhkcode}
+def add(a, b):
+    print("함수 본문 실행")
+    return a + b
+\end{dhkcode}
+
+이때 함수 객체가 생성되고 \zsh{add} 이름에 바인딩된다.
+
+그러나 본문에 있는 \zsh{print()}와 \zsh{return}은 아직 실행되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2단계. 다음 문장 실행
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print("함수 정의 완료")
+\end{dhkcode}
+
+이 문장은 함수 바깥의 모듈 수준 코드다.
+
+따라서 즉시 실행되어 첫 번째 문자열이 출력된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3단계. 함수 객체 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+result = add(3,5)
+\end{dhkcode}
+
+여기서 처음으로 \zsh{add}가 참조하는 함수 객체를 호출한다.
+
+호출 과정에서 3과 5에 해당하는 인수 객체가 각각 매개변수 \zsh{a}와 \zsh{b}에 바인딩되고, 함수 본문이 실행된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4단계. 반환값에 이름 바인딩
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+return a + b
+\end{dhkcode}
+
+정수 3과 5의 덧셈 결과인 8이 반환된다.
+
+그 결과가 \zsh{result}라는 이름에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5단계. 반환된 객체 사용
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(result)
+\end{dhkcode}
+
+이제 \zsh{result}는 함수 객체가 아니라 정수 객체 8을 참조하고 있다.
+
+따라서 8이 출력된다.
+
+여기서 얻을 결론은 명확하다.
+
+\zsh{def} 문장이 실행되는 시점과 함수 본문이 실행되는 시점은 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+그렇다면 def를 실행할 때 아무런 계산도 발생하지 않을까?
+\end{dhksmry}
+\end{dhknote}
+
+그렇지는 않다.
+
+\zsh{def} 문장은 함수 본문을 실행하지 않을 뿐, 함수 정의에 포함된 다른 표현식은 평가할 수 있다.
+
+대표적인 사례가 기본 인수(Default Argument)다.
+
+\begin{dhkcode}
+def create_default():
+    print("기본값 생성")
+    return []
+
+def record(value, history=create_default()):
+    history.append(value)
+    return history
+
+print("함수 정의 완료")
+
+print(record(10))
+print(record(20))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+기본값 생성
+함수 정의 완료
+[10]
+[10, 20]
+\end{dhkzsh}
+
+여기서는 \zsh{record()}가 호출되기도 전에 \zsh{"기본값 생성"}이 출력된다.
+
+왜냐하면 \zsh{history=create_default()}의 기본값 표현식은 \zsh{record} 함수의 정의문이 실행될 때 평가되기 때문이다.
+
+그리고 평가 결과인 리스트 객체 하나가 함수의 기본 인수로 유지된다.
+
+따라서 기본 인수를 생략한 두 호출은 같은 리스트 객체를 사용하고, 첫 번째 호출의 변경이 두 번째 호출에서도 관찰되는 것이다.
+
+이 원리는 Python 공식 언어 참조에도 명시되어 있다.
+
+따라서 다음 두 명제는 구별해야 한다.
+
+\begin{dhktable}
+|명제|판단|
+|:---|:---|
+|함수 정의문 실행은 함수 본문을 실행하지 않는다.|참|
+|함수 정의문 실행 중에는 어떤 표현식도 평가하지 않는다.|거짓|
+\end{dhktable}
+
+데코레이터 표현식 역시 함수 정의 시점에 평가될 수 있다.
+
+다만 그 평가·적용 순서는 이후에 별도로 분석할 것이다.
+
+\subsubsection{이름 바인딩 - 하나의 함수 객체를 여러 이름이 참조할 수 있는가?}
+
+가능하다.
+
+그리고 이것이 일급 함수(First-Class Function)를 이해하기 위한 첫 번째 조건이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+
+operation = add
+
+print(operation is add)
+print(operation(3, 5))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+True
+8
+\end{dhkzsh}
+
+여기서 중요한 문장은 다음 문장이다.
+
+\begin{dhkcode}
+operation = add
+\end{dhkcode}
+
+이 문장은 \zsh{add} 함수 객체를 복사하거나 새로 생성하지 않는다.
+
+\zsh{add}가 참조하는 기존 함수 객체를 \zsh{operation}이라는 이름도 참조하도록 바인딩하는 것이다.
+
+\begin{dhkgraph}[uniform]
+group g1(n1, n2) :: 네임스페이스
+node n1 (1,1) :: add
+node n2 (2,1) :: operation
+group g2(n3) :: 함수 객체
+node n3 (2,2) :: function
+
+edge n1 -> g2
+edge n2 -> g2
+
+explain :: operation is add -> True // 두 이름이 동일한 객체를 참조함
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+이름이 바뀌면 함수 객체도 바뀔까?
+\end{dhksmry}
+\end{dhknote}
+
+이번에는 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def double(x):
+    return x * 2
+
+saved = double
+
+double = "replaced"
+
+print(callable(double))
+print(callable(saved))
+print(saved(5))
+print(saved.__name__)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+False
+True
+10
+double
+\end{dhkzsh}
+
+이 과정은 객체 생성, 참조, 이름 재바인딩으로 나눠서 분석할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 단계 - 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def double(x):
+    return x * 2
+\end{dhkcode}
+
+함수 객체가 생성되고 \zsh{double}이라는 이름에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 단계 - 참조 공유
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+saved = double
+\end{dhkcode}
+
+\zsh{saved}도 동일한 함수 객체를 참조하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 번째 단계 - 이름 재바인딩
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+double = "replaced"
+\end{dhkcode}
+
+이 문장은 원래의 함수 객체를 수정하는 것이 아니다.
+
+\zsh{double}이라는 이름을 새로운 문자열 객체에 다시 바인딩한다.
+
+기존 함수 객체는 여전히 \zsh{saved}가 참조하고 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+네 번째 단계 - 기존 함수 객체 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+saved(5)
+\end{dhkcode}
+
+\zsh{saved}는 원래의 함수 객체를 가리키므로 정상적으로 실행된다.
+
+또한 \zsh{saved.__name__}이 \zsh{"double"}이라는 사실도 중요하다.
+
+\zsh{__name__}은 함수 객체에 있는 메타데이터다.
+
+함수 객체를 참조하는 현재 변수 이름과 반드시 일치할 필요는 없다.
+
+따라서 다음 두 가지를 구분해야 한다.
+
+\begin{dhksmry}
+    - 이름 재바인딩(Rebinding) : double = "replaced"
+
+    - 객체 상태 변경(Mutation) : 객체 자체가 가진 정보를 변경
+\end{dhksmry}
+
+위 예제는 이름 재바인딩이지 함수 객체의 변경이 아니다.
+
+이 구조는 나중에 다음 데코레이터 변환식을 이해하는 핵심이 된다.
+
+\begin{dhkcode}
+add = decorator(add)
+\end{dhkcode}
+
+여기서 \zsh{add}라는 이름에 새로운 반환 객체를 바인딩하더라도, 기존 함수 객체를 참조하는 다른 이름이나 클로저가 있다면 기존 함수 객체는 계속 사용될 수 있다.
+
+\subsubsection{\zsh{func}와 \zsh{func()} - 함수 참조와 호출의 차이}
+
+이번에는 호출 표현식(Call Expression)을 살펴보자.
+
+\begin{dhkcode}
+def greet():
+    print("Hello")
+    return 100
+\end{dhkcode}
+
+다음 두 표현식은 의미가 다르다.
+
+\begin{dhkcode}
+greet
+\end{dhkcode}
+
+이것은 이름을 탐색하여 함수 객체를 얻는 표현식이다.
+
+반면
+
+\begin{dhkcode}
+greet()
+\end{dhkcode}
+
+이것은 \zsh{greet}이 참조하는 호출 가능한 객체를 호출하는 표현식이다.
+
+실제 코드를 비교해 보자.
+
+\begin{dhkcode}
+def greet():
+    print("Hello")
+    return 100
+
+a = greet
+b = greet()
+
+print(type(a).__name__)
+print(b)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+Hello
+function
+100
+\end{dhkzsh}
+
+\zsh{a = greet}에서는 함수 본문이 실행되지 않는다.
+
+그 대신 \zsh{a}가 함수 객체를 참조하게 된다.
+
+반면 \zsh{b = greet()}에서는 함수 객체를 호출하여 \zsh{"Hello"}를 출력하고, 100이라는 정수 객체를 반환받아 \zsh{b}에 바인딩한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+()의 의미
+\end{dhksmry}
+\end{dhknote}
+
+여기에서 하나 더 정확하게 이해할 부분이 있다.
+
+\zsh{()}는 단순히 함수만 실행하는 문법이 아니다.
+
+\zsh{()}는 앞의 표현식을 평가하여 얻은 호출 가능한 객체(Callable)를 호출하는 문법이다.
+
+따라서 다음 표현식들은 모두 호출 표현식이다.
+
+\begin{dhkcode}
+func()
+obj.method()
+SomeClass()
+callable_instance()
+\end{dhkcode}
+
+각각 호출하는 객체의 종류는 다를 수 있다.
+
+\begin{dhktable}
+|표현식|평가하여 호출하는 대상|
+|:---|:---|
+|func()|일반적으로 함수 객체|
+|obj.method()|일반적으로 바운드 메서드 객체|
+|SomeClass()|클래스 객체|
+|callable_instance()|__call__을 지원하는 인스턴스|
+\end{dhktable}
+
+또한 함수 이름으로 시작하지 않는 표현식도 호출할 수 있다.
+
+\begin{dhkcode}
+def get_function():
+    return print
+
+get_function()("Hello")
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+Hello
+\end{dhkzsh}
+
+실행 흐름을 따라가 보자.
+
+먼저 \zsh{get_function()}이 호출된다.
+
+이 함수는 \zsh{print}가 참조하는 내장 함수 객체를 반환한다.
+
+그러면 바깥쪽 호출 표현식은 그 반환된 함수 객체를 \zsh{"Hello"}라는 인수로 다시 호출한다.
+
+개념적으로 다음 과정과 같다.
+
+\begin{dhkcode}
+f = get_function()
+f("Hello")
+\end{dhkcode}
+
+이 원리는 추후 인수를 받는 데코레이터의 다음 구조를 분석할 때 다시 등장한다.
+
+\begin{dhkcode}
+decorator_factory(config)(func)
+\end{dhkcode}
+
+여기서 첫 번째 호출의 반환값이 또 다른 호출 가능한 객체라는 사실이 중요하다.
+
+\subsubsection{\zsh{callable()} - 호출 가능한 객체는 함수뿐일까?}
+
+아니다.
+
+Python은 함수 객체뿐 아니라 클래스 객체, 메서드 객체, 호출 가능하도록 설계된 인스턴스도 호출할 수 있다.
+
+\zsh{callable(obj)}는 어떤 객체가 호출 가능한지 검사하는 내장 함수다.
+
+다만 \zsh{True}가 나왔다고 해서 모든 인수 조합으로 호출이 성공한다는 뜻은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+사용자 정의 인스턴스를 호출 가능하게 만들기
+\end{dhksmry}
+\end{dhknote}
+
+클래스 객체 모델에서 살펴보는 \zsh{__call__()}을 연결해 보자.
+
+\begin{dhkcode}
+class Multiplier:
+    def __init__(self, factor):
+        self.factor = factor
+
+    def __call__(self, value):
+        return self.factor * value
+
+multiply = Multiplier(3)
+
+print(type(multiply).__name__)
+print(callable(multiply))
+print(multiply(4))
+print(multiply.__call__.__self__ is multiply)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+Multiplier
+True
+12
+True
+\end{dhkzsh}
+
+여기서 \zsh{multiply}는 함수 객체가 아니다.
+
+\zsh{Multiplier} 인스턴스다.
+
+그런데도 \zsh{multiply(4)}라는 표현식이 가능하다.
+
+왜 그럴까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+호출 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+먼저 다음 표현식을 실행한다.
+
+\begin{dhkcode}
+multiply = Multiplier(3)
+\end{dhkcode}
+
+클래스 객체 \zsh{Multiplier}가 호출되고 새로운 인스턴스가 생성된다.
+
+\zsh{__init__()}이 실행되면서 해당 인스턴스의 \zsh{factor} 속성에 3이 바인딩된다.
+
+다음 표현식은
+
+\begin{dhkcode}
+multiply(4)
+\end{dhkcode}
+
+\zsh{multiply} 인스턴스를 호출하는 표현식이다.
+
+Python의 특수 메서드 호출 메커니즘은 그 인스턴스의 타입에서 \zsh{__call__} 구현을 찾아 사용한다.
+
+이 예제에서는 개념적으로 다음과 같은 효과를 가진다.
+
+\begin{dhkcode}
+Multiplier.__call__(multiply, 4)
+\end{dhkcode}
+
+\zsh{self}는 \zsh{multiply} 인스턴스를 참조하고, \zsh{value}는 정수 4를 참조한다.
+
+따라서 다음 연산이 수행된다.
+
+\begin{dhkcode}
+self.factor * value
+\end{dhkcode}
+
+결과는 \zsh{3 * 4}, 즉 12이다.
+
+일반적인 사용자 정의 클래스의 특수 메서드는 인스턴스 딕셔너리에서 단순히 같은 이름을 찾는 방식과 달리, 타입을 통한 특별한 탐색 규칙이 적용된다는 점도 기억한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+중요한 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|구분|	add|	multiply|
+|:---|:---|:---|
+|객체 타입|	function|	Multiplier|
+|callable()|	True|	True|
+|호출 표현식|	add(3, 4)|	multiply(4)|
+|호출 동작|	함수 본문 실행|	클래스에 정의된 __call__ 실행|
+|상태 보관|	함수 속성·기본값·클로저 등|	일반적으로 인스턴스 속성|
+\end{dhktable}
+
+이로부터 다음 관계가 성립한다.
+
+모든 일반적인 사용자 정의 함수 객체는 호출 가능하지만, 모든 호출 가능한 객체가 함수 객체인 것은 아니다.
+
+여기서 기존 클래스 객체 모델과 연결되는 중요한 통찰이 하나 있다.
+
+PyTorch의 \zsh{model(x)} 역시 함수 객체를 호출하는 것이 아니다.
+
+\zsh{nn.Module}을 상속한 모델 인스턴스를 호출하는 표현식이다.
+
+반면 \zsh{model.forward(x)}는 속성 탐색을 통해 얻은 바운드 메서드를 호출한다.
+
+두 표현식 모두 \zsh{()}를 사용하지만 호출 대상과 실행 경로는 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+callable()이 True여도 오류가 발생하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+
+print(callable(add))
+
+add(10)
+\end{dhkcode}
+
+첫 번째 출력은 다음과 같다.
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+하지만 두 번째 호출에서는 \zsh{TypeError}가 발생한다.
+
+\zsh{add}는 분명히 호출 가능한 함수 객체이지만 필수 매개변수 \zsh{b}에 대응하는 인수를 전달하지 않았기 때문이다.
+
+이 사례는 세 가지 판단을 분리해야 한다는 의미다.
+
+\begin{dhktable}
+|판단|질문|
+|:---|:---|
+|호출 가능성|이 객체를 호출할 수 있는가?|
+|인수 적합성|전달한 인수가 함수의 매개변수 규약에 맞는가?|
+|실행 성공|함수 본문이 예외 없이 정상 종료되는가?|
+\end{dhktable}
+
+\zsh{callable()}은 첫 번째 판단을 위한 기능이다.
+
+나머지 두 가지까지 보장하지는 않는다.
+
+\subsubsection{함수 호출 시 인수는 어떻게 전달되는가?}
+
+클래스 객체 모델에서는 인스턴스를 생성하거나 메서드를 호출할 때 인수를 전달한다.
+
+\begin{dhkcode}
+Person("Kim")
+p.introduce()
+\end{dhkcode}
+
+이제 이 원리를 함수 호출에 적용해 보자.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def update(values):
+    values.append("B")
+
+    values = ["C"]
+
+    return values
+
+original = ["A"]
+
+result = update(original)
+
+print(original)
+print(result)
+print(original is result)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+['A', 'B']
+['C']
+False
+\end{dhkzsh}
+
+왜 이 결과가 발생할까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+호출 전 상태
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+original = ["A"]
+\end{dhkcode}
+
+리스트 객체 하나가 생성되고 \zsh{original}이라는 이름에 바인딩된다.
+
+이후 다음 표현식이 실행된다.
+
+\begin{dhkcode}
+update(original)
+\end{dhkcode}
+
+Python은 \zsh{original}을 평가하여 리스트 객체를 얻고, 함수의 매개변수 \zsh{values}에 같은 객체를 바인딩한다.
+
+이 시점의 구조는 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+group g1(n1) :: 이름이 존재하는 공간
+node n1 (1,1) :: original(모듈) // values(함수 지역)
+group g2(n2) [accent] :: 리스트 객체
+node n2 (1,2) :: ["A"]
+
+edge g1 -- g2
+
+explain :: 두 이름이 동일한 리스트 객체를 참조
+\end{dhkgraph}
+
+이후 함수 본문에서 다음 문장이 실행된다.
+
+\begin{dhkcode}
+values.append("B")
+\end{dhkcode}
+
+\zsh{values}가 참조하는 리스트 객체 자체의 상태가 변경된다.
+
+따라서 \zsh{original}이 참조하는 리스트에도 \zsh{"B"}가 추가된 것이 관찰되는 것이다.
+
+다음 문장은 다르게 동작한다.
+
+\begin{dhkcode}
+values = ["C"]
+\end{dhkcode}
+
+이 문장은 새로운 리스트 객체를 만들고 함수의 지역 이름 \zsh{values}를 그 객체에 다시 바인딩한다.
+
+기존 리스트 객체는 여전히 \zsh{original}이 참조하고 있다.
+
+마지막으로
+
+\begin{dhkcode}
+return values
+\end{dhkcode}
+
+새로운 리스트 객체가 반환되고, 호출한 쪽의 \zsh{result} 이름에 바인딩된다.
+
+따라서 최종 관계는 다음과 같다.
+
+\begin{dhksmry}
+    original \ra ["A", "B"]
+
+    result \ra ["C"]
+\end{dhksmry}
+
+이 예제에서 반드시 구분해야 할 연산은 다음 세 가지다.
+
+\begin{dhktable}
+|표현식|발생한 연산|
+|:---|:---|
+|update(original)|인수 객체를 매개변수 이름에 바인딩|
+|values.append("B")|기존 리스트 객체의 상태 변경|
+|values = ["C"]|새로운 리스트 객체 생성 및 지역 이름 바인딩|
+\end{dhktable}
+
+이 원리는 데코레이터의 Wrapper에서도 동일하게 적용된다.
+
+예를 들어 나중에 다음 코드를 보면
+
+\begin{dhkcode}
+def wrapper(*args, **kwargs):
+    return func(*args, **kwargs)
+\end{dhkcode}
+
+\zsh{args}와 \zsh{kwargs}가 어떤 객체를 담고 있고, 그 객체들이 원본 함수의 매개변수에 어떻게 전달되는지 분석할 수 있어야 한다.
+
+\subsubsection{\zsh{return} - 무엇을 반환하는가?}
+
+함수는 반드시 숫자나 문자열을 반환해야 하는 것이 아니다.
+
+\zsh{return}은 함수 실행을 종료하고, 지정된 표현식을 평가하여 얻은 객체를 호출한 쪽에 반환하는 문장이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 경우 - 정수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def compute():
+    return 10
+
+result = compute()
+\end{dhkcode}
+
+\zsh{compute()}가 호출되고 정수 객체 10이 반환된다.
+
+그 결과 \zsh{result}가 정수 객체를 참조하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 경우 - 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def double(x):
+    return x * 2
+
+def get_operation():
+    return double
+
+operation = get_operation()
+
+print(operation is double)
+print(operation(5))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+True
+10
+\end{dhkzsh}
+
+이 코드에서 \zsh{get_operation()}은 정수나 문자열이 아니라 함수 객체를 반환한다.
+
+따라서 반환된 함수 객체를 \zsh{operation}이라는 이름에 바인딩한 다음, 호출할 수 있다.
+
+여기서 \zsh{get_operation()} 자체는 중첩 함수를 정의하지 않았다.
+
+이미 존재하는 함수 객체를 반환했을 뿐이다.
+
+그러므로 이 예제에는 클로저가 필요하지 않다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 번째 경우 - 함수 호출 결과 반환
+\end{dhksmry}
+\end{dhknote}
+
+이번에는 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def double(x):
+    return x * 2
+
+def run_operation():
+    return double(5)
+
+result = run_operation()
+
+print(result)
+print(type(result).__name__)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+10
+int
+\end{dhkzsh}
+
+이번에는 \zsh{double}이라는 함수 객체를 반환하는 것이 아니라, \zsh{double(5)}를 먼저 호출하고, 그 실행 결과인 정수 객체를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+return func와 return func() 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|표현식|실행 의미|반환 대상|
+|:---|:---|:---|
+|return func|함수 객체를 평가한 뒤 반환|함수 객체|
+|return func()|함수 객체를 호출한 뒤 결과 반환|호출 결과 객체|
+\end{dhktable}
+
+이 차이는 \zsh{A.6}과 \zsh{A.7}에서 매우 중요해진다.
+
+예를 들어 Wrapper 함수 객체를 반환해야 하는 데코레이터에서
+
+\begin{dhkcode}
+return wrapper
+\end{dhkcode}
+
+대신
+
+\begin{dhkcode}
+return wrapper()
+\end{dhkcode}
+
+를 사용하면 어떻게 될까?
+
+후자의 경우 Wrapper를 반환하기 전에 즉시 호출하려고 한다.
+
+인수가 필요한 Wrapper라면 \zsh{TypeError}가 발생할 수도 있다.
+
+인수가 필요 없더라도 Wrapper의 실행 결과가 반환되므로 의도했던 함수 객체가 반환되지 않을 수 있다.
+
+물론 Wrapper의 호출 결과 자체가 다시 호출 가능한 객체라면 이후 호출이 가능할 수도 있지만, 그것은 별도로 설계한 동작이지 일반적인 데코레이터의 기본 구조는 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+return이 없으면 무엇이 반환되는가?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def show(value):
+    print(value)
+
+result = show(10)
+
+print(result is None)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+10
+True
+\end{dhkzsh}
+
+\zsh{show()}에는 명시적인 \zsh{return}이 없다.
+
+함수 본문이 정상적으로 끝나면 Python은 \zsh{None}을 반환한다.
+
+여기서 \zsh{print(value)}가 화면에 10을 출력했다는 사실과 \zsh{show()}가 10을 반환했다는 것은 서로 다른 이야기이다.
+
+\zsh{print()}의 출력은 관찰 가능한 부작용(Side Effect)이고, 함수의 반환값은 호출 표현식이 평가된 결과다.
+
+또한 함수 안에서 인수 없는 \zsh{return}을 실행하는 경우에도 \zsh{None}이 반환된다.
+
+이는 일반적인 \zsh{def} 함수의 실행을 설명한 것이며, 제너레이터 함수나 코루틴 함수에는 추가적인 호출·실행 규칙이 적용된다.
+
+그 차이는 \zsh{A.13}에서 따로 다룰 것이다.
+
+\subsubsection{일급 함수(First-Class Function) - 함수를 데이터처럼 다루기}
+
+지금까지 함수 객체를 다른 이름에 바인딩할 수도 있고, 반환할 수도 있다는 사실을 확인했다.
+
+이러한 성질은 Python에서 함수가 일급 객체(First-Class Object)로 취급되기 때문에 가능하다.
+
+일급 객체라는 표현은 특정 객체를 일반적인 값처럼 변수에 바인딩하고, 자료구조에 저장하고, 함수에 전달하고, 반환할 수 있다는 의미로 사용된다.
+
+다음 예제를 보자.
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+
+def multiply(a, b):
+    return a * b
+
+def apply(operation, a, b):
+    return operation(a, b)
+
+operations = {
+    "sum": add,
+    "product": multiply,
+}
+
+print(apply(operations["sum"], 3, 4))
+print(apply(operations["product"], 3, 4))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+7
+12
+\end{dhkzsh}
+
+이 코드는 단순하지만 중요한 구조를 포함하고 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 생성 및 저장
+\end{dhksmry}
+\end{dhknote}
+
+먼저 \zsh{add}, \zsh{multiply}, \zsh{apply}라는 세 개의 함수 객체가 생성된다.
+
+그리고 다음 딕셔너리를 만든다.
+
+\begin{dhkcode}
+operations = {
+    "sum": add,
+    "product": multiply,
+}
+\end{dhkcode}
+
+이 딕셔너리의 값은 함수 실행 결과가 아니다.
+
+함수 객체에 대한 참조다.
+
+따라서 다음 구조가 형성된다.
+
+\begin{dhkdir}[in=6]
+operations
+> "sum" -> add 함수 객체
+> "product" -> multiply 함수 객체
+\end{dhkdir}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+함수 객체를 인수로 전달
+\end{dhksmry}
+\end{dhknote}
+
+다음 표현식을 실행하면
+
+\begin{dhkcode}
+apply(operations["sum"], 3, 4)
+\end{dhkcode}
+
+먼저 딕셔너리에서 \zsh{"sum"}에 대응하는 함수 객체를 조회한다.
+
+그 함수 객체가 \zsh{apply}의 첫 번째 매개변수 \zsh{operation}에 전달된다.
+
+그리고 3, 4가 각각 \zsh{a}, \zsh{b}에 전달된다.
+
+함수 본문에서는 다음 호출이 실행된다.
+
+\begin{dhkcode}
+operation(a, b)
+\end{dhkcode}
+
+\zsh{operation}은 이 호출에서 \zsh{add} 함수 객체를 참조하고 있으므로 \zsh{add(3, 4)}가 실행되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+고차 함수(Higher-Order Function)와의 관계
+\end{dhksmry}
+\end{dhknote}
+
+여기서 \zsh{apply}는 고차 함수다.
+
+고차 함수는 다른 함수를 인수로 받거나 함수를 반환하는 함수를 의미한다.
+
+따라서 일급 함수와 고차 함수는 관계가 있지만 동일한 개념은 아니다.
+
+일급 함수는 함수 객체를 어떤 값으로 취급할 수 있는가에 관한 성질이고, 고차 함수는 그 함수 객체를 인수나 반환값으로 사용하는 함수의 형태를 설명하는 개념이다.
+
+이 구분은 데코레이터를 학습할 때 다시 연결된다.
+
+데코레이터 함수는 보통 다른 함수 객체를 인수로 받으므로 고차 함수의 한 사례가 될 수 있다.
+
+\subsubsection{함수 객체의 내부 정보 - \zsh{__name__}, \zsh{__code__}, \zsh{__globals__}}
+
+이제 함수가 정말 하나의 객체라면 어떤 속성을 가지고 있는지도 확인해 보자.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def add(a, b=10):
+    return a + b
+
+print(add.__name__)
+print(add.__defaults__)
+print(add.__globals__ is globals())
+print(add.__closure__)
+print(type(add.__code__).__name__)
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+add
+(10,)
+True
+None
+code
+\end{dhkzsh}
+
+이 결과는 함수 객체가 단순히 실행 코드 하나만 가진 구조가 아니라는 사실을 보여준다.
+
+\begin{dhktable}
+|속성|의미|
+|:---|:---|
+|__name__|	함수의 이름을 나타내는 메타데이터|
+|__qualname__|	함수가 정의된 렉시컬 구조를 반영하는 정규화된 이름|
+|__code__|	함수의 실행 코드 정보를 담는 코드 객체|
+|__globals__|	함수가 정의된 모듈의 전역 네임스페이스|
+|__defaults__|	위치 매개변수 기본값을 담는 튜플 또는 None|
+|__kwdefaults__|	키워드 전용 매개변수 기본값 정보|
+|__closure__|	캡처한 자유 변수와 연결된 셀 객체들의 튜플 또는 None|
+|__dict__|	일반 사용자 정의 함수 객체에 추가한 속성을 저장하는 딕셔너리|
+\end{dhktable}
+
+이러한 속성은 Python의 함수 데이터 모델에 정의되어 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__code__와 함수 객체는 동일한가?
+\end{dhksmry}
+\end{dhknote}
+
+아니다.
+
+\zsh{__code__}는 코드 객체(Code Object)를 가리킨다.
+
+반면 함수 객체는 코드 객체 이외에도 기본 인수, 네임스페이스 참조, 클로저 등의 정보를 가지고 있다.
+
+따라서 함수 객체를 코드 객체 하나로 환원해서 이해하면 안 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__globals__는 무엇을 참조하는가?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+RATE = 2
+
+def calculate(x):
+    return x * RATE
+
+print(calculate(4))
+
+RATE = 3
+
+print(calculate(4))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+8
+12
+\end{dhkzsh}
+
+여기서 \zsh{calculate} 함수 객체는 처음 정의되었을 때 전역 변수 \zsh{RATE}의 값 2를 복사해 저장한 것이 아니다.
+
+함수가 정의된 모듈의 전역 네임스페이스를 참조하고 있고, 호출 시 \zsh{RATE}를 조회할 때 그 네임스페이스에 현재 바인딩된 객체를 사용하는 것이다.
+
+따라서 \zsh{RATE = 3}으로 전역 이름을 재바인딩한 뒤 함수를 다시 호출하면 결과가 달라진다.
+
+이것은 \zsh{A.3}의 이름 탐색과 연결되는 중요한 예제다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__globals__와 __closure__의 차이
+\end{dhksmry}
+\end{dhknote}
+
+위 예제의 \zsh{RATE}는 전역 이름이다.
+
+따라서 이 예제에서는 \zsh{calculate.__closure__}가 \zsh{None}이더라도 \zsh{RATE}에 접근할 수 있다.
+
+클로저가 외부 함수의 지역 바인딩을 어떻게 보존하는지는 \zsh{A.4}에서 학습할 것이다.
+
+이때는 \zsh{__closure__}, 코드 객체의 \zsh{co_freevars}, 셀 객체(Cell Object)를 연결해 살펴본다.
+
+\subsubsection{클래스 객체 모델과 다시 연결하기}
+
+이제 \zsh{A.1}에서 학습한 함수 객체를 클래스 내부에 배치해 보자.
+
+\begin{dhkcode}
+class Calculator:
+    def add(self, a, b):
+        return a + b
+
+calc = Calculator()
+
+func = Calculator.__dict__["add"]
+
+method = calc.add
+
+print(type(func).__name__)
+print(type(method).__name__)
+
+print(method.__func__ is func)
+print(method.__self__ is calc)
+
+print(func(calc, 3, 4))
+print(method(3, 4))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+function
+method
+True
+True
+7
+7
+\end{dhkzsh}
+
+여기에서는 같은 함수를 서로 다른 경로로 호출하고 있다.
+
+첫 번째 경로를 살펴보자.
+
+\begin{dhkcode}
+func = Calculator.__dict__["add"]
+\end{dhkcode}
+
+클래스 네임스페이스에서 \zsh{add}에 대응하는 함수 객체를 직접 얻는다.
+
+따라서 \zsh{func}의 타입은 \zsh{function}이다.
+
+다음 호출은
+
+\begin{dhkcode}
+func(calc, 3, 4)
+\end{dhkcode}
+
+함수 객체를 직접 호출하면서 첫 번째 인수로 \zsh{calc}를 전달하는 구조다.
+
+반면 두 번째 경로에서는
+
+\begin{dhkcode}
+method = calc.add
+\end{dhkcode}
+
+\zsh{calc.add} 속성에 접근할 때 함수 객체의 디스크립터 메커니즘을 통해 \zsh{calc}에 바인딩된 메서드 객체를 얻는다.
+
+따라서 다음 호출에서는
+
+\begin{dhkcode}
+method(3, 4)
+\end{dhkcode}
+
+이미 바인딩된 \zsh{calc}가 메서드 호출 과정에서 첫 번째 인수로 전달되는 것이다.
+
+이 구조를 비교하면 다음과 같다.
+
+\begin{dhktable}
+|구분|func|method|
+|:---|:---|:---|
+|객체 타입|function|method|
+|참조 대상|클래스에 저장된 함수 객체|인스턴스에 바인딩된 메서드 객체|
+|self 전달|명시적으로 전달|바인딩된 인스턴스가 전달|
+|호출|func(calc, 3, 4)|method(3, 4)|
+\end{dhktable}
+
+이렇게 보면 \zsh{A.1}의 함수 객체는 클래스 객체 모델과 분리된 별개의 시스템이 아니다.
+
+클래스 내부의 일반적인 인스턴스 메서드 역시 함수 객체를 바탕으로 디스크립터와 메서드 바인딩 규칙이 결합된 결과라는 사실을 확인할 수 있다.
+
+이 원리는 나중에 데코레이터로 함수 객체를 교체하거나, Wrapper를 클래스 메서드로 사용할 때 특히 중요해진다.
+
+\subsubsection{실제 응용 - 함수 객체를 이용한 명령 처리기}
+
+함수 객체를 이름에 바인딩하고, 딕셔너리에 저장하며, 나중에 호출하는 구조는 실제 프로그램에서도 유용하다.
+
+예를 들어 다음과 같은 간단한 명령 처리 시스템을 만들 수 있다.
+
+\begin{dhkcode}
+def greet(name):
+    return f"Hello, {name}"
+
+def farewell(name):
+    return f"Goodbye, {name}"
+
+handlers = {}
+
+handlers["greet"] = greet
+handlers["farewell"] = farewell
+
+def dispatch(command, name):
+    handler = handlers[command]
+
+    return handler(name)
+
+print(dispatch("greet", "Kim"))
+print(dispatch("farewell", "Lee"))
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+Hello, Kim
+Goodbye, Lee
+\end{dhkzsh}
+
+이 프로그램에서는 명령 문자열에 따라 다른 함수 객체를 선택해 호출한다.
+
+구조적으로 중요한 부분은 다음이다.
+
+\begin{dhkcode}
+handlers["greet"] = greet
+\end{dhkcode}
+
+여기서는 \zsh{greet()}을 실행하지 않는다.
+
+대신 \zsh{greet} 함수 객체를 딕셔너리에 등록해 둔다.
+
+나중에 다음 호출이 발생하면
+
+\begin{dhkcode}
+dispatch("greet", "Kim")
+\end{dhkcode}
+
+딕셔너리에 등록된 함수 객체를 얻는다.
+
+\begin{dhkcode}
+handler = handlers[command]
+\end{dhkcode}
+
+그 다음에 해당 함수 객체를 호출한다.
+
+\begin{dhkcode}
+return handler(name)
+\end{dhkcode}
+
+즉, 함수의 등록 시점과 실행 시점이 분리되어 있다.
+
+이것이 추후 등록형 데코레이터를 이해하기 위한 첫 번째 기반이다.
+
+\zsh{A.12}에서는 이러한 명령 처리 구조를 더 발전시켜, \zsh{self.routes} 같은 인스턴스 저장소에 함수 객체를 등록하고 요청 시 호출하는 메커니즘을 직접 구성한 뒤 FastAPI의 경로 등록 구조와 비교할 것이다.
+
+그때는 기존에 배운 클래스 객체, \zsh{self}, 메서드 바인딩과 이번 과정의 클로저까지 모두 연결할 수 있게 된다.
+
+\subsubsection{경계 조건과 흔한 오해}
+
+이번 단원에서 반드시 구별해야 할 표현식들을 표로 정리해 보자.
+
+\begin{dhktable}
+|표현식|	정확한 의미|
+|:---|:---|
+|def f(...): ...|	함수 정의문을 실행하여 함수 객체를 생성하고 이름을 바인딩|
+|f|	이름을 탐색하여 현재 바인딩된 객체를 얻음|
+|f()|	f가 참조하는 객체를 호출하고 결과를 얻음|
+|g = f|	기존 함수 객체에 새로운 이름을 바인딩|
+|g = f()|	함수 호출의 반환 객체를 g에 바인딩|
+|return f|	함수 객체를 반환|
+|return f()|	함수 객체를 호출한 결과를 반환|
+|callable(f)|	해당 객체가 호출 가능한지 검사|
+|f.__name__|	함수 객체의 이름 메타데이터 조회|
+|f.__globals__|	함수가 참조하는 전역 네임스페이스 조회|
+|f.__closure__|	캡처된 자유 변수의 셀 객체 정보 조회|
+|type(f)|	f가 참조하는 객체의 실제 타입 조회|
+\end{dhktable}
+
+한 가지 더 기억할 점이 있다.
+
+함수 객체를 호출하는 행위가 항상 정상적인 반환으로 이어지는 것은 아니다.
+
+호출 과정에서 인수 바인딩 오류가 발생할 수도 있고, 본문 실행 중 예외가 전파될 수도 있으며, 함수가 다른 호출 가능한 객체를 반환할 수도 있다.
+
+또한 함수 객체가 반환되었다고 해서 그것이 반드시 클로저라는 의미는 아니다.
+
+우리가 \zsh{A.1}에서 살펴본 \zsh{get_operation()}의 반환 함수는 외부 함수의 지역 상태를 캡처하지 않았다.
+
+이러한 차이를 유지해야 \zsh{A.2}에서 중첩 함수를 학습하더라도 함수 반환과 클로저 형성을 혼동하지 않게 된다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 단원의 핵심은 다음 실행 모델이다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: 함수 정의문 실행 // def f(...): ...
+
+node n2 (2,1) :: 함수 객체 생성 //code · globals · defaults · closure 등
+
+node n3 (3,1):: 이름 바인딩 // f -> function object
+
+node n4 (4,1) :: 호출 가능 여부 및 호출 // callable(f) · f(args)
+
+node n5 (5,1) :: 인수 바인딩 및 함수 본문 실행 // 매개변수 이름 -> 인수 객체
+
+node n6 (6,1) :: 결과 반환 // return expression
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+edge n4 -> n5
+edge n5 -> n6
+\end{dhkgraph}
+
+이제 코드를 분석할 때는 다음 판단을 구분하면 된다.
+
+첫째, 새로운 함수 객체가 생성되는 것인지, 이미 존재하는 함수 객체를 참조하는 것인지 판단해야 한다.
+
+둘째, 이름에 객체를 바인딩하는 것인지, 기존 이름을 재바인딩하는 것인지 구분해야 한다.
+
+셋째, \zsh{()}가 호출하는 대상이 함수 객체인지, 클래스 객체인지, 바운드 메서드인지, 아니면 다른 호출 가능한 인스턴스인지 확인해야 한다.
+
+넷째, 호출 시 어떤 객체가 매개변수에 바인딩되고, 함수 본문에서 실제로 어떤 객체가 변경되는지 추적해야 한다.
+
+다섯째, 함수 객체 자체를 반환하는 것과 함수 호출 결과를 반환하는 것을 구별해야 한다.
+
+이 다섯 가지가 \zsh{A.1}의 판단 기준이다.

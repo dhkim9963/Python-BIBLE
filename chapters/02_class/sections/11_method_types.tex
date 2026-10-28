@@ -1,0 +1,1332 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.11. 메서드의 종류 — 인스턴스 메서드, 클래스 메서드, 정적 메서드
+% ==================================================
+
+\subsection{메서드의 종류 - 인스턴스 메서드, 클래스 메서드, 정적 메서드}
+
+2.5에서 인스턴스 메서드가 클래스에 저장된 함수 객체이며, 인스턴스를 통해 접근하면 바운드 메서드(Bound Method)가 된다는 사실을 학습했다.
+
+2.7에서 디스크립터 프로토콜을, 2.8과 2.9에서 상속과 MRO를 살펴보았다.
+
+이번 2.11에서는 이 개념들을 연결하여 Python의 세 가지 메서드를 비교해 볼 것이다.
+
+\begin{dhksmry}
+    인스턴스 메서드 - self
+
+    클래스 메서드 - cls, @classmethod
+
+    정적 메서드 - @staticmethod
+\end{dhksmry}
+
+이번 학습의 핵심 질문은 다음과 같다.
+
+\begin{dhksmry}[centered]
+세 메서드는 모두 클래스 안에서 정의되는데,
+
+왜 어떤 메서드는 인스턴스를 자동으로 전달받고,
+
+어떤 메서드는 클래스를 전달받으며,
+
+어떤 메서드는 아무것도 자동으로 전달받지 않을까?
+\end{dhksmry}
+
+이 차이를 이해하면 단순히 문법을 구분하는 수준을 넘어, Python이 함수 객체를 어떻게 바인딩하는지까지 설명할 수 있다.
+
+\subsubsection{세 가지 메서드의 기본 구조}
+
+먼저 다음 클래스를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    def __init__(self, name):
+        self.name = name
+
+    def introduce(self):
+        return f"My name is {self.name}"
+
+    @classmethod
+    def get_species(cls):
+        return cls.species
+
+    @staticmethod
+    def is_valid_name(name):
+        return isinstance(name, str) and len(name) > 0
+\end{dhkcode}
+
+이 클래스에는 세 가지 메서드가 정의되어 있다.
+
+\begin{dhkcode}
+p = Person("Kim")
+
+print(p.introduce())
+print(Person.get_species())
+print(Person.is_valid_name("Lee"))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+My name is Kim
+Human
+True
+\end{dhkzsh}
+
+겉으로 보면 모두 메서드 호출이다.
+
+하지만 내부적으로 전달되는 첫 번째 인수가 서로 다르다.
+
+\begin{dhktable}
+|구분|	정의 방식|	자동 전달 대상|	주된 역할|
+|:---|:---|:---|:---|
+|인스턴스 메서드|	def method(self)|	인스턴스|	인스턴스 상태 사용|
+|클래스 메서드|	@classmethod|	클래스 객체|	클래스 상태 및 클래스 기반 생성|
+|정적 메서드|	@staticmethod|	없음|	클래스와 관련된 독립적 기능|
+\end{dhktable}
+
+여기서 중요한 점은 \zsh{self}와 \zsh{cls}가 Python의 예약어가 아니라는 사실이다.
+
+둘 다 일반적인 매개변수 이름이다.
+
+실제로 중요한 것은 메서드 접근 시 Python이 어떤 객체를 자동으로 바인딩하는가이다.
+
+\subsubsection{인스턴스 메서드 - \zsh{self}는 어떻게 전달되는가?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+    def introduce(self):
+        return self.name
+
+p = Person("Kim")
+
+print(p.introduce())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Kim
+\end{dhkzsh}
+
+2.5에서 배운 것처럼 다음 두 표현식은 일반적인 메서드 호출에서 같은 효과를 가진다.
+
+\begin{dhkcode}
+p.introduce()
+
+Person.introduce(p)
+\end{dhkcode}
+
+왜 가능할까?
+
+클래스에 정의된 일반 함수 객체는 디스크립터 프로토콜의 \zsh{__get__()}을 제공하기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 네임스페이스 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(Person.__dict__["introduce"])
+\end{dhkcode}
+
+출력 예시:
+
+\begin{dhkzsh}
+<function Person.introduce at 0x...>
+\end{dhkzsh}
+
+\zsh{Person.__dict__}에 저장된 것은 함수 객체다.
+
+반면 인스턴스를 통해 접근하면 다음과 같다.
+
+\begin{dhkcode}
+method = p.introduce
+
+print(method.__self__ is p)
+print(method.__func__ is Person.introduce)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+여기서
+
+\begin{dhksmry}
+    __self__는 바인딩된 인스턴스
+
+    __func__는 원본 함수 객체
+\end{dhksmry}
+
+를 나타낸다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: introduce -> 함수
+node n2 (1,3) :: name -> "Kim"
+node n3 (2,2) [aceent] :: __self__->p // __func__-> 함수
+group g1(n1) :: Person 클래스
+group g2(n2) :: p 인스턴스
+group g3(n3) :: Bound Method 
+merge g1,g2 -> g3
+
+caption :: p.introduce에 접근하면 인스턴스와 함수 객체가 연결된 바운드 메서드를 얻는다.
+\end{dhkgraph}
+
+따라서 인스턴스 메서드의 핵심은 단순히 \zsh{self}라는 이름을 사용한다는 것이 아니다.
+
+함수 객체가 인스턴스에 바인딩되어 호출될 때 그 인스턴스가 첫 번째 인수로 전달된다는 것이 핵심이다.
+
+\subsubsection{클래스 메서드 - \zsh{@classmethod}는 무엇을 바꾸는가?}
+
+이번에는 클래스 메서드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    @classmethod
+    def get_species(cls):
+        return cls.species
+\end{dhkcode}
+
+다음처럼 호출할 수 있다.
+
+\begin{dhkcode}
+print(Person.get_species())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Human
+\end{dhkzsh}
+
+여기서 \zsh{cls}는 \zsh{Person} 클래스 객체를 참조한다.
+
+따라서 다음과 같은 효과가 있다.
+
+\begin{dhkcode}
+Person.get_species()
+
+Person.get_species.__func__(Person)
+\end{dhkcode}
+
+두 번째 표현식은 바운드 메서드에 저장된 원본 함수를 명시적으로 호출한 형태다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+cls는 어디에서 오는가?
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{@classmethod}는 일반 함수 객체를 \zsh{classmethod} 디스크립터 객체로 감싸는 데코레이터다.
+
+2.5에서 학습했던 데코레이터 변환식을 적용하면 다음과 같이 이해할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    def get_species(cls):
+        return cls.species
+
+    get_species = classmethod(get_species)
+\end{dhkcode}
+
+이는 다음 정의와 대응한다.
+
+\begin{dhkcode}
+class Person:
+    @classmethod
+    def get_species(cls):
+        return cls.species
+\end{dhkcode}
+
+중요한 점은 \zsh{classmethod}가 원본 함수 객체의 코드를 변경하는 것이 아니라, 클래스를 바인딩하는 방식으로 접근할 수 있게 하는 디스크립터 객체를 생성한다는 사실이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 네임스페이스 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    @classmethod
+    def get_species(cls):
+        return cls.__name__
+
+print(type(Person.__dict__["get_species"]))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'classmethod'>
+\end{dhkzsh}
+
+일반 인스턴스 메서드와는 다르다.
+
+일반 메서드는 클래스 네임스페이스에 함수 객체가 직접 저장된다.
+
+반면 \zsh{@classmethod}를 사용하면 \zsh{classmethod} 객체가 저장된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+바운드 메서드 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+method = Person.get_species
+
+print(method.__self__ is Person)
+print(method.__func__ is Person.__dict__["get_species"].__func__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+여기서 가장 중요한 부분은 다음이다.
+
+\begin{dhkcode}
+method.__self__ is Person
+\end{dhkcode}
+
+인스턴스 메서드에서는 \zsh{__self__}가 인스턴스였지만, 클래스 메서드에서는 클래스 객체다.
+
+즉, 두 메서드는 모두 바운드 메서드가 될 수 있지만 바인딩 대상이 다르다는 것이다.
+
+\subsubsection{클래스 메서드를 인스턴스에서 호출하면?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    @classmethod
+    def get_species(cls):
+        print(cls)
+        return cls.species
+
+p = Person()
+
+p.get_species()
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+여기서 \zsh{p.get_species()}를 호출했는데도 \zsh{cls}는 \zsh{p}가 아니다.
+
+\zsh{Person} 클래스 객체다.
+
+확인해 보자.
+
+\begin{dhkcode}
+print(p.get_species.__self__ is Person)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+즉, 클래스 메서드는 클래스 객체로 접근하든 인스턴스로 접근하든 클래스를 바인딩한다.
+
+이것은 인스턴스 메서드와 중요한 차이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    def instance_method(self):
+        return self
+
+    @classmethod
+    def class_method(cls):
+        return cls
+
+p = Person()
+
+print(p.instance_method() is p)
+print(p.class_method() is Person)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+\subsubsection{클래스 메서드와 상속 - \zsh{cls}는 어떤 클래스를 참조하는가?}
+
+이제 2.8의 상속과 연결해 보자.
+
+\begin{dhkcode}
+class Animal:
+    species = "Animal"
+
+    @classmethod
+    def identify(cls):
+        return cls.species
+
+
+class Dog(Animal):
+    species = "Dog"
+\end{dhkcode}
+
+다음 코드를 실행하면 어떻게 될까?
+
+\begin{dhkcode}
+print(Animal.identify())
+print(Dog.identify())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Animal
+Dog
+\end{dhkzsh}
+
+여기서 중요한 질문이 있다.
+
+\zsh{identify()}는 \zsh{Animal} 클래스에 정의되어 있다.
+
+그런데 \zsh{Dog.identify()}를 호출하면 왜 \zsh{Dog}가 출력될까?
+
+클래스 메서드의 \zsh{cls}는 메서드가 정의된 클래스로 고정되는 것이 아니라, 접근에 사용된 클래스에 따라 바인딩되기 때문이다.
+
+\begin{dhkcode}
+print(Animal.identify.__self__ is Animal)
+print(Dog.identify.__self__ is Dog)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+이 구조는 2.8에서 학습한 인스턴스 메서드의 \zsh{self}와 비슷하다.
+
+부모 클래스에 정의된 메서드를 자식 클래스가 사용할 수 있고, 그때 실제 바인딩 대상이 달라지는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+중요한 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|구분|	인스턴스 메서드|	클래스 메서드|
+|:---|:---|:---|
+|바인딩 대상|	실제 인스턴스|	접근 대상 클래스|
+|관례적 첫 인수|	self|	cls|
+|상속 시|	자식 인스턴스를 self로 받을 수 있음|	자식 클래스를 cls로 받을 수 있음|
+\end{dhktable}
+
+이 차이가 클래스 메서드를 활용하는 중요한 이유다.
+
+\subsubsection{클래스 메서드의 대표적 용도 - 대체 생성자}
+
+클래스 메서드가 특히 유용한 경우는 
+
+\zsh{대체 생성자(Alternative Constructor)}를 정의할 때다.
+
+먼저 다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
+\end{dhkcode}
+
+일반적인 인스턴스 생성은 다음과 같다.
+
+\begin{dhkcode}
+p = Person("Kim", 30)
+\end{dhkcode}
+
+그런데 다음과 같은 문자열에서 객체를 생성하고 싶다고 하자.
+
+\begin{dhkcode}
+data = "Kim,30"
+\end{dhkcode}
+
+이를 위해 클래스 메서드를 사용할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
+
+    @classmethod
+    def from_string(cls, data):
+        name, age = data.split(",")
+
+        return cls(name, int(age))
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+p = Person.from_string("Kim,30")
+
+print(p.name)
+print(p.age)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Kim
+30
+\end{dhkzsh}
+
+여기서 다음 표현식에 주목하라.
+
+\begin{dhkcode}
+return cls(name, int(age))
+\end{dhkcode}
+
+\zsh{cls}는 클래스 객체다.
+
+따라서 \zsh{cls(...)}는 해당 클래스 객체를 호출하여 인스턴스를 생성하는 동작이다.
+
+2.6에서 학습했던 클래스 호출 메커니즘과 연결된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 Person(...) 대신 cls(...)를 사용할까?
+\end{dhksmry}
+\end{dhknote}
+
+상속 관계를 고려하면 차이가 명확해진다.
+
+\begin{dhkcode}
+class Student(Person):
+    pass
+\end{dhkcode}
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+student = Student.from_string("Lee,20")
+
+print(type(student))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class '__main__.Student'>
+\end{dhkzsh}
+
+왜 \zsh{Student} 인스턴스가 생성되었을까?
+
+\zsh{Student.from_string()}으로 접근했기 때문에 
+
+클래스 메서드의 \zsh{cls}가 \zsh{Student}로 바인딩되었기 때문이다.
+
+따라서
+
+\begin{dhkcode}
+return cls(name, int(age))
+\end{dhkcode}
+
+는 이 호출에서 사실상 다음과 같은 효과를 가진다.
+
+\begin{dhkcode}
+return Student(name, int(age))
+\end{dhkcode}
+
+반면 클래스 메서드 내부에서 다음처럼 작성했다면
+
+\begin{dhkcode}
+return Person(name, int(age))
+\end{dhkcode}
+
+항상 \zsh{Person} 인스턴스가 생성된다.
+
+자식 클래스의 타입을 유지할 수 없을 것이다.
+
+이것이 클래스 메서드가 대체 생성자에 적합한 중요한 이유다.
+
+단, 자식 클래스가 생성자 인수를 다르게 정의했다면 \zsh{cls(...)} 호출이 실패할 수 있으므로 상속 계층의 생성자 규약도 호환되어야 한다.
+
+\subsubsection{정적 메서드 - \zsh{@staticmethod}는 무엇을 하는가?}
+
+이번에는 정적 메서드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    @staticmethod
+    def is_valid_age(age):
+        return isinstance(age, int) and age >= 0
+\end{dhkcode}
+
+다음처럼 호출할 수 있다.
+
+\begin{dhkcode}
+print(Person.is_valid_age(30))
+print(Person.is_valid_age(-5))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+False
+\end{dhkzsh}
+
+여기서 \zsh{is_valid_age()}에는 \zsh{self}도 없고 \zsh{cls}도 없다.
+
+왜 그럴까?
+
+\zsh{@staticmethod}는 인스턴스나 클래스를 자동으로 바인딩하지 않기 대문이다.
+
+즉, 정적 메서드는 클래스의 네임스페이스에 속해 있지만, 호출할 때 자동으로 추가되는 첫 번째 인수가 없다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+데코레이터 변환식
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드는
+
+\begin{dhkcode}
+class Person:
+    @staticmethod
+    def is_valid_age(age):
+        return age >= 0
+\end{dhkcode}
+
+개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+class Person:
+    def is_valid_age(age):
+        return age >= 0
+
+    is_valid_age = staticmethod(is_valid_age)
+\end{dhkcode}
+
+클래스 네임스페이스에는 \zsh{staticmethod} 객체가 저장된다.
+
+\begin{dhkcode}
+print(type(Person.__dict__["is_valid_age"]))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'staticmethod'>
+\end{dhkzsh}
+
+하지만 클래스나 인스턴스를 통해 접근하면 일반적으로 감싸진 함수 객체를 얻는다.
+
+\begin{dhkcode}
+p = Person()
+
+print(Person.is_valid_age is p.is_valid_age)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+둘 다 같은 함수 객체를 반환할 수 있다.
+
+인스턴스나 클래스에 바인딩하는 과정이 없기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+staticmethod는 왜 필요한가?
+\end{dhksmry}
+\end{dhknote}
+
+다음 함수를 생각해 보자.
+
+\begin{dhkcode}
+def is_valid_age(age):
+    return isinstance(age, int) and age >= 0
+\end{dhkcode}
+
+이 함수는 독립적으로 존재해도 문제가 없다.
+
+하지만 \zsh{Person}과 관련된 검증 기능이므로 클래스의 네임스페이스 안에 배치하고 싶을 수 있다.
+
+\begin{dhkcode}
+class Person:
+    @staticmethod
+    def is_valid_age(age):
+        return isinstance(age, int) and age >= 0
+\end{dhkcode}
+
+이렇게 하면 다음과 같이 기능을 묶을 수 있다.
+
+\begin{dhkcode}
+Person.is_valid_age(30)
+\end{dhkcode}
+
+정적 메서드는 클래스와 개념적으로 관련된 함수를 클래스의 네임스페이스 안에 배치하면서, 인스턴스나 클래스를 자동으로 전달하지 않도록 하는 수단이라고 이해하면 된다.
+
+다만 함수가 클래스와 특별한 관련이 없다면 굳이 정적 메서드로 만들 필요는 없다.
+
+모듈 수준의 일반 함수로 정의하는 것이 더 명확할 수도 있다.
+
+\subsubsection{세 메서드의 바인딩 구조를 직접 비교하기}
+
+이번에는 지금까지의 내용을 하나의 코드로 비교해 보자.
+
+\begin{dhkcode}
+class Example:
+    def instance_method(self):
+        return self
+
+    @classmethod
+    def class_method(cls):
+        return cls
+
+    @staticmethod
+    def static_method():
+        return "Hello"
+
+obj = Example()
+\end{dhkcode}
+
+각 메서드에 접근했을 때 어떤 객체를 얻는지 확인해 보자.
+
+\begin{dhkcode}
+print(type(obj.instance_method))
+print(type(obj.class_method))
+print(type(obj.static_method))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'method'>
+<class 'method'>
+<class 'function'>
+\end{dhkzsh}
+
+여기서 중요한 결과가 나타났다.
+
+인스턴스 메서드와 클래스 메서드는 모두 바운드 메서드 객체로 접근된다.
+
+반면 정적 메서드는 일반 함수 객체로 접근된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__self__ 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(obj.instance_method.__self__ is obj)
+print(obj.class_method.__self__ is Example)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+정적 메서드는 일반 함수 객체이므로 바운드 메서드의 \zsh{__self__}를 갖지 않는다.
+
+\begin{dhkcode}
+print(hasattr(obj.static_method, "__self__"))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+세 가지를 그림으로 정리하면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: 인스턴스 메서드 // obj.instance_method // \da // Bound Method -> __self__ = obj
+node n2 (2,1) :: 클래스 메서드 // obj.class_method // \da // Bound Method -> __self__ = Example
+node n3 (3,1) :: 정적 메서드 // obj.static_method // \da // Function -> 자동 바인딩 없음
+
+caption :: 세 메서드의 핵심 차이는 함수 본문이 아니라 속성 접근 시 적용되는 바인딩 방식이다.
+\end{dhkgraph}
+
+\subsubsection{디스크립터 프로토콜로 세 메서드를 설명하기}
+
+이제 2.7에서 학습한 디스크립터 개념을 연결해 보자.
+
+세 메서드의 차이는 클래스 네임스페이스에 저장되는 객체와 그 객체의 \zsh{__get__()} 동작으로 설명할 수 있다.
+
+다음 클래스를 정의하자.
+
+\begin{dhkcode}
+class Example:
+    def instance_method(self):
+        pass
+
+    @classmethod
+    def class_method(cls):
+        pass
+
+    @staticmethod
+    def static_method():
+        pass
+\end{dhkcode}
+
+클래스 딕셔너리의 객체 타입을 확인해 보자.
+
+\begin{dhkcode}
+for name in (
+    "instance_method",
+    "class_method",
+    "static_method"
+):
+    obj = Example.__dict__[name]
+    print(name, type(obj))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+instance_method <class 'function'>
+class_method <class 'classmethod'>
+static_method <class 'staticmethod'>
+\end{dhkzsh}
+
+이제 구조를 정리할 수 있다.
+
+\begin{dhktable}
+|메서드|	클래스 __dict__에 저장되는 객체|	__get__() 결과|
+|:---|:---|:---|
+|인스턴스 메서드|	function|	인스턴스에 바인딩된 메서드|
+|클래스 메서드|	classmethod|	클래스에 바인딩된 메서드|
+|정적 메서드|	staticmethod|	감싸진 함수 객체|
+\end{dhktable}
+
+실제로 \zsh{__get__()}을 직접 호출해 볼 수도 있다.
+
+\begin{dhkcode}
+obj = Example()
+
+instance_descriptor = Example.__dict__["instance_method"]
+class_descriptor = Example.__dict__["class_method"]
+static_descriptor = Example.__dict__["static_method"]
+
+
+a = instance_descriptor.__get__(obj, Example)
+b = class_descriptor.__get__(obj, Example)
+c = static_descriptor.__get__(obj, Example)
+\end{dhkcode}
+
+이제 확인해 보자.
+
+\begin{dhkcode}
+print(a.__self__ is obj)
+print(b.__self__ is Example)
+print(type(c))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+<class 'function'>
+\end{dhkzsh}
+
+이것이 세 메서드의 차이를 설명하는 가장 중요한 객체 모델이다.
+
+\zsh{@classmethod}와 \zsh{@staticmethod}는 함수 본문에 특별한 능력을 부여하는 문법이 아니라, 함수가 클래스 속성으로 접근될 때의 바인딩 동작을 변경하는 디스크립터를 만드는 데코레이터다.
+
+\subsubsection{\zsh{self}, \zsh{cls}, 정적 메서드의 선택 기준}
+
+이제 실제로 클래스를 설계할 때 어떤 메서드를 선택해야 할지 생각해 보자.
+
+다음 상황을 가정하자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
+\end{dhkcode}
+
+세 가지 기능을 추가하고 싶다.
+
+첫 번째는 자신의 이름을 출력하는 기능이다.
+
+\begin{dhkcode}
+def introduce(self):
+    return self.name
+\end{dhkcode}
+
+이 기능은 인스턴스의 \zsh{name} 속성을 사용해야 한다.
+
+따라서 인스턴스 메서드가 적절하다.
+
+두 번째는 문자열로부터 인스턴스를 생성하는 기능이다.
+
+\begin{dhkcode}
+@classmethod
+def from_string(cls, data):
+    name, age = data.split(",")
+    return cls(name, int(age))
+\end{dhkcode}
+
+이 기능은 실제 접근 대상 클래스를 사용하여 객체를 생성해야 한다.
+
+따라서 클래스 메서드가 적절하다.
+
+세 번째는 나이가 유효한지 확인하는 기능이다.
+
+\begin{dhkcode}
+@staticmethod
+def is_valid_age(age):
+    return isinstance(age, int) and age >= 0
+\end{dhkcode}
+
+이 기능은 인스턴스 상태도, 클래스 상태도 필요하지 않다.
+
+따라서 정적 메서드로 작성할 수 있다.
+
+최종 코드는
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
+
+    def introduce(self):
+        return f"My name is {self.name}"
+
+    @classmethod
+    def from_string(cls, data):
+        name, age = data.split(",")
+        return cls(name, int(age))
+
+    @staticmethod
+    def is_valid_age(age):
+        return isinstance(age, int) and age >= 0
+\end{dhkcode}
+
+이제 세 메서드는 사로 다른 목적을 갖게 된다.
+
+\begin{dhkcode}
+p = Person.from_string("Kim,30")
+
+print(p.introduce())
+print(Person.is_valid_age(p.age))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+My name is Kim
+True
+\end{dhkzsh}
+
+\subsubsection{클래스 메서드와 클래스 속성 변경에서 주의할 점}
+
+2.7에서는 클래스 속성과 인스턴스 속성의 재바인딩 차이를 학습했다.
+
+클래스 메서드에서도 비슷한 문제가 발생할 수 있다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Counter:
+    count = 0
+
+    @classmethod
+    def increase(cls):
+        cls.count += 1
+
+class ChildCounter(Counter):
+    pass
+\end{dhkcode}
+
+이제 다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+ChildCounter.increase()
+
+print(Counter.count)
+print(ChildCounter.count)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+0
+1
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{ChildCounter.increase()}를 호출했기 때문에 \zsh{cls}는 \zsh{ChildCounter}다.
+
+따라서 다음 표현식은
+
+\begin{dhkcode}
+cls.count += 1
+\end{dhkcode}
+
+개념적으로 다음 과정을 거친다.
+
+\begin{dhksmry}
+    1. ChildCounter.count를 읽는다.
+
+    2. ChildCounter에 없으므로
+        부모 Counter.count에서 0을 얻는다.
+
+    3. 1을 더한다.
+
+    4. ChildCounter.count에 결과를 설정한다.
+\end{dhksmry}
+
+따라서 부모 클래스의 \zsh{count}는 그대로이고, 자식 클래스에 새로운 \zsh{count} 속성이 생성된다.
+
+\begin{dhkcode}
+print(Counter.__dict__["count"])
+print(ChildCounter.__dict__["count"])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+0
+1
+\end{dhkzsh}
+
+이것은 2.7에서 학습했던 속성 가리기와 같은 원리다.
+
+따라서 \zsh{@classmethod}를 사용한다고 해서 모든 클래스가 하나의 공유 상태를 자동으로 사용하는 것은 아니다.
+
+\zsh{cls}가 어떤 클래스 객체를 참조하는지에 따라 속성 설정 위치가 달라질 수 있다.
+
+\subsubsection{PyTorch와의 연결 - \zsh{nn.Module}에서는 어떤 메서드를 사용하는가?}
+
+이제 PyTorch의 객체 모델과 연결해 보자.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+import torch
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+
+        self.linear = nn.Linear(
+            input_dim,
+            output_dim
+        )
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+여기서 \zsh{forward()}는 어떤 종류의 메서드일까?
+
+인스턴스 메서드다.
+
+\begin{dhkcode}
+def forward(self, x):
+\end{dhkcode}
+
+\zsh{self}는 실제 모델 인스턴스를 참조한다.
+
+따라서 다음 속성에 접근할 수 있다.
+
+\begin{dhkcode}
+self.linear
+\end{dhkcode}
+
+이것은 모델 인스턴스마다 등록되 ㄴ하위 모듈이기 때문에 인스턴스 메서드가 적절하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 메서드를 추가한다면?
+\end{dhksmry}
+\end{dhknote}
+
+예를 들어 설정 딕셔너리에서 모델을 생성하는 기능을 만들 수 있다.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+
+        self.linear = nn.Linear(
+            input_dim,
+            output_dim
+        )
+
+    def forward(self, x):
+        return self.linear(x)
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(
+            input_dim=config["input_dim"],
+            output_dim=config["output_dim"]
+        )
+\end{dhkcode}
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+config = {
+    "input_dim": 10,
+    "output_dim": 5
+}
+
+model = MyModel.from_config(config)
+\end{dhkcode}
+
+여기서 \zsh{cls}는 \zsh{MyModel} 클래스 객체다.
+
+따라서 설정값을 이용해 모델 인스턴스를 생성할 수 있다.
+
+이런 방식은 모델 구조를 설정 파일이나 딕셔너리로 관리할 때 유용하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+정적 메서드를 추가한다면?
+\end{dhksmry}
+\end{dhknote}
+
+입력 차원의 유효성을 검사하는 함수를 추가할 수도 있다.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    @staticmethod
+    def validate_dimension(dim):
+        return isinstance(dim, int) and dim > 0
+\end{dhkcode}
+
+이 메서드는 특정 모델 인스턴스나 클래스 상태를 사용할 필요가 없다.
+
+따라서 정적 메서드로 정의할 수 있다.
+
+물론 검증 기능이 여러 클래스에서 공통으로 사용된다면 클래스 밖의 일반 함수로 분리하는 것도 좋은 설계다.
+
+\subsubsection{세 메서드의 최종 비교}
+
+지금까지 학습한 내용을 하나의 표로 정리해 보자.
+
+\begin{dhktable}
+|구분|	인스턴스 메서드|	클래스 메서드|	정적 메서드|
+|:---|:---|:---|:---|
+|데코레이터|	없음|	@classmethod|	@staticmethod|
+|관례적 첫 인수|	self|	cls|	없음|
+|자동 바인딩|	인스턴스|	클래스|	없음|
+|인스턴스 상태 접근|	직접 가능|	인스턴스가 별도로 필요|	인스턴스가 별도로 필요|
+|클래스 상태 접근|	type(self) 등|	cls|	클래스 이름 등을 명시|
+|상속 시 바인딩|	실제 인스턴스|	접근 대상 클래스|	없음|
+|대표적 용도|	객체 동작|	대체 생성자, 클래스 단위 동작|	관련 유틸리티 함수|
+|클래스 __dict__|	함수 객체|	classmethod 객체|	staticmethod 객체|
+\end{dhktable}
+
+여기서 한 가지 주의할 점이 있다.
+
+인스턴스 메서드는 클래스에서도 접근할 수 있다.
+
+\begin{dhkcode}
+Person.introduce
+\end{dhkcode}
+
+하지만 클래스에서 접근하면 인스턴스가 자동으로 바인딩되지 않으므로, 일반적으로 인스턴스를 명시적으로 전달해야 한다.
+
+\begin{dhkcode}
+Person.introduce(p)
+\end{dhkcode}
+
+반면 클래스 메서드는 클래스에서 접근해도 클래스 객체가 자동으로 바인딩된다.
+
+\begin{dhkcode}
+Person.from_string("Kim,30")
+\end{dhkcode}
+
+정적 메서드는 어느 쪽에서도 자동 바인딩이 일어나지 않는다.
+
+\begin{dhkcode}
+Person.is_valid_age(30)
+p.is_valid_age(30)
+\end{dhkcode}
+
+이 차이가 세 메서드를 구분하는 가장 중요한 기준이다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서 반드시 이해해야 할 내용을 정리해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 메서드의 차이는 함수 본문보다 바인딩 방식에 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def method(self):
+    ...
+
+
+@classmethod
+def method(cls):
+    ...
+
+
+@staticmethod
+def method():
+    ...
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 메서드는 인스턴스에 바인딩된다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p.introduce.__self__ is p
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 메서드는 클래스 객체에 바인딩된다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Person.get_species.__self__ is Person
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+정적 메서드는 자동 바인딩을 수행하지 않는다.
+\end{dhksmry}
+\end{dhknote}
+
+클래스나 인스턴스로 접근해도 일반적으로 함수 객체를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+@classmethod와 @staticmethod는
+디스크립터 객체를 생성하는 데코레이터다.
+\end{dhksmry}
+\end{dhknote}
+
+클래스 네임스페이스에 저장되는 객체의 종류와 \zsh{__get__()} 동작을 변경한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 메서드는 상속 관계에서 유용하다.
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{cls}가 실제 접근 대상 클래스로 바인딩되므로, 자식 클래스의 타입을 유지하는 대체 생성자를 구현할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 메서드에서 클래스 속성을 변경할 때는
+바인딩 대상을 고려해야 한다.
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{cls.count += 1}은 자식 클래스에 새로운 클래스 속성을 만들 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch의 forward()는 인스턴스 메서드다.
+\end{dhksmry}
+\end{dhknote}
+
+모델 인스턴스의 하위 모듈과 파라미터를 사용해야 하기 때문이다.
+
+\subsubsection{2.11에서 반드시 이해해야 할 결론}
+
+이번 학습의 핵심은 다음과 같다.
+
+\begin{dhktable}
+|Method Type|Binding Target|
+|:---|:---|
+|Instance Method|Instance|
+|Class Method|Class|
+|Static Method|None|
+\end{dhktable}
+
+즉, Python에서 메서드의 종류를 구분하는 가장 정확한 기준은 어떤 객체가 자동으로 바인딩되는가이다.
+
+이제 다음 코드를 보면
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def forward(self, x):
+        return self.linear(x)
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
+    @staticmethod
+    def validate_dimension(dim):
+        return isinstance(dim, int) and dim > 0
+\end{dhkcode}
+
+각 메서드가 왜 해당 방식으로 정의되었는지 설명할 수 있어야 한다.
+
+\begin{dhksmry}
+forward()는 모델 인스턴스의 상태를 사용한다.
+
+from_config()는 클래스 객체를 호출하여 인스턴스를 생성한다.
+
+validate_dimension()은 인스턴스나 클래스의 자동 바인딩이 필요하지 않다.
+\end{dhksmry}
+
+이 세 가지를 구분할 수 있다면 Python의 메서드 모델을 구조적으로 이해한 것이다.

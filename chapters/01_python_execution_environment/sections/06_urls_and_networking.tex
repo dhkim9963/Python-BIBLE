@@ -1,0 +1,1043 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.6. URL vs Local Path
+% ==================================================
+
+\subsection{URL vs Local Path}
+
+\subsubsection{먼저 둘의 차이부터 이해하자}
+
+지금까지 우리가 다루었던 경로는 대부분 이런 형태였다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+path = Path("data/train.csv")
+\end{dhkcode}
+
+또는:
+
+\begin{dhkcode}
+path = Path("/Users/user/project/data/train.csv")
+\end{dhkcode}
+
+이것들은 \zsh{Local Path(로컬 파일 경로)}이다.
+
+반면 다음은 URL 이다:
+
+\begin{dhkcode}
+https://example.com/data/train.csv
+\end{dhkcode}
+
+둘 다 파일의 위치를 나타내는 것처럼 보인다.
+
+하지만 Python에서 접근하는 방식은 완전히 다르다.
+
+\begin{dhktable}
+|구분|Local Path|URL|
+|:---|:---|:---|
+|목적|파일 시스템의 위치 지정|리소스의 위치 및 접근 방법 지정|
+|예시|data/train.csv|https://example.com/ data/train.csv|
+|접근 방식|파일 시스템|네트워크(HTTP 등)|
+|대표 도구|pathlib, open()|requests, urllib|
+|접근 대상|로컬 또는 마운트된 파일 시스템|웹 서버 등의 리소스|
+\end{dhktable}
+
+여기서 중요한 것은 \textbf{URL은 단순히 인터넷에 있는 파일의 경로만을 의미하지 않는다는 것}
+
+URL은 \zsh{Uniform Resource Locator}의 약자로,
+
+리소스에 접근하기 위한 위치와 방법을 나타낸다.
+
+\subsubsection{Local Path는 파일 시스템에서 해석된다}
+
+\begin{dhkcode}
+from pathlib import Path
+
+path = Path("data/train.csv")
+
+with path.open("r", encoding="utf-8") as f:
+    data = f.read()
+\end{dhkcode}
+
+\begin{dhksmry}[centered]
+Python
+\da
+Path("data/train.csv")
+\da
+현재 작업 디렉터리(CWD) 기준으로 경로 해석
+\da
+운영체제의 파일 시스템
+\da
+파일 열기
+\da
+file object
+\da
+read()
+\da
+Python str
+\end{dhksmry}
+
+예를 들어 CWD가:
+
+\begin{dhkzsh}
+/Users/user/my_project
+\end{dhkzsh}
+
+라면:
+
+\begin{dhkcode}
+Path("data/train.csv")
+\end{dhkcode}
+
+는 다음 파일을 가리키는 상대 경로로 해석된다.
+
+\begin{dhkzsh}
+/Users/user/my_project/data/train.csv
+\end{dhkzsh}
+
+여기서 중요한 것은 \textbf{open()이 파일 시스템을 대상으로 작동한다는 것}이다.
+
+\subsubsection{URL은 네트워크 요청을 통해 접근한다}
+
+이번에는:
+
+\begin{dhkzsh}
+https://example.com/data/train.csv
+\end{dhkzsh}
+
+를 보자.
+
+이 URL을 분해하면 다음과 같다.
+
+\begin{dhkdir}
+https:/example.com/data/train.csv
+> https -> scheme
+> example.com -> host
+> /data/train.csv -> path
+\end{dhkdir}
+
+각각의 의미는 다음과 같다.
+
+\begin{dhksmry}
+    1. Scheme
+        https
+        어떤 방식으로 리소스에 접근할지 나타낸다.
+        여기서 HTTPS 프로토콜을 사용한다는 뜻이다.
+
+
+    2. Host
+        example.com
+        어느 서버에 접근할지 나타내는 호스트 이름이다.
+
+
+    3. Path
+        /data/train.csv
+        서버에 요청할 리소스의 경로이다.
+        여기서 주의할 점은,
+        URL의 Path는 로컬 파일시스템의 path와 동일한 개념이 아니다.
+    
+    서버가 이 경로를 실제 파일에 연결할 수도 있지만,
+    데이터베이스 조회나 프로그램 실행 결과에 연결할 수도 있다.
+\end{dhksmry}
+
+예를 들어:
+
+\begin{dhkzsh}
+https://api.example.com/users/123
+\end{dhkzsh}
+
+은 서버의 \zsh{users/123}이라는 실제 파일을 의미하는 것이 아닐 수 있다.
+
+서버가 사용자 123의 정보를 조회해서 JSON을 반환하는 API일 수도 있다.
+
+\subsubsection{그래서 \zsh{open()}으로 URL을 직접 열 수 없다}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+with open("https://example.com/data/train.csv") as f:
+    data = f.read()
+\end{dhkcode}
+
+이 코드는 일반적으로 실패한다.
+
+왜일까?
+
+\zsh{open()}은 전달된 문자열을 \textbf{파일 시스템 경로}로 해석하기 때문이다.
+
+즉 Python은 이것을 네트워크 주소라고 판단해서 HTTP 요청을 보내지 않는다.
+
+반면 HTTP 요청을 보내려면 다음과 같은 라이브러리를 사용할 수 있다.
+
+\begin{dhkcode}
+import requests
+
+url = "https://example.com/data/train.csv"
+
+response = requests.get(url, timeout=10)
+response.raise_for_status()
+
+data = response.text
+\end{dhkcode}
+
+전체 흐름은 다음과 같다.
+
+\begin{dhksmry}[centered]
+Python
+\da
+requests.get(url)
+\da
+HTTP 요청
+\da
+네트워크
+\da
+웹 서버
+\da
+HTTP 응답
+\da
+response
+\da
+response.text
+\da
+Python str
+\end{dhksmry}
+
+여기서 \zsh{requests.get()}은 HTTP GET 요청을 보내는 함수다.
+
+\zsh{response}는 서버에서 돌아온 HTTP 응답을 표현하는 객체이다.
+
+\zsh{response.text}는 응답 본문을 문자로 디코딩해서 제공한다.
+
+즉, encoding/decoding 개념과 연결된다.
+
+\subsubsection{그런데 Pandas에서는 URL을 바로 사용할 수 있다}
+
+우리가 지금까지 배운:
+
+\begin{dhkcode}
+pd.read_csv('data/train.csv')
+\end{dhkcode}
+
+는 로컬 파일을 읽는 코드이다.
+
+그런데 Pandas는 다음과 같은 코드도 지원한다.
+
+\begin{dhkcode}
+import pandas as pd
+
+url = "https://example.com/data/train.csv"
+
+df = pd.read_csv(url)
+\end{dhkcode}
+
+단, 실제로 해당 URL에서 CSV 데이터를 제공해야 정상적으로 작동한다.
+
+그렇다면 왜 Pandas에서는 URL을 직접 사용할 수 있을까?
+
+\textbf{Pandas가 URL을 인식하고 내부에서 필요한 데이터 접근 및 파싱 작업을 처리하기 때문이다}.
+
+개념적으로:
+
+\begin{dhksmry}[centered]
+pd.read_csv("data/train.csv")
+\da
+Local Path
+\da
+파일 시스템
+\da
+CSV
+\da
+DataFrame
+\end{dhksmry}
+
+반면:
+
+\begin{dhksmry}[centered]
+pd.read_csv("https://...")
+\da
+URL
+\da
+HTTP 요청
+\da
+CSV 데이터
+\da
+DataFrame
+\end{dhksmry}
+
+즉 사용자에게는 동일한 \zsh{read_csv()}인터페이스를 제공하지만,
+
+내부적으로 데이터를 가져오는 방법은 달라질 수 있다.
+
+이것을 \textbf{추상화(Abstraction)}의 사례로 볼 수 있다.
+
+\subsubsection{Hugging Face에서도 비슷한 일이 일어난다}
+
+\begin{dhkcode}
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(
+    "distilbert-base-uncased"
+)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkzsh}
+"distilbert-base-uncased"
+\end{dhkzsh}
+
+는 일반적인 URL도 아니고, 파일 경로라고 명시한 것도 아니다.
+
+이것은 Hugging Face 모델을 식별하는 이름으로 사용할 수 있다.
+
+라이브러리는 이 식별자를 바탕으로 필요한 파일을 찾고,
+
+로컬 캐시에 없으면 원격 저장소에서 다운로드할 수 있다.
+
+개념적으로:
+
+\begin{dhksmry}[centered]
+AutoTokenizer.from_pretrained(...)
+\da
+모델 식별자 해석
+\da
+로컬 캐시 확인
+\da
+필요한 파일이 없다면
+\da
+원격 저장소 접근
+\da
+필요한 파일 다운로드
+\da
+로컬 캐시
+\da
+Tokenizer 생성
+\end{dhksmry}
+
+물론 로컬 디렉터리를 직접 지정하는 것도 가능하다.
+
+\begin{dhkcode}
+AutoTokenizer.from_pretrained(
+    "./my_tokenizer"
+)
+\end{dhkcode}
+
+이 경우에는 해당 로컬 디렉터리에서 필요한 파일을 찾도록 사용할 수 있다.
+
+따라서 \zsh{from_pretrained()}같은 함수는 단순한 파일 읽기 함수보다
+
+더 높은 수준의 인터페이스를 제공하는 것이다.
+
+\subsubsection{URL의 데이터도 결국 메모리나 파일로 가져올 수 있다}
+
+예를 들어 웹에서 JSON을 가져온다고 하자.
+
+\begin{dhkcode}
+import requests
+
+url = "https://api.example.com/config"
+response = requests.get(url, timeout=10)
+response.raise_for_status()
+config = response.json()
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkcode}
+response.json()
+\end{dhkcode}
+
+은 HTTP 응답 본문의 JSON 데이터를 Python 객체로 변환한다.
+
+앞에서 배운:
+
+\begin{dhkcode}
+json.loads(text)
+\end{dhkcode}
+
+과 비슷한 역할을 한다고 이해하면 된다.
+
+다만 \zsh{response.json()}은 \zsh{requests}가 제공하는 메서드다.
+
+전체 흐름은:
+
+\begin{dhksmry}[centered]
+URL
+\da
+HTTP GET
+\da
+HTTP response
+\da
+JSON 데이터
+\da
+response.json()
+\da
+Python dict
+\end{dhksmry}
+
+이다.
+
+JSON 최상위 구조에 따라 list 등 다른 Python 객체가 반환될 수 있다.
+
+여기서 중요한 점은 \textbf{네트워크에서 데이터를 가져온다고 해서 반드시 로컬 파일로 저장해야 하는 것은 아니라는 것}이다.
+
+응답 데이터를 바로 메모리에서 처리할 수도 있다.
+
+\subsubsection{지금까지 배운 개념을 통합해보자}
+
+우리가 지금까지 학습한 흐름을 연결하면 다음과 같다.
+
+\begin{dhktree}
+Python Program
+>Local Path
+>>pathlib
+>>>File System
+>>>>file object
+>>>>>데이터 해석
+>>>>>>Text :: str
+>>>>>>JSON :: Dict/List
+>>>>>>CSV :: DataFrame
+>URL
+>>requests
+>>>HTTP 요청
+>>>>HTTP response
+>>>>>데이터 해석
+>>>>>>Text :: str
+>>>>>>JSON :: Dict/List
+>>>>>>CSV :: DataFrame
+\end{dhktree}
+
+이 그림에서 한 가지를 이해하면 된다.
+
+\textbf{데이터가 어디에 있는지와 데이터를 어떤 형식으로 해석하는지는 서로 다른 문제다}.
+
+예를 들어 CSV는 로컬 파일에서도 읽을 수 있고 HTTP 서버에서도 가져올 수 있다.
+
+하지만 어느 쪽에서 가져왔든 CSV 데이터를 DataFrame으로 변환하는 작업 자체는 별개의 단계이다.
+
+이 구분은 앞으로 데이터 파이프라인을 설계할 때도 중요하다.
+
+\subsubsection{핵심 정리}
+
+기억할 것은 4 가지이다.
+
+\begin{dhksmry}
+    1. Local Path는 파일 시스템에서 해석되는 경로이며,
+        pathlib 와 open() 으로 다룬다.
+    
+
+    2. URL은 리소스의 위치와 접근 방법을 나타내며,
+        HTTP URL은 requests 같은 도구로 접근할 수 있다.
+    
+
+    3. pd.read_csv()처럼 고수준 라이브러리는 
+        로컬 파일과 URL을 모두 지원할 수 있다.
+
+
+    4. 데이터에 접근하는 단계와 JSON·CSV 등의 형식을 해석하는 단계는 구분된다.
+\end{dhksmry}
+
+\subsubsection{HTTP 요청과 응답}
+
+HTTP는 클라이언트와 서버가 요청(request)과 응답(response)을 주고받기 위한 통신 규칙이다.
+
+예를 들어 Python에서 공공데이터를 요청한다고 생각해보자.
+
+\begin{dhkbranch}[in=8]
+node main :: Python 프로그램 (Client)
+arrow main :: HTTP Request
+node main :: 공공데이터 서버
+arrow main :: HTTP Response
+node main :: Python 프로그램
+\end{dhkbranch}
+
+이때 Python 프로그램이 클라이언트다.
+
+공공데이터를 제공하는 쪽이 서버이다.
+
+핵심은 \textbf{HTTP 통신에서는 클라이언트가 요청을 보내고 서버가 응답한다}는 구조다.
+
+\subsubsection{HTTP Request는 어떻게 구성될까?}
+
+HTTP 요청을 개념적으로 분해하면 다음과 같다.
+
+\begin{dhkdir}
+HTTP Request
+>Method
+>>GET / POST / PUT / DELETE ...
+>URL
+>>https://api.example.com/data
+>Headers
+>>요청에 대한 부가 정보
+>Body
+>>서버에 전달할 데이터
+\end{dhkdir}
+
+하나씩 보자.
+
+\subsubsection{Method - 무엇을 하려는가?}
+
+HTTP Method는  서버에 요청하는 작업의 성격을 나타낸다.
+
+대표적인 두 가지가 있다.
+
+\textbf{GET}
+
+서버에서 데이터를 가져오는 데 사용한다.
+
+\begin{dhkcode}
+response = request.get(
+    "https://api.example.com/data"
+)
+\end{dhkcode}
+
+예를 들어:
+
+\begin{dhksmry}
+    - 공공데이터 조회
+
+    - 특정 금융상품 정보 조회
+
+    - 날씨 정보 조회
+
+    - 모델 메타데이터 조회
+\end{dhksmry}
+
+등에 사용할 수 있다.
+
+\textbf{POST}
+
+서버에 데이터를 전달해서 처리하도록 요청할 때 주로 사용한다.
+
+\begin{dhkcode}
+response = requests.post(
+    "https://api.example.com/predict",
+    json={"income": 5000, "debt": 1000}
+)
+\end{dhkcode}
+
+이 경우 서버에 데이터를 보내서 예측 결과를 요청하는 형태다.
+
+여기서 한 가지 중요한 점은 \textbf{GET은 조회, POST는 생성이라고 외우면 안 된다는 것}이다.
+
+POST는 새로운 데이터를 생성하는 데도 사용하지만, 데이터를 전달해서 계산이나 예측을 수행하도록 요청하는 데도 사용한다.
+
+예를 들어 ML 추론 API가 대표적이다.
+
+\begin{dhksmry}
+    GET
+    클라이언트 \ra 데이터 조회 요청 \ra 서버
+
+    POST
+    클라이언트 \ra 입력 데이터 전달 \ra 서버에서 처리
+\end{dhksmry}
+
+\subsubsection{Headers - 요청에 대한 부가 정보}
+
+Header는 HTTP 요청이나 응답에 대한 메타데이터를 전달한다.
+
+예를 들어:
+
+\begin{dhkcode}
+headers = {
+    "Accept": "application/json"
+}
+
+response = requests.get(
+    "https://api.example.com/data",
+    headers=headers
+)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkzsh}
+Accept: application/json
+\end{dhkzsh}
+
+은 클라이언트가 JSON 형식의 응답을 받을 수 있고 선호한다는 의미이다.
+
+다만 서버가 반드시 JSON을 반환해야 한다는 뜻은 아니다.
+
+다른 예시로:
+
+\begin{dhkzsh}
+headers = {
+    "Authorization": "Bearer YOUR_API_TOKEN"
+}
+\end{dhkzsh}
+
+같은 인증 정보도 Header에 넣을 수 있다.
+
+이 부분은 Hugging Face나 외부 API를 사용할 때 자주 등장한다.
+
+API 토큰은 실제 프로젝트에서 코드에 직접 적지 않고 환경변수 등으로 관리하는 것이 좋다.
+
+\subsubsection{Body - 서버에 전달할 데이터}
+
+이번에는 POST 요청을 보자.
+
+\begin{dhkcode}
+payload = {
+    "income": 5000,
+    "debt": 1000
+}
+
+response = requests.post(
+    "https://api.example.com/predict",
+    json=payload
+)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkzsh}
+json=payload
+\end{dhkzsh}
+
+는 Python dictionary를 JSON 형식으로 직렬화하여
+
+HTTP 요청의 Body에 넣도록 \zsh{requests}에 지시하는 것이다.
+
+또한 일반적으로:
+
+\begin{dhkzsh}
+Content-Type: application/json
+\end{dhkzsh}
+
+이라는 Header도 자동으로 설정한다.
+
+전체 구조를 보면:
+
+\begin{dhkdir}[in=6]
+HTTP Request
+>Method: POST
+>URL: /predict
+>Headers
+>>Content-Type: application/json
+>Body
+>>{"income": 5000, "debt": 1000}
+\end{dhkdir}
+
+여기서 JSON이 다시 등장한다.
+
+우리는 이미:
+
+\begin{dhkcode}
+json.dumps(payload)
+\end{dhkcode}
+
+가 Python 객체를 JSON 문자열로 변환한다는 것을 배웠다.
+
+\zsh{requests.post(...,json=payload)}는 이런 JSON 직렬화 과정을 내부적으로 처리해주는 것이다.
+
+\subsubsection{HTTP REsponse는 무엇인가?}
+
+클라이언트가 요청을 보내면 서버는 응답을 반환한다.
+
+개념적으로:
+
+\begin{dhkdir}[in=6]
+HTTP Response
+>Status Code
+>>200 / 404 / 500 ...
+>Headers
+>>Content-Type 등
+>Body
+>>실제 응답 데이터
+\end{dhkdir}
+
+여기서 가장 먼저 살펴볼 것은 Status Code이다.
+
+\textbf{Status Code} - 요청 처리 결과
+
+HTTP 상태 코드는 서버가 요청을 어떻게 처리했는지 알려주는 숫자다.
+
+\begin{dhktable}
+|상태코드|의미|
+|:---|:---|
+|200|OK - 요청성공|
+|201|Created - 리소스 생성 성공|
+|400|Bad Request - 잘못된 요청|
+|401|Unauthorized - 인증 필요 또는 인증 실패|
+|403|Forbidden - 접근 거부|
+|404|Not Found - 요청한 리소스를 찾을 수 없음|
+|429|Too Many Requests - 요청 횟수 제한|
+|500|Internal Server Error - 서버 내부 오류|
+|503|Service Unavailable - 서버가 일시적으로 요청을 처리할 수 없음|
+\end{dhktable}
+
+개별 코드를 전부 암기할 필요는 없다.
+
+대신 다음 분류를 이해하면 된다.
+
+\begin{dhksmry}
+    2xx \ra 성공
+
+    3xx \ra 리다이렉션
+
+    4xx \ra 클라이언트 측 요청 문제
+
+    5xx \ra 서버 측 처리 문제
+\end{dhksmry}
+
+실제로는 인증, 권한, 요청 제한 등 여러 상황이 있으므로 4xx를 무조건 클라이언트 코드의 버그라고 생각하면 안 된다.
+
+\subsubsection{\zsh{requests.Response}객체 이해하기}
+
+이제 다음 코드를 보자.
+
+\begin{dhkcode}
+import requests
+
+response = requests.get(
+    "https://api.example.com/data",
+    timeout=10
+)
+\end{dhkcode}
+
+여기서 \zsh{response}는 단순한 문자열이 아니다.
+
+\textbf{requests.Response} 객체이다.
+
+이 객체는 서버에서 받은 응답 정보를 가지고 있다.
+
+\begin{dhkcode}
+response.status_code
+response.headers
+response.text
+response.content
+response.json()
+\end{dhkcode}
+
+각각 의미가 다르다.
+
+\begin{dhktable}
+|코드|반환 내용|
+|:---|:---|
+|response.status_code|HTTP 상태 코드(int)|
+|response.headers|응답 Header 정보|
+|response.text|응답 Body를 문자열로 디코딩한 결과(str)|
+|response.content|응답 Body의 바이트 데이터(bytes)|
+|response.json()|JSON Body를 Python 객체로 파싱한 결과|
+\end{dhktable}
+
+특히 다음 세 가지는 구분해야 한다.
+
+\begin{dhkcode}
+response.text
+response.content
+response.json()
+\end{dhkcode}
+
+앞에서 배운 File I/O와 연결하면:
+
+\begin{dhkbranch}[in=8]
+node main :: HTTP Response Body
+branchline main -> rc :: response.content
+arrow rc
+node rc :: bytes
+stop rc
+branchline main -> rt :: response.text
+arrow rt
+node rt :: bytes
+stop rt
+handoff main -> json :: response.json()
+arrow json
+node json :: Python 객체 dict / list 등
+stop json
+\end{dhkbranch}
+
+단, \zsh{response.json()}은 응답 본문이 유효한 JSON이어야 정상적으로 동작한다.
+
+\textbf{JSON이 아닌 HTML이나 일반 텍스트를 반환했다면 파싱 오류가 발생할 수 있다}.
+
+\subsubsection{\zsh{raise_for_status()}는 왜 필요할까?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+response = requests.get(url, timeout=10)
+response.raise_for_status()
+\end{dhkcode}
+
+이 메서드는 HTTP 응답이 4xx 또는 5xx 오류 상태라면 예외를 발생시킨다.
+
+예를 들어 서버가 404를 반환했다면:
+
+\begin{dhkcode}
+response.raise_for_status()
+\end{dhkcode}
+
+에서 \zsh{HTTPError}가 발생한다.
+
+반면 정상적인 200 응답이라면 다음 코드로 진행할 수 있다.
+
+\begin{dhkcode}
+data = response.json()
+\end{dhkcode}
+
+여기서 중요한 차이가 있다.
+
+\textbf{request.get()이 HTTP 응답을 받았다는 사실과 요청이 성공했다는 사실은 다르다}.
+
+서버가 404 오류 페이지를 반환했더라도 HTTP 응답 자체는 수신했을 수 있다.
+
+또한 네트워크 연결 자체가 실패하면 \zsh{Response}를 받기 전에 예외가 발생할 수도 있다.
+
+그래서 기본적인 API 호출에서는:
+
+\begin{dhkcode}
+response = requests.get(url, timeout=10)
+response.raise_for_status()
+\end{dhkcode}
+
+를 함께 사용하는 것이 좋다.
+
+\subsubsection{공공데이터 API는 어떻게 호출할까?}
+
+예를 들어 공공데이터 API가 다음과 같은 주소를 제공한다고 가정하자.
+
+\begin{dhkzsh}
+https://api.example.com/financial-products
+\end{dhkzsh}
+
+그리고 API 문서에 다음 파라미터가 정의되어 있다고 가정해보자.
+
+\begin{dhksmry}
+    page = 페이지 번호
+
+    per_page = 페이지당 데이터 수
+\end{dhksmry}
+
+그러면 Python에서:
+
+\begin{dhkcode}
+import requests
+
+url = "https://api.example.com/financial-products"
+params = {
+    "page": 1,
+    "per_page": 100
+}
+
+response = requests.get(
+    url,
+    params=params,
+    timeout=10
+)
+
+response.raise_for_status()
+data = response.json()
+\end{dhkcode}
+
+처럼 요청할 수 있다.
+
+여기서 새롭게 등장한 것은:
+
+\begin{dhkcode}
+params = params
+\end{dhkcode}
+
+이다.
+
+이건 URL에 \textbf{Query Parameters}를 추가하는 기능이다.
+
+실제 요청 URL은 개념적으로 다음과 같이 구성된다.
+
+\begin{dhkzsh}
+https://api.example.com/financial-products?page=1&per_page=100
+\end{dhkzsh}
+
+구조를 분해하면:
+
+\begin{dhkdir}
+https:/api.example.com/financial-products
+> URL Path
+\end{dhkdir}
+
+\begin{dhkdir}
+?page=1
+> page = 1
+\end{dhkdir}
+
+\begin{dhkdir}
+&per_page=100
+> per_page = 100
+\end{dhkdir}
+
+즉 GET 요청에서는 필요한 조회 조건을 URL의 Query Parameters로 전달하는 경우가 많다.
+
+하지만 모든 GET 요청이 반드시 Query Parameters를 사용해야 하는 것은 아니다.
+
+\subsubsection{Query Parameters와 JSON Body의 차이}
+
+둘을 비교해보자.
+
+\textbf{GET 요청}
+
+\begin{dhkcode}
+requests.get(
+    url,
+    params={'page':1}
+)
+
+GET /financial-products?page=1
+\end{dhkcode}
+
+\textbf{POST 요청}
+
+\begin{dhkcode}
+requests.post(
+    url,
+    json={"income": 5000}
+)
+
+POST /predict
+
+Body:
+{"income": 5000}
+\end{dhkcode}
+
+여기에서 기억할 핵심은:
+
+\begin{dhksmry}
+    - params= 는 URL의 Query Parameters를 구성한다.
+
+    - json= 은 JSON 형식의 요청 Body를 구성한다.
+\end{dhksmry}
+
+다만 Query Parameters는 POST에서도 사용할 수 있고,
+
+POST Body가 반드시 JSON이어야 하는 것도 아니다
+
+실제 사용 방식은 API 문서에서 정한다.
+
+\subsubsection{공공데이터 API $\rightarrow$ Pandas 연결}
+
+공공데이터 API가 다음과 같은 JSON을 반환한다고 가정하자.
+
+\begin{dhkzsh}
+{
+    "data": [
+        {
+            "product_name": "상품A",
+            "interest_rate": 3.5
+        },
+        {
+            "product_name": "상품B",
+            "interest_rate": 3.8
+        }
+    ]
+}
+\end{dhkzsh}
+
+Python에서는:
+
+\begin{dhkcode}
+import requests
+import pandas as pd
+
+response = requests.get(url, timeout=10)
+response.raise_for_status()
+
+result = response.json()
+
+records = result["data"]
+
+df = pd.DataFrame(records)
+\end{dhkcode}
+
+처럼 처리할 수 있다.
+
+전체 흐름을 보면:
+
+\begin{dhkbranch}[in=12]
+node main ::공공 데이터 API
+arrow main :: HTTP GET
+node main :: HTTP Response
+arrow main :: response.json()
+node main :: Python dict
+arrow main :: result['data']
+node main :: Python list[dict]
+arrow main :: pd.DataFrame()
+node main :: DataFrame
+arrow main
+\end{dhkbranch}
+
+이렇게 Pandas와 연결된다.
+
+실제 공공데이터 API에서는 인증키, 페이지네이션, 응답 형식 등이 서비스마다 다르기에
+
+반드시 해당 API 문서를 확인해야 한다.
+
+\subsubsection{다운로드와 파일 저장도 연결해보자}
+
+마지막으로 API에서 받은 데이터를 파일로 저장하는 경우도 살펴보자.
+
+\begin{dhkcode}
+import requests
+from pathlib import Path
+
+url = "https://example.com/data/train.csv"
+
+response = requests.get(url, timeout=10)
+response.raise_for_status()
+
+path = Path("data/train.csv")
+
+path.parent.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+path.write_bytes(response.content)
+\end{dhkcode}
+
+여기서:
+
+\begin{dhkcode}
+response.content
+\end{dhkcode}
+
+는 \zsh{bytes} 객체이고,
+
+\begin{dhkcode}
+path.write_bytes(...)
+\end{dhkcode}
+
+는 해당 바이트 데이터를 파일에 기록하는 메서드다.
+
+이 코드의 전체 흐름은:
+
+\begin{dhksmry}[centered]
+URL
+\da
+requests.get()
+\da
+Response object
+\da
+response.content
+\da
+bytes
+\da
+Path.write_bytes()
+\da
+Local file
+\end{dhksmry}
+
+가 된다.
+
+이후:
+
+\begin{dhkcode}
+df = pd.read_csv(path)
+\end{dhkcode}
+
+로 읽으면 된다.
+
+참고로 큰 파일은 \zsh{response.content}로 한 번에 메모리에 올리기보다
+
+\zsh{stream=True}를 사용해서 나누어 저장하는 것이 적절할 수 있다.

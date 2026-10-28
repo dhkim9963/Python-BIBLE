@@ -1,0 +1,3492 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.9. ML/DL 프로젝트 실행 구조 통합
+% ==================================================
+
+\subsection{ML/DL 프로젝트 실행 구조 통합}
+
+\subsubsection{지금까지 배운 내용이 왜 필요했을까?}
+
+먼저 우리가 최종적으로 실행하려는 명령을 살펴보자.
+
+\begin{dhkzsh}
+conda activate transformer
+
+python -m src.train \
+    --data ./data/train.csv \
+    --epochs 10 \
+    --batch-size 32 \
+    --output ./checkpoints/model.pt
+\end{dhkzsh}
+
+이 명령에는 지금까지 학습한 거의 모든 개념이 포함되어 있다.
+
+\begin{dhktable}
+|명령 요소	|관련 학습 내용|
+|:---|:---|
+|conda activate transformer|	2장: Python 실행 환경|
+|python	|2장: Python 인터프리터|
+|-m src.train	|4장: 모듈과 패키지|
+|--data	|3장: 커맨드라인 인수|
+|./data/train.csv	|1장: 상대 경로와 CWD|
+|--epochs 10	|3장: argparse와 타입 변환|
+|--batch-size 32	|3장: 커맨드라인 옵션|
+|--output	|3장: 실행 인수|
+|./checkpoints/model.pt|	5장: 파일 입출력|
+\end{dhktable}
+
+그리고 명령에는 직접 드러나지 않지만, 내부적으로 다음 개념들도 사용하게 된다.
+
+\begin{dhkcode}
+import os
+import sys
+from pathlib import Path
+
+sys.executable
+sys.argv
+sys.path
+
+os.environ
+os.getcwd()
+
+Path.cwd()
+Path(__file__)
+\end{dhkcode}
+
+여기에 이전에 배운 \zsh{subprocess}까지 연결하면,
+
+여러 학습 실험을 자동으로 실행하는 구조도 만들 수 있다.
+
+즉, 9장의 목표는 개별 Python 기능을 하나의 프로젝트 실행 시스템으로 구성하는 것이다.
+
+\subsubsection{프로젝트의 기본 디렉터리 구조}
+
+우선 다음과 같은 프로젝트를 가정하자.
+
+\begin{dhkdir}[in=6]
+transformer-project/
+>src/
+>>__init__.py
+>>train.py
+>>config.py
+>>dataset.py
+>>model.py
+>data/
+>>train.csv
+>checkpoints/
+>logs/
+>configs/
+>>train.json
+>scripts/
+>>run_experiments.py
+>.env
+>.gitignore
+>environment.yml
+>README.md
+\end{dhkdir}
+
+각 디렉터리와 파일의 역할을 살펴보자.
+
+\begin{dhktable}
+|구성 요소	|역할|
+|:---|:---|
+|src/	|Python 소스 코드|
+|src/train.py|	모델 학습 진입점|
+|src/config.py|	학습 설정 관리|
+|src/dataset.py	|데이터 로딩과 전처리|
+|src/model.py|	모델 정의|
+|data/|	학습 데이터|
+|checkpoints/	|모델 가중치 및 체크포인트|
+|logs/|	학습 로그|
+|configs/|	학습 설정 파일|
+|scripts/|	실험 실행 및 자동화|
+|.env|	로컬 환경변수 설정|
+|.gitignore	|Git 추적 제외 규칙|
+|environment.yml|	Conda 환경 정의|
+|README.md|	프로젝트 실행 방법|
+\end{dhktable}
+
+여기서 중요한 것은 파일의 종류가 아니라 책임을 기준으로 디렉터리를 분리했다는 것이다.
+
+예를 들어 모델의 구조를 변경하려면 \zsh{model.py},
+
+데이터 전처리를 변경하려면 \zsh{dataset.py},
+
+학습 실행 옵션을 변경하려면 \zsh{train.py} 또는 설정 파일을 수정하는 식이다.
+
+물론 실제 프로젝트의 규모에 따라 이 구조는 단순해질 수도 있고 복잡해질 수도 있다.
+
+이번 학습에서는 이 구조를 기준으로 진행한다.
+
+\subsubsection{프로젝트 루트(Project Root)와 CWD}
+
+이번 장에서 가장 먼저 확실히 구분해야 할 개념이 있다.
+
+바로 \zsh{프로젝트 루트와 현재 작업 디렉터리}이다.
+
+우리는 \zsh{Path.cwd()}와 \zsh{Path(__file__)}의 차이를 배웠다.
+
+그런데 실제 프로젝트에서는 이 차이가 매우 중요해진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+프로젝트 루트란?
+\end{dhksmry}
+\end{dhknote}
+
+프로젝트 루트는 프로젝트의 최상위 디렉터리를 의미한다.
+
+앞의 예제에서는 다음 디렉터리가 프로젝트 루트다.
+
+\begin{dhkzsh}
+transformer-project/
+\end{dhkzsh}
+
+여기에 \zsh{src, data, checkpoints} 등이 포함되어 있다.
+
+하지만 주의해야 할 점이 있다.
+
+\textbf{프로젝트 루트는 Python이나 운영체제가 자동으로 지정하는 특별한 디렉터리가 아니다}.
+
+개발자가 프로젝트의 구조를 설계하면서 정하는 논리적인 기준 디렉터리다.
+
+반면 CWD는 운영체제가 각 프로세스에 대해 관리하는 실행 환경의 일부이다.
+
+따라서 다음 두 개념은 구분해야 한다.
+
+\begin{dhktable}
+|개념	|의미|
+|:---|:---|
+|Project Root|	개발자가 정의한 프로젝트 기준 디렉터리|
+|CWD|	현재 프로세스의 작업 디렉터리|
+\end{dhktable}
+
+두 경로가 같을 수도 있지만 반드시 같아야 하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+같은 코드를 다른 위치에서 실행하면?
+\end{dhksmry}
+\end{dhknote}
+
+프로젝트 구조가 다음과 같다고 가정하자.
+
+\begin{dhkdir}[in=8]
+/Users/user/Desktop/transformer-project/
+>src/
+>>__init__.py
+>>train.py
+>data/
+>train.csv
+\end{dhkdir}
+
+\zsh{train.py}에 다음 코드를 작성해 보자.
+
+\begin{dhkcode}
+from pathlib import Path
+
+print("CWD:", Path.cwd())
+print("File:", Path(__file__).resolve())
+\end{dhkcode}
+
+먼저 프로젝트 루트에서 실행해 보자.
+
+\begin{dhkzsh}
+cd /Users/user/Desktop/transformer-project
+
+python -m src.train
+\end{dhkzsh}
+
+결과:
+
+\begin{dhkzsh}
+CWD: /Users/user/Desktop/transformer-project
+File: /Users/user/Desktop/transformer-project/src/train.py
+\end{dhkzsh}
+
+이번에는 상위 디렉터리에서 실행해 보자.
+
+\begin{dhkzsh}
+cd /Users/user/Desktop
+
+python transformer-project/src/train.py
+\end{dhkzsh}
+
+결과:
+
+\begin{dhkzsh}
+CWD: /Users/user/Desktop
+File: /Users/user/Desktop/transformer-project/src/train.py
+\end{dhkzsh}
+
+여기서 무엇이 달라졌을까?
+
+\zsh{Path.cwd()}는 변경되었지만, \zsh{Path(__file__).resolve()}는 동일한 파일을 가리키고 있다.
+
+즉,
+
+\begin{dhkcode}
+Path.cwd()
+\end{dhkcode}
+
+는 현재 프로세스가 어디에서 실행되고 있는지를 나타내고,
+
+\begin{dhkcode}
+Path(__file__).reslove()
+\end{dhkcode}
+
+는 현재 소스 파일의 경로를 나타내는 것이다.
+
+단, \zsh{__file__}은 일반적인 Python 소스 모듈에서는 사용할 수 있지만
+
+Jupyter Notebook이나 대화형 인터프리터에서는 정의되지 않을 수 있다.
+
+\subsubsection{상대 경로는 무엇을 기준으로 해석될까?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+from pathlib import Path
+
+data_path = Path("./data/train.csv")
+
+print(data_path)
+\end{dhkcode}
+
+이 코드에서 \zsh{data_path}는 상대 경로를 표현하는 \zsh{Path} 객체다.
+
+그런데 실제 파일에 접근할 때는 이 경로를 어디를 기준으로 해석할까?
+
+일반적인 파일 접근에서는 \zsh{현재 작업 디렉터리(CWD)}를 기준으로 해석한다.
+
+예를 들어 프로젝트 루트에서 실행하면
+
+\begin{dhkzsh}
+CWD = /Users/user/Desktop/transformer-project
+\end{dhkzsh}
+
+다음 경로는
+
+\begin{dhkcode}
+Path("./data/train.csv")
+\end{dhkcode}
+
+실질적으로 다음 파일을 가리킨다.
+
+\begin{dhkzsh}
+/Users/user/Desktop/transformer-project/data/train.csv
+\end{dhkzsh}
+
+하지만 상위 디렉터리에서 실행하면
+
+\begin{dhkzsh}
+CWD = /Users/user/Desktop
+\end{dhkzsh}
+
+동일한 상대 경로가 다음 파일을 가리키게 된다.
+
+\begin{dhkzsh}
+/Users/user/Desktop/data/train.csv
+\end{dhkzsh}
+
+따라서 파일을 찾지 못하는 문제가 발생할 수 있다.
+
+이것이 프로젝트 실행 위치에 따라 \zsh{FileNotFoundError}가 발생하는 대표적인 이유 중 하나다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+해결 방법 : 프로젝트 루트 기준 경로
+\end{dhksmry}
+\end{dhknote}
+
+프로젝트 루트를 코드에서 명시적으로 계산할 수도 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+DATA_PATH = PROJECT_ROOT / "data" / "train.csv"
+
+print(DATA_PATH)
+\end{dhkcode}
+
+여기서 경로를 단계별로 살펴보자.
+
+\begin{dhkcode}
+Path(__file__).resolve()
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+/Users/user/Desktop/transformer-project/src/train.py
+\end{dhkzsh}
+
+다음으로
+
+\begin{dhkcode}
+Path(__file__).resolve().parent
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+/Users/user/Desktop/transformer-project/src
+\end{dhkzsh}
+
+그리고
+
+\begin{dhkcode}
+Path(__file__).resolve().parent.parent
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+/Users/user/Desktop/transformer-project
+\end{dhkzsh}
+
+따라서 \zsh{PROJECT_ROOT}를 얻을 수 있다.
+
+이제 다음 코드로 데이터를 참조하면
+
+\begin{dhkcode}
+DATA_PATH = PROJECT_ROOT / "data" / "train.csv"
+\end{dhkcode}
+
+현재 작업 디렉터리와 무관하게 동일한 프로젝트 파일을 가리킬 수 있다.
+
+다만 이 방식은 \zsh{train.py}가 프로젝트 루트 바로 아래의 \zsh{src/}에 위치한다는 구조적 가정에 의존한다.
+
+프로젝트 구조가 바뀌면 \zsh{parent.parent}도 적절히 변경해야 한다.
+
+\subsubsection{CLI로 전달한 상대 경로는 어떻게 처리할까?}
+
+여기서 이전에 배운 \zsh{argparse}와 연결해 보자.
+
+다음 코드를 작성했다고 가정하자.
+
+\begin{dhkcode}
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument(
+    "--data",
+    type=Path,
+    required=True
+)
+
+args = parser.parse_args()
+
+print(args.data)
+\end{dhkcode}
+
+터미널에서 다음과 같이 실행하면
+
+\begin{dhkzsh}
+python -m src.train --data ./data/train.csv
+\end{dhkzsh}
+
+\zsh{args.data}에는 어떤 객체가 저장될까?
+
+\begin{dhkcode}
+Path("data/train.csv")
+\end{dhkcode}
+
+와 같은 상대 경로를 표현하는 \zsh{Path} 객체가 저장된다.
+
+여기서 중요한 점이 있다.
+
+\zsh{argparse}의 \zsh{type=Path}는 문자열을 \zsh{Path} 객체로 반환할 뿐,
+
+자동으로 프로젝트 루트 기준의 절대 경로를 만들어 주지는 않는다.
+
+따라서 다음 코드는
+
+\begin{dhkcode}
+args.data.is_file()
+\end{dhkcode}
+
+현재 작업 디렉터리를 기준으로 파일 존재 여부를 확인하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+CLI 경로를 처리하는 두 가지 설계
+\end{dhksmry}
+\end{dhknote}
+
+실제 프로젝트에서는 크게 두 가지 방식이 있다.
+
+방식 A - 사용자의 CWD를 기준으로 해석
+
+\begin{dhkcode}
+data_path = args.data.resolve()
+\end{dhkcode}
+
+이 방식은 사용자가 터미널에서 전달한 상대 경로를 현재 작업 디렉터리 기준으로 해석한다.
+
+예를 들어 사용자가
+
+\begin{dhkzsh}
+python -m src.train --data ./data/train.csv
+\end{dhkzsh}
+
+를 실행했다면, 사용자가 명령을 실행한 위치를 기준으로 파일을 찾는 것이다.
+
+일반적인 CLI 프로그램에서는 자연스로운 방식이다.
+
+방식 B - 프로젝트 루트를 기준으로 해석
+
+\begin{dhkcode}
+data_path = args.data
+
+if not data_path.is_absolute():
+    data_path = PROJECT_ROOT / data_path
+\end{dhkcode}
+
+이 방식은 상대 경로를 프로젝트 루트 기준으로 해석한다.
+
+프로젝트 내부 데이터와 설정 파일을 일관된 위치에서 관리하려는 경우 유용하다.
+
+하지만 사용자가 다른 디렉터리에 있는 파일을 상대 경로로 전달했을 때 예상과 다르게 동작할 수도 있다.
+
+따라서 어느 방식이 절대적으로 옳다고 할 수는 없다.
+
+중요한 것은 CLI가 받은 상대 경로를 어떤 기준으로 해석할지 명시적으로 설계하는 것이다.
+
+이번 프로젝트에서는 학습 명령을 프로젝트 루트에서 실행하는 것을 기본 규칙으로 삼고, CLI 경로는 CWD 기준으로 처리한다.
+
+어이렇게 하면 일반적인 Python CLI의 동작 방식과도 일치한다.
+
+\subsubsection{\zsh{python train.py}와 \zsh{python -m src.train}}
+
+이번에는 이전에 배웠던 import와 패키지 구조를 연결해 보자.
+
+다음 프로젝트가 있다고 가정하자.
+
+\begin{dhkdir}[in=6]
+transformer-project/
+>src/
+>>__init__.py
+>>train.py
+>>dataset.py
+>>model.py
+\end{dhkdir}
+
+\zsh{train.py}에서 같은 패키지에 있는 \zsh{dataset.py}를 가져오고 싶다.
+
+\begin{dhkcode}
+from .dataset import load_dataset
+\end{dhkcode}
+
+여기서 \zsh{.}은 현재 패키지를 기준으로 하는 상대 import를 의미한다.
+
+그런데 다음처럼 실행하면 문제가 발생할 수 있다.
+
+\begin{dhkzsh}
+python src/train.py
+\end{dhkzsh}
+
+왜 그럴까?
+
+Python은 \zsh{train.py}를 패키지 내부의 모듈이 아니라 직접 실행한 스크립트로 취급하기 때문이다.
+
+이 경우 일반적으로
+
+\begin{dhkzsh}
+__name__="__main__"
+\end{dhkzsh}
+
+이고,
+
+\begin{dhkzsh}
+__package__ is None
+\end{dhkzsh}
+
+이므로 상대 import를 해석할 패키지 정보가 없다.
+
+반면 다음과 같이 실행하면
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+Python은 \zsh{src.train}을 패키지 구조 안에서 찾아 실행한다.
+
+이때 실행되는 모듈의 정보는 일반적으로 다음과 같다.
+
+\begin{dhkzsh}
+__name__=="__main__"
+
+__package__=="src"
+\end{dhkzsh}
+
+따라서 다음 상대 import가 가능해진다.
+
+\begin{dhkcode}
+from .dataset import load_dataset
+\end{dhkcode}
+
+이를 정리하면 다음과 같다.
+
+\begin{dhktable}
+|실행 방식	|__name__|	__package__	|상대 import|
+|:---|:---|:---|:---|
+|python src/train.py|	"__main__"	|일반적으로 None	|일반적으로 실패|
+|python -m src.train|"__main__"|	"src"|	가능|
+\end{dhktable}
+
+물론 \zsh{python -m src.train}이 성공하려면 
+
+\zsh{src} 패키지를 Python이 모듈 검색 경로에서 찾을 수 있어야 한다.
+
+이번 예제에서는 프로젝트 루트에서 실행하기 때문에 해당 조건을 만족한다.
+
+왜 프로젝트에서는 \zsh{-m} 실행을 권장할까?
+
+핵심은 소스 파일의 물리적 경로가 아니라 패키지 구조를 기준으로 실행할 수 있기 때문이다.
+
+프로젝트가 커질수록 모듈 사이의 import 관계가 복잡해지는데, 이때 패키지 구조를 일관되게 유지하는 것이 중요하다.
+
+\subsubsection{학습 진입점(Entry Point) 설계}
+
+이제 실제 \zsh{train.py}를 구성해 보자.
+
+먼저 학습 진입점이라는 개념을 이해해야 한다.
+
+Entry Point는 프로그램 실행이 시작되는 진입 위치를 의미한다.
+
+이번 프로젝트에서는 다음 명령이 학습 진입점을 실행한다.
+
+\begin{dhkzsh}
+python -m src.train
+\end{dhkzsh}
+
+\zsh{src/train.py}를 다음처럼 작성해 보자.
+
+\begin{dhkcode}
+# src/train.py
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="ML training script"
+    )
+
+    parser.add_argument(
+        "--data",
+        type=Path,
+        required=True
+    )
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=10
+    )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("checkpoints/model.pt")
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    print("Python:", sys.executable)
+    print("CWD:", Path.cwd())
+    print("PID:", os.getpid())
+
+    print("Data:", args.data)
+    print("Epochs:", args.epochs)
+    print("Batch size:", args.batch_size)
+    print("Output:", args.output)
+
+
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+이 구조를 자세히 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+parse_args()를 분리하는 이유
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 별도의 함수로 분리했다.
+
+\begin{dhkcode}
+def parse_args():
+    ...
+\end{dhkcode}
+
+이유는 커맨드라인 인수 처리와 학습 실행 로직의 책임을 구분하기 위해서다.
+
+예를 들어 추후에 학습 설정을 검증하거나 테스트 코드를 작성할 때 구조를 확장하기 쉬워진다.
+
+또한 더 큰 프로젝트에서는 인수 파싱 자체를 별도의 모듈로 분리할 수도 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+main()을 사용하는 이유
+\end{dhksmry}
+\end{dhknote}
+
+다음 함수는 프로그램의 주요 실행 흐름을 담당한다.
+
+\begin{dhkcode}
+def main():
+    ...
+\end{dhkcode}
+
+Python에서 \zsh{main()}이라는 이름은 특별한 예약어가 아니다.
+
+개발자가 관례적으로 사용하는 함수 이름이다.
+
+즉, Python이 자동으로 \zsh{main()}을 실행해 주는 것은 아니다.
+
+따라서 다음 코드가 필요하다.
+
+\begin{dhkcode}
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+이 코드는 현재 모듈이 이 프로그램의 진입점으로 실행되었을 때 \zsh{main()}을 호출한다.
+
+반면 다른 모듈에서 다음처럼 import한다면
+
+\begin{dhkcode}
+from src.train import main
+\end{dhkcode}
+
+\zsh{main()}이 자동으로 실행되지는 않는다.
+
+이것은 프로젝트를 모듈 단위로 재사용하거나 테스트할 때 중요한 설계다.
+
+\subsubsection{입력 파일과 출력 파일의 경로 검증}
+
+이제 실제 학습 프로그램에서 필요한 경로 처리를 추가해 보자.
+
+먼저 입력 파일을 확인해야 한다.
+
+\begin{dhkcode}
+if not args.data.is_file():
+    raise FileNotFoundError(
+        f"Dataset not found: {args.data}"
+    )
+\end{dhkcode}
+
+입력 파일이 존재하지 않으면 학습을 시작하기 전에 오류를 발생시키는 것이다.
+
+이번에는 출력 경로를 살펴보자.
+
+\begin{dhkzsh}
+args.output
+\end{dhkzsh}
+
+이 객체는 다음과 같은 경로를 가리킬 수 있다.
+
+\begin{dhkzsh}
+checkpoints/model.pt
+\end{dhkzsh}
+
+따라서 다음처럼 작성하여야 한다.
+
+\begin{dhkcode}
+args.output.parent.mkdir(
+    parents=True,
+    exist_ok=True
+)
+\end{dhkcode}
+
+이전에 배웠던 내용이다.
+
+\begin{dhkcode}
+args.output.mkdir()
+\end{dhkcode}
+
+라고 작성하면 \zsh{model.pt}라는 이름의 디렉터리를 만들려고 하기 때문에 의도와 다른 동작이 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+입력 경로와 출력 경로 처리의 차이
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|경로	|처리|
+|:---|:---|
+|입력 데이터 파일	|존재 여부 검증|
+|출력 모델 파일	|부모 디렉터리 생성|
+|로그 디렉터리	|디렉터리 자체 생성|
+\end{dhktable}
+
+예를 들어 다음처럼 구분할 수 있다.
+
+\begin{dhkcode}
+data_path = args.data.resolve()
+
+output_path = args.output.resolve()
+
+log_dir = Path("logs").resolve()
+
+if not data_path.is_file():
+    raise FileNotFoundError(data_path)
+
+output_path.parent.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+log_dir.mkdir(
+    parents=True,
+    exist_ok=True
+)
+\end{dhkcode}
+
+여기서 \zsh{resolve()}는 경로를 절대 경로로 해석하는 데 사용된다.
+
+단, \zsh{resolve()} 자체가 파일을 생성하거나 파일 존재를 검증하는 것은 아니다.
+
+파일 존재 여부는 별도로 확인해야 한다.
+
+\subsubsection{실행 설정과 프로그램 로직의 분리}
+
+이제 ML/DL 프로젝트에서 중요한 설계 원칙을 하나 살펴보자.
+
+바로 설정(Configuration)과 실행 로직(Logic)의 분리다.
+
+예를 들어 다음과 같이 학습 코드를 작성했다고 생각해 보자.
+
+\begin{dhkzsh}
+epochs = 10
+batch_size = 32
+learning_rate = 0.0001
+\end{dhkzsh}
+
+이 값들을 소스 코드 안에 직접 작성할 수도 있다.
+
+하지만 실험할 때마다 코드를 수정해야 한다는 문제가 발생한다.
+
+그래서 일반적으로 다음 세 가지 방법을 사용한다.
+
+\begin{dhksmry}
+    1. 커맨드라인 인수
+
+    2. 환경변수
+
+    3. 설정 파일
+\end{dhksmry}
+
+각각의 역할을 비교해 보자.
+
+\begin{dhktable}
+|방식|	적합한 용도	|예시|
+|:---|:---|:---|
+|CLI|	실행마다 변경하는 //*옵션	|epochs, batch size|
+|환경변수|	실행 환경에 따른 설정	|API token, cache path|
+|설정 파일|	여러 설정을 묶어서 //*관리	|optimizer, scheduler, model architecture|
+\end{dhktable}
+
+물론 엄격하게 구분되는 것은 아니다.
+
+예를 들어 learning rate를 CLI로 전달할 수도 있고, JSON 설정 파일에 저장할 수도 있다.
+
+중요한 것은 설정값의 책임과 변경 주기를 고려해 적절한 위치에 배치하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+JSON 설정 파일
+\end{dhksmry}
+\end{dhknote}
+
+다음 파일을 만들어 보자.
+
+\begin{dhkzsh}
+configs/train.json
+\end{dhkzsh}
+
+내용은 다음과 같다.
+
+\begin{dhkzsh}
+{
+    "model_name": "distilbert-base-uncased",
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "max_length": 128
+}
+\end{dhkzsh}
+
+Python에서는 다음과 같이 읽을 수 있다.
+
+\begin{dhkcode}
+import json
+from pathlib import Path
+
+config_path = Path("configs/train.json")
+
+with config_path.open(
+    "r",
+    encoding="utf-8"
+) as f:
+    config = json.load(f)
+
+print(config)
+\end{dhkcode}
+
+여기서 \zsh{json.load(f)}는 JSON 파일의 내용을 Python 객체로 변환한다.
+
+결과는 다음과 같은 딕셔너리다.
+
+\begin{dhkzsh}
+{
+    "model_name": "distilbert-base-uncased",
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "max_length": 128
+}
+\end{dhkzsh}
+
+이전에 배운 매핑 객체의 개념이 여기서 다시 등장한다.
+
+\begin{dhkzsh}
+config['learning_rate']
+\end{dhkzsh}
+
+는 \zsh{'learning_rate'} 키에 대응하는 값을 조회하는 연산이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+CLI와 설정 파일을 결합하기
+\end{dhksmry}
+\end{dhknote}
+
+이번에는 설정 파일의 경로 자체를 CLI로 전달해 보자.
+
+\begin{dhkcode}
+parser.add_argument(
+    "--config",
+    type=Path,
+    default=Path("configs/train.json")
+)
+\end{dhkcode}
+
+이제 다음처럼 실행할 수 있다.
+
+\begin{dhkzsh}
+python -m src.train \
+    --config configs/train.json \
+    --epochs 10
+\end{dhkzsh}
+
+이 구조에서는 다음 두 종류의 설정을 구분할 수 있다.
+
+\begin{dhkdir}[in=6]
+CLI
+> --config
+>> 설정 파일 위치
+>--epochs
+>> 이번 실행의 epoch 수
+\end{dhkdir}
+
+설정 파일:
+
+\begin{dhkdir}[in=6]
+train.json
+> model_name
+> learning_rate
+> weight_decay
+> max_length
+\end{dhkdir}
+
+즉, CLI는 실행을 제어하고 설정 파일은 모델과 학습에 필요한 여러 설정을 묶어서 제공하는 구조다.
+
+실제 프로젝트에서는 설정 파일과 CLI에 동일한 항목이 존재할 때 어느 쪽이 우선하는지도 명시적으로 설계해야 한다.
+
+예를 들어 CLI 옵션이 설정 파일 값을 덮어쓰도록 만들 수 있다.
+
+\subsubsection{지금까지의 실행 흐름 통합}
+
+여기까지 배운 내용을 하나의 구조로 정리해 보자.
+
+\begin{dhkbranch}[in=8]
+node main :: Terminal
+arrow main :: conda activate transformer
+node main :: Conda Environment
+arrow main :: Python Interpreter 선택
+node main :: Shell
+line main :: python -m src.train
+line main ::   --data ./data/train.csv
+line main ::   --epochs 10
+arrow main ::   --output ./checkpoints/model.pt
+node main :: Python Process
+branchline main -> exe :: sys.executable
+handoff exe -> exesub :: 현재 Python Interpreter
+stop exesub
+branchline main -> cwd :: Path.cwd()
+handoff cwd -> cwdsub :: 현재 작업 디렉터리
+stop cwdsub
+branchline main -> argparse :: argparse
+branchline argparse -> argdata :: data
+stop argdata
+branchline argparse -> argepoch :: epochs
+stop argepoch
+handoff argparse -> argoutput :: output
+stop argoutput
+branchline main -> import :: import
+handoff import -> src :: src 패키지 모듈 로딩
+stop src
+branchline main -> json :: JSON Config
+handoff json -> jsonsub :: 학습 설정 로딩
+stop jsonsub
+branchline main -> dataset :: Dataset
+handoff dataset -> datasetsub :: data/train.csv
+stop datasetsub
+handoff main -> training :: Training
+branchline training -> model :: Model
+stop model
+branchline training -> opt :: Optimizer
+stop opt
+branchline training -> check :: Checkpoint
+stop check
+handoff training -> logs :: Logs
+stop logs
+\end{dhkbranch}
+
+이 구조에서 각 기능은 독립적인 책임을 가지고 있다.
+
+그리고 중요한 것은 각 기능이 서로 다른 계층에 존재한다는 점이다.
+
+예를 들어 다음 내용을 구분할 수 있어야 한다.
+
+\begin{dhksmry}
+- Shell은 명령을 해석하고 프로세스를 실행한다.
+
+- Conda는 실행 환경을 구성하고 인터프리터 선택에 영향을 준다.
+
+- Python 인터프리터는 모듈을 로딩하고 코드를 실행한다.
+
+- argparse는 커맨드라인 인수를 Python 객체로 변환한다.
+
+- pathlib는 파일 시스템 경로를 표현하고 조작한다.
+
+- json은 설정 파일의 데이터를 Python 객체로 변환한다.
+
+- 모델 학습 코드는 이 설정들을 이용해 실제 연산을 수행한다.
+\end{dhksmry}
+
+이 구분이 명확해지면 프로젝트에서 문제가 발생했을 때 어느 계층을 확인해야 하는지도 판단하기 쉬워진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+이번 학습 내용 정리
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|학습 항목|	핵심|
+|:---|:---|
+|프로젝트 루트|	프로젝트 구조의 논리적 기준|
+|CWD	|현재 프로세스의 작업 디렉터리|
+|Path(__file__)	|소스 파일의 경로|
+|상대 경로	|일반적으로 CWD 기준으로 해석|
+|python -m	|패키지 구조를 유지하며 모듈 실행|
+|argparse	|실행 옵션을 Python 객체로 변환|
+|main()	|프로그램의 실행 흐름을 구성하는 관례적 함수|
+|입력 경로 검증|	is_file()|
+|출력 경로 준비	|output.parent.mkdir()|
+|JSON 설정|	json.load()|
+|설정 분리	|CLI / 환경변수 / 설정 파일|
+\end{dhktable}
+
+\subsubsection{전체 학습 파이프 라인}
+
+지난 학습에서는 프로젝트 루트, CWD, \zsh{python -m}, \zsh{argparse},
+
+설정파일, 입력·출력 경로를 하나의 프로젝트 구조로 연결했다.
+
+이번에는 그 구조 안에서 데이터가 어떻게 모델에 전달되고,
+
+학습 결과가 어떻게 파일로 저장되는지 살펴볼 것이다.
+
+여기서 중요한 것은 모델의 성능이 아니다.
+
+이번에는 Python 프로그램의 실행 구조와 객체·데이터의 이동에 집중한다.
+
+먼저 우리가 구현할 전체 흐름을 살펴본다.
+
+\begin{dhkbranch}[in=8]
+node main :: Terminal
+line main ::python -m src.train
+line main ::--data ./data/train.csv
+line main :: --epochs 10
+line main :: --batch-size 32
+arrow main ::--output ./checkpoints/model.pt
+node main :: src/train.py
+
+branchline main -> argp :: argparse
+handoff argp -> argpsub :: CLI 인수 파싱
+stop argpsub
+
+branchline main -> dataset :: dataset.py
+handoff dataset -> datasetsub :: CSV → DataFrame → Tensor
+stop datasetsub
+
+branchline main -> model :: model.py
+handoff model -> modelsub :: PyTorch Model 생성
+stop modelsub
+
+branchline main -> device :: Device
+handoff device -> devicesub :: CPU / CUDA / MPS
+stop devicesub
+
+branchline main -> training :: Training Loop
+branchline training -> ff :: Forward
+stop ff
+branchline training -> loss :: Loss
+stop loss
+branchline training -> bb :: Backward
+stop bb
+handoff training -> opt :: Optimizer Step
+stop opt
+
+handoff main -> check :: Checkpoint
+handoff check -> checksub :: model.pt
+stop checksub
+\end{dhkbranch}
+
+여기서 눈여겨볼 점은 각 단계가 서로 다른 역할을 수행한다는 것이다.
+
+\begin{dhksmry}
+    - argparse는 실행 설정을 전달받는다.
+
+    - dataset.py는 외부 데이터를 모델이 사용할 수 있는 형태로 변환한다.
+
+    - model.py는 학습할 모델을 정의한다.
+
+    - train.py는 이 구성 요소들을 조립하고 실행한다.
+
+    - torch.save()는 학습 결과를 파일로 저장한다.
+\end{dhksmry}
+
+이번에는 이해하기 쉽도록 CSV 기반의 간단한 회귀 모델을 사용한다.
+
+Transformer 모델을 사용하면 토크나이저, 모델 다운롣, Hugging Face 캐시 등
+
+추가적인 개념이 동시에 등장하기 때문이다.
+
+그 부분은 기본 실행 구조를 완성한 뒤 연결할 것이다.
+
+\subsubsection{학습 프로젝트 구성}
+
+지난 학습에서 만든 프로젝트 구조를 그대로 사용한다.
+
+\begin{dhkdir}[in=6]
+transformer-project/
+>src/
+>>__init__.py
+>>train.py
+>>config.py
+>>dataset.py
+>>model.py
+>data/
+>>train.csv
+>checkpoints/
+>logs/
+>configs/
+>>train.json
+>scripts/
+>>run_experiments.py
+>.env
+>.gitignore
+>environment.yml
+>README.md
+\end{dhkdir}
+
+이번 예제에서 실제로 사용할 파일은 네 개다.
+
+\begin{dhkzsh}
+data/train.csv
+src/dataset.py
+src/model.py
+src/train.py
+\end{dhkzsh}
+
+우선 데이터부터 살펴본다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+CSV 데이터
+\end{dhksmry}
+\end{dhknote}
+
+다음과 같은 데이터가 있다고 가정하자.
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+\begin{dhkzsh}
+x1,x2,target
+1.0,2.0,5.0
+2.0,3.0,8.0
+3.0,4.0,11.0
+4.0,5.0,14.0
+5.0,6.0,17.0
+6.0,7.0,20.0
+7.0,8.0,23.0
+8.0,9.0,26.0
+\end{dhkzsh}
+
+이 데이터는 두 개의 입력 피처와 하나의 타깃을 가지고 있다.
+
+수학적으로 표현하면 다음과 같다.
+
+\[
+X \in \mathbb{R}^{N\times 2}
+\]
+\[
+y \in \mathbb{R}^{N\times 1}
+\]
+
+여기서 \(N\)은 데이터 샘플 수다.
+
+우리는 간단한 선형 회귀 모델을 학습할 것이다.
+
+\[
+\hat{y}=XW+b
+\]
+
+이때
+
+\[
+W\in\mathbb{R}^{2\times1},
+\qquad
+b\in\mathbb{R}
+\]
+
+이다.
+
+이 예제는 머신러닝 이론을 새롭게 학습하기 위한 것이 아니라,
+
+데이터 파일이 Python 객체와 Tensor로 변환되는 과정을 확인하기 위한 것이다.
+
+\subsubsection{\zsh{dataset.py} - 파일에서 Tensor까지}
+
+이제 데이터 로딩 코드를 작성해 보자.
+
+\begin{dhkcode}
+# src/dataset.py
+
+import pandas as pd
+import torch
+
+from pathlib import Path
+from torch.utils.data import TensorDataset
+
+def load_dataset(data_path: Path) -> TensorDataset:
+
+    df = pd.read_csv(data_path)
+
+    features = df[["x1", "x2"]]
+    target = df[["target"]]
+
+    x = torch.tensor(
+        features.to_numpy(),
+        dtype=torch.float32
+    )
+
+    y = torch.tensor(
+        target.to_numpy(),
+        dtype=torch.float32
+    )
+
+    dataset = TensorDataset(x, y)
+
+    return dataset
+\end{dhkcode}
+
+이 코드에는 우리가 지금까지 배운 개념들이 많이 포함되어 있다.
+
+하나씩 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+data_path: Path의 의미
+\end{dhksmry}
+\end{dhknote}
+
+함수 정의를 보자.
+
+\begin{dhkcode}
+def load_dataset(data_path: Path) -> TensorDataset:
+\end{dhkcode}
+
+여기서 \zsh{data_path: Path}는 타입 힌트다.
+
+이 함수가 \zsh{Path} 객체를 인수로 받도록 설계되었다는 것을 표현한다.
+
+하지만 타입 힌트 자체가 런타임에서 인수의 타입을 강제로 검사하거나 변환하지는 않는다.
+
+따라서 다음과 같이 호출할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+dataset = load_dataset(
+    Path("data/train.csv")
+)
+\end{dhkcode}
+
+이때 \zsh{Path("data/train.csv")}는 파일 자체가 아니라 파일 시스템 경로를 표현하는 Python 객체다.
+
+실제 파일을 읽는 작업은 다음 코드에서 발생한다.
+
+\begin{dhkcode}
+df = pd.read_csv(data_path)
+\end{dhkcode}
+
+이전에 배운 \zsh{Path} 객체와 파일 입출력의 차이가 여기서 다시 등장한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+pd.read_csv()는 무엇을 반환할까?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+df = pd.read_csv(data_path)
+\end{dhkcode}
+
+\zsh{pd.read_csv()}는 CSV 데이터를 읽고 \zsh{DataFrame} 객체를 반환한다.
+
+따라서 다음과 같은 바인딩이 발생한다.
+
+\begin{dhkbranch}[in=8]
+node main :: data_path
+arrow main
+node main :: Path Object
+arrow main :: pd.read_csv()
+node main :: DataFrame Object
+arrowup main
+node main :: df
+\end{dhkbranch}
+
+여기서 \zsh{df}는 파일 자체가 아니다.
+
+파일의 내용을 읽어 구성한 메모리상의 \zsh{DataFrame} 객체를 참조하는 이름이다.
+
+이 차이는 이후 체크포인트 저장에도 중요하게 등장한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+DataFrame에서 Tensor로 변환
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+features = df[["x1", "x2"]]
+target = df[["target"]]
+\end{dhkcode}
+
+여기서 두 객체의 shape은 다음과 같다.
+
+\begin{dhkzsh}
+features.shape = (N, 2)
+target.shape   = (N, 1)
+\end{dhkzsh}
+
+이제 NumPy 배열로 변환한다.
+
+\begin{dhkcode}
+features.to_numpy()
+\end{dhkcode}
+
+그리고 PyTorch Tensor로 변환한다.
+
+\begin{dhkcode}
+x = torch.tensor(
+    features.to_numpy(),
+    dtype=torch.float32
+)
+\end{dhkcode}
+
+전체 흐름은 다음과 같다.
+
+\begin{dhksmry}[centered]
+CSV File
+\da
+pd.read_csv()
+\da
+DataFrame
+\da
+to_numpy()
+\da
+NumPy ndarray
+\da
+torch.tensor()
+\da
+PyTorch Tensor
+\end{dhksmry}
+
+여기서 \zsh{torch.tensor()}는 전달된 데이터를 이용해 새로운 Tensor를 생성한다.
+
+또한 \zsh{dtype=torch.float32}를 지정했기 때문에
+
+해당 Tensor의 자료형을 \zsh{float32}로 설정한다.
+
+\subsubsection{\zsh{TensorDataset}과 \zsh{DataLoader}}
+
+다음 코드를 다시 보자.
+
+\begin{dhkcode}
+dataset = TensorDataset(x, y)
+\end{dhkcode}
+
+\zsh{TensorDataset}은 여러 Tensor를 같은 인덱스 기준으로 묶어 주는 Dataset 구현체다.
+
+예를 들어 다음처럼 접근할 수 있다.
+
+\begin{dhkcode}
+x_sample, y_sample = dataset[0]
+\end{dhkcode}
+
+이때 \zsh{x_sample}은 첫 번째 샘플의 피처를 나타내고,
+
+\zsh{y_sample}은 첫 번째 샘플의 타깃을 나타낸다.
+
+하지만 학습할 때는 일반적으로 데이터를 한 번에 모두 사용하기보다 미니배치 단위로 처리한다.
+
+이때 \zsh{DataLoader}를 사용한다.
+
+\begin{dhkcode}
+from torch.utils.data import DataLoader
+
+loader = DataLoader(
+    dataset,
+    batch_size=32,
+    shuffle=True
+)
+\end{dhkcode}
+
+이 코드를 객체 관점에서 살펴보자.
+
+\begin{dhkbranch}[in=8]
+node main :: TensorDataset Object
+arrow main :: DataLoader(dataset, ...)
+node main :: DataLoader Object
+arrow main :: iter(loader)
+node main :: Iterator
+arrow main :: next(iterator)
+node main :: Mini-batch
+\end{dhkbranch}
+
+여기서 이전에 배웠던 iterator와 Generator 개념이 연결된다.
+
+정확하게 말하면 \zsh{DataLoader}는 iterable 객체이고,
+
+\zsh{iter(loader)}를 호출하면 배치를 순회하는 iterator를 얻을 수 있다.
+
+따라서 다음 코드가 가능하다.
+
+\begin{dhkcode}
+for x_batch, y_batch in loader:
+    ...
+\end{dhkcode}
+
+이전에 배웠듯 \zsh{for}문은 내부적으로 iterator protocol을 사용한다.
+
+개념적으로는 다음과 유사하다.
+
+\begin{dhkcode}
+iterator = iter(loader)
+
+while True:
+    try:
+        x_batch, y_batch = next(iterator)
+
+    except StopIteration:
+        break
+\end{dhkcode}
+
+즉, \zsh{DataLoader}가 특별한 반복 문법을 사용하는 것이 아니다.
+
+Python의 기존 iterator protocol을 활용하는 것이다.
+
+이 부분은 이전에 학습한 Python 문법이 실제 ML/DL 코드에서 사용되는 대표적 사례다.
+
+\subsubsection{\zsh{model.py} - 모델 객체 정의}
+
+이제 모델을 정의해 보자.
+
+\begin{dhkcode}
+# src/model.py
+
+import torch
+from torch import nn
+
+class RegressionModel(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(2, 1)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+여기서 모델은 다음과 같은 선형 변환을 수행한다.
+
+\[
+\hat{y}=XW+b
+\]
+
+다만 PyTorch의 \zsh{nn.Linear(2,1)}은 내부적으로 가중치를 (1,2) 형태로 저장하고
+
+연산은 다음과 같이 수행한다.
+
+\[
+Y=XW^{T}+b
+\]
+
+이것은 행렬의 shape을 맞추기 위한 구현상의 표현 차이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+모델 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+model = RegressionModel()
+\end{dhkcode}
+
+이 코드는 \zsh{RegressionModel} 클래스의 인스턴스를 생성한다.
+
+\begin{dhkbranch}[in=8]
+node main :: RegressionModel Class
+arrow main :: RegressionModel()
+node main :: RegressionModel Instance
+branchline main -> lin :: linear
+branchline lin -> weight :: weight
+stop weight
+handoff lin -> bias :: bias
+stop bias
+handoff main -> ff :: forward()
+\end{dhkbranch}
+
+여기서 \zsh{model}은 모델 파일이 아니다.
+
+메모리에 생성된 Python 객체를 참조하는 이름이다.
+
+이 모델 객체가 학습되면서 내부 파라미터의 값이 변경되는 것이다.
+
+그리고 나중에 그 파라미터를 파일로 저장할 것이다.
+
+\subsubsection{CPU, CUDA, MPS 장치 선택}
+
+이제 모델을 어느 장치에서 실행할지 결정해야 한다.
+
+사용하는 환경이 다양하다면 특히 중요한 부분이다.
+
+\begin{dhksmry}
+    - Apple Silicon Mac: MPS 사용 가능 여부 확인
+
+    - Windows 데스크톱: CUDA 지원 GPU 여부 확인
+
+    - 공통 대안: CPU
+\end{dhksmry}
+
+먼저 장치 선택 함수를 작성해 보자.
+
+\begin{dhkcode}
+import torch
+
+
+def get_device():
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+
+    return torch.device("cpu")
+\end{dhkcode}
+
+여기서 \zsh{torch.device()}는 연산을 수행할 장치를 표현하는 객체를 생성한다.
+
+\begin{dhkcode}
+device = get_device()
+\end{dhkcode}
+
+이후 모델을 해당 장치로 이동할 수 있다.
+
+\begin{dhkcode}
+model = model.to(device)
+\end{dhkcode}
+
+그리고 데이터도 같은 장치로 이동해야 한다.
+
+\begin{dhkcode}
+x_batch = x_batch.to(device)
+y_batch = y_batch.to(device)
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 모델과 데이터를 같은 장치로 이동해야 할까?
+\end{dhksmry}
+\end{dhknote}
+
+PyTorch의 일반적인 연산에서는 연산에 참여하는 Tensor들이 호환되는 장치에 있어야 한다.
+
+예를 들어 모델의 가중치가 GPU에 있고, 입력 데이터가 CPU에 있으면 장치 불일치 오류가 발생할 수 있다.
+
+\begin{dhkdir}[in=6]
+CPU Memory
+> Input Tensor
+\end{dhkdir}
+
+\begin{dhkdir}[in=6]
+GPU Memory
+> Model Parameters
+\end{dhkdir}
+
+이 상태에서는 일반적인 선형 계층 연산을 그대로 수행할 수 없다.
+
+따라서 다음처럼 맞춰 준다.
+
+\begin{dhkdir}[in=6]
+GPU
+> Model Parameters
+> Input Tensor
+> Target Tensor
+\end{dhkdir}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+model.to(device)와 tensor.to(device)의 차이
+\end{dhksmry}
+\end{dhknote}
+
+여기서 객체 관점에서 주의할 점이 있다.
+
+\begin{dhkcode}
+model.to(device)
+\end{dhkcode}
+
+\zsh{nn.Module.to()}는 일반적으로 모델 자체의 파라미터와 버퍼를 지정한 장치로 이동시키고, 모델 객체 자신을 반환한다.
+
+반면
+
+\begin{dhkcode}
+x_batch.to(device)
+\end{dhkcode}
+
+Tensor의 \zsh{.to()}는 필요한 경우 변환된 Tensor를 반환한다.
+
+따라서 Tensor에서는 반환값을 다시 바인딩하는 형태를 사용하는 것이 일반적이다.
+
+\begin{dhkcode}
+x_batch = x_batch.to(device)
+\end{dhkcode}
+
+이 차이는 Python 객체의 mutation과 rebinding을 공부했던 내용과도 연결된다.
+
+\subsubsection{학습 루프 구성}
+
+이제 실제 학습을 수행해 보자.
+
+먼저 필요한 구성 요소를 생성한다.
+
+\begin{dhkcode}
+model = RegressionModel().to(device)
+
+criterion = torch.nn.MSELoss()
+
+optimizer = torch.optim.Adam(
+    model.parameters(),
+    lr=0.001
+)
+\end{dhkcode}
+
+여기서 각각의 역할은 다음과 같다.
+
+\begin{dhktable}
+|객체	|역할|
+|:---|:---|
+|model	|예측값 계산|
+|criterion	|손실 계산|
+|optimizer|	모델 파라미터 갱신|
+\end{dhktable}
+
+학습 루프는 다음과 같이 구성할 수 있다.
+
+\begin{dhkcode}
+for epoch in range(epochs):
+
+    model.train()
+
+    for x_batch, y_batch in loader:
+
+        x_batch = x_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        optimizer.zero_grad()
+
+        predictions = model(x_batch)
+
+        loss = criterion(
+            predictions,
+            y_batch
+        )
+
+        loss.backward()
+
+        optimizer.step()
+
+    print(
+        f"Epoch {epoch + 1}/{epochs}, "
+        f"Loss: {loss.item():.4f}"
+    )
+\end{dhkcode}
+
+이 학습 범위의 초점은 딥러닝의 수학적 원리가 아니므로 설명은 하지 않는다.
+
+대신 Python 실행 구조 관점에서 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+model(x_batch)는 무엇일까?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+predictions = model(x_batch)
+\end{dhkcode}
+
+이전에 callable 객체에 대해 배웠다.
+
+\zsh{model}은 \zsh{RegressionModel}의 인스턴스이고,
+
+\zsh{nn.Module}은 호출 가능한 객체로 동작한다.
+
+따라서
+
+\begin{dhkcode}
+model(x_batch)
+\end{dhkcode}
+
+처럼 호출할 수 있다.
+
+이 호출은 PyTorch의 \zsh{nn.Module} 호출 메커니즘을 거쳐 \zsh{forward()}를 실행한다.
+
+여기서 중요한 점은 \zsh{model.forward(x_batch)}를 직접 호출하는 것보다
+
+\zsh{model(x_batch)}를 사용하는 것이 일반적인 방식이라는 것이다.
+
+PyTorch의 호출 메커니즘은 forward hook 등 추가적인 기능도 처리하기 때문이다.
+
+\subsubsection{체크포인트(Checkpoint)란?}
+
+이제 학습한 모델을 저장해 보자.
+
+먼저 체크포인트라는 개념부터 구분해야 한다.
+
+체크포인트는 특정 시점의 학습 상태를 저장한 데이터다.
+
+예를 들어 다음 정보를 저장할 수 있다.
+
+\begin{dhksmry}
+    - 모델 파라미터
+
+    - Optimizer 상태
+
+    - 현재 Epoch
+
+    - 학습 설정
+
+    - 손실값
+\end{dhksmry}
+
+하지만 모든 체크포인트가 이 정보를 전부 포함하는 것은 아니다.
+
+모델 파라미터만 저장하는 경우도 있고, 학습을 정확하게 이어가기 위한 추가 상태까지 저장하는 경우도 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+모델 파라미터만 저장하기
+\end{dhksmry}
+\end{dhknote}
+
+가장 단순한 방법은 다음과 같다.
+
+\begin{dhkcode}
+torch.save(
+    model.state_dict(),
+    "checkpoints/model.pt"
+)
+\end{dhkcode}
+
+여기서 중요한 메서드는 다음이다.
+
+\begin{dhkcode}
+model.state_dict()
+\end{dhkcode}
+
+이 메서드는 모델의 파라미터와 persistent buffer 등을 담은 딕셔너리 형태의 객체를 반환한다.
+
+따라서 다음 두 개념을 구분해야 한다.
+
+\begin{dhkbranch}[in=8]
+node main :: Model Object
+arrow main :: state_dict()
+node main :: State Dictionary
+arrow main :: torch.save()
+node main :: model.pt
+\end{dhkbranch}
+
+여기서 \zsh{model.pt}는 모델 객체 자체가 아니라, 저장된 데이터를 담고 있는 파일이다.
+
+즉, 메모리의 Python 객체와 디스크의 파일을 구분해야 한다는 5장의 내용이 다시 등장한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+저장 경로 준비하기
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 작성해 보자.
+
+\begin{dhkcode}
+from pathlib import Path
+
+output_path = Path("checkpoints/model.pt")
+
+output_path.parent.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+torch.save(
+    model.state_dict(),
+    output_path
+)
+\end{dhkcode}
+
+여기서 \zsh{output_path.parent}는 \zsh{checkpoints} 디렉터리를 가리킨다.
+
+따라서 모델 파일을 저장하기 전에 부모 디렉터리를 생성한다.
+
+\subsubsection{체크포인트 불러오기}
+
+이번에는 저장한 모델 파라미터를 불러와 보자.
+
+\begin{dhkcode}
+model = RegressionModel()
+
+state_dict = torch.load(
+    "checkpoints/model.pt",
+    map_location="cpu",
+    weights_only=True
+)
+
+model.load_state_dict(state_dict)
+\end{dhkcode}
+
+여기서 중요한 부분은 두 단계로 나뉜다는 것이다.
+
+첫 번째:
+
+\begin{dhkcode}
+state_dict = torch.load(...)
+\end{dhkcode}
+
+파일에 저장된 데이터를 읽어 Python 객체로 복원한다.
+
+두 번째:
+
+\begin{dhkcode}
+model.load_state_dict(state_dict)
+\end{dhkcode}
+
+복원한 파라미터 값을 모델 객체에 적용한다.
+
+따라서 다음 구조가 성립한다.
+
+\begin{dhkbranch}[in=8]
+node main :: model.pt
+arrow main :: torch.load()
+node main :: State Dictionary
+arrow main :: model.load_state_dict()
+node main :: Model Object
+\end{dhkbranch}
+
+여기서 \zsh{torch.load()}만 실행한다고 기존 모델 객체가 자동으로 생성되고 구성되는 것은 아니다.
+
+우리는 먼저 다음 코드를 실행했다.
+
+\begin{dhkcode}
+model = RegressionModel()
+\end{dhkcode}
+
+즉, 모델의 구조를 정의하는 Python 코드가 필요하다.
+
+그 구조에 저장된 파라미터를 적용하는 방식이다.
+
+\zsh{weights_only=True}는 체크포인트를 불러올 때 허용되는 역직렬화 대상을 제한하는 옵션이다.
+
+그렇더라도 신뢰할 수 없는 체크포인트를 무조건 안전하다고 가정해서는 안 된다.
+
+\subsubsection{학습 재개용 체크포인트}
+
+이번에는 모델 파라미터뿐 아니라 Optimizer 상태도 저장해 보자.
+
+\begin{dhkcode}
+checkpoint = {
+    "epoch": epoch,
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+    "loss": loss.item()
+}
+
+torch.save(
+    checkpoint,
+    "checkpoints/checkpoint.pt"
+)
+\end{dhkcode}
+
+여기서 \zsh{checkpoint}는 Python 딕셔너리다.
+
+각 키에 학습 상태를 저장하고 있다.
+
+\begin{dhkdir}[in=6]
+checkpoint
+> epoch
+> model_state_dict
+> optimizer_state_dict
+> loss
+\end{dhkdir}
+
+이제 다시 불러오면 다음과 같다.
+
+\begin{dhkcode}
+checkpoint = torch.load(
+    "checkpoints/checkpoint.pt",
+    map_location="cpu",
+    weights_only=True
+)
+
+model.load_state_dict(
+    checkpoint["model_state_dict"]
+)
+
+optimizer.load_state_dict(
+    checkpoint["optimizer_state_dict"]
+)
+
+start_epoch = checkpoint["epoch"] + 1
+\end{dhkcode}
+
+이렇게 하면 저장된 Epoch 이후부터 학습을 이어갈 수 있는 기본 구조가 만들어진다.
+
+다만 정확하게 동일한 학습 상태를 재현하려면 학습률 스케줄러, 난수 생성기 상태, 데이터 샘플링 상태 등 추가적인 정보가 필요할 수도 있다.
+
+따라서 모델 파라미터만 저장하는 것과 학습을 완전히 재개하기 위한 체크포인트를 저장하는 것은 구분해야 한다.
+
+\subsubsection{\zsh{train.py}에서 전체 구성 요소 조립하기}
+
+이제 지금까지 작성한 코드를 하나로 연결해 보자.
+
+다음 코드는 학습 실행 구조를 이해하기 위한 최소 예제이다.
+
+\begin{dhkcode}
+# src/train.py
+
+import argparse
+import sys
+
+from pathlib import Path
+
+import torch
+
+from torch.utils.data import DataLoader
+
+from .dataset import load_dataset
+from .model import RegressionModel
+
+
+def parse_args():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--data",
+        type=Path,
+        required=True
+    )
+
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=10
+    )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("checkpoints/model.pt")
+    )
+
+    return parser.parse_args()
+
+
+def get_device():
+
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+
+    return torch.device("cpu")
+
+
+def main():
+
+    args = parse_args()
+
+    data_path = args.data.resolve()
+    output_path = args.output.resolve()
+
+    if not data_path.is_file():
+        raise FileNotFoundError(data_path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    device = get_device()
+
+    dataset = load_dataset(data_path)
+
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True
+    )
+
+    model = RegressionModel().to(device)
+
+    criterion = torch.nn.MSELoss()
+
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=0.001
+    )
+
+    print("Python:", sys.executable)
+    print("Device:", device)
+    print("Data:", data_path)
+
+    for epoch in range(args.epochs):
+
+        model.train()
+
+        total_loss = 0.0
+
+        for x_batch, y_batch in loader:
+
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device)
+
+            optimizer.zero_grad()
+
+            predictions = model(x_batch)
+
+            loss = criterion(
+                predictions,
+                y_batch
+            )
+
+            loss.backward()
+
+            optimizer.step()
+
+            total_loss += loss.item() * len(x_batch)
+
+        avg_loss = total_loss / len(dataset)
+
+        print(
+            f"Epoch {epoch + 1}/{args.epochs} "
+            f"Loss: {avg_loss:.4f}"
+        )
+
+    torch.save(
+        model.state_dict(),
+        output_path
+    )
+
+    print("Model saved:", output_path)
+
+
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+이 코드는 다음과 같이 실행할 수 있다.
+
+프로젝트 루트에서:
+
+\begin{dhkzsh}
+python -m src.train \
+    --data ./data/train.csv \
+    --epochs 10 \
+    --batch-size 32 \
+    --output ./checkpoints/model.pt
+\end{dhkzsh}
+
+실행 결과는 대략 다음과 같다.
+
+\begin{dhkzsh}
+Python: /path/to/conda/envs/transformer/bin/python
+Device: cpu
+Data: /path/to/project/data/train.csv
+
+Epoch 1/10 Loss: ...
+Epoch 2/10 Loss: ...
+...
+Epoch 10/10 Loss: ...
+
+Model saved: /path/to/project/checkpoints/model.pt
+\end{dhkzsh}
+
+실제 손실값은 모델의 초기 파라미터와 학습 환경에 따라 달라진다.
+
+\subsubsection{지금까지 배운 Python 개념이 어디에 사용되었을까?}
+
+이제 전체 코드를 Python 기초 개념과 연결해 보자.
+
+\begin{dhktable}
+|Python 개념	|실제 사용 위치|
+|:---|:---|
+|Module / Package	|from .dataset import load_dataset|
+|python -m	|src.train을 패키지 모듈로 실행|
+|argparse|	학습 인수 처리|
+|Path	|데이터·체크포인트 경로|
+|Path.resolve()	|상대 경로를 절대 경로로 해석|
+|Path.is_file()	|입력 데이터 검증|
+|Path.mkdir()	|출력 디렉터리 생성|
+|Function|	parse_args(), get_device(), main()|
+|Class / Instance	|RegressionModel()|
+|Callable	|model(x_batch)|
+|Iterator Protocol	|for x_batch, y_batch in loader|
+|Mapping	|model.state_dict()|
+|File I/O	|pd.read_csv(), torch.save()|
+|Object Binding	|model = RegressionModel()|
+|Python Interpreter|	sys.executable|
+\end{dhktable}
+
+여기서 주목할 점은 ML/DL 라이브러리가 Python의 기본 객체 모델 위에서 동작한다는 사실이다.
+
+예를 들어 \zsh{DataLoader}는 반복 가능한 객체이고, 모델은 호출 가능한 객체이며,
+
+\zsh{state_dict()}는 매핑 형태의 데이터를 반환한다.
+
+즉, 지금까지 배운 Python 문법과 객체 모델이 실제 딥러닝 프로젝트의 기반이 되는 것이다.
+
+\subsubsection{모델 파일과 학습 환경은 별개다}
+
+마지막으로 중요한 개념 하나를 짚고 넘어간다.
+
+우리가 다음 코드를 실행했다고 생각해 보자.
+
+\begin{dhkcode}
+torch.save(
+    model.state_dict(),
+    "checkpoints/model.pt"
+)
+\end{dhkcode}
+
+그러면 모델 파라미터가 파일에 저장된다.
+
+하지만 이 파일에 다음 정보가 모두 포함되는 것은 아니다.
+
+\begin{dhksmry}
+    - Python 인터프리터의 위치
+
+    - Conda 환경 전체
+
+    - 설치된 라이브러리 버전
+
+    - 학습 데이터
+
+    - 모델 클래스의 Python 소스 코드
+
+    - 프로젝트 디렉터리 구조
+\end{dhksmry}
+
+즉, 모델 파일 하나만 가지고 언제나 동일한 실행 환경을 복원할 수 있는 것은 아니다.
+
+이를 구분하면 다음과 같다.
+
+\begin{dhkdir}[in=6]
+ML/DL Project
+> Source Code
+>> src/
+>Dependencies
+>>environment.yml
+>Configuration
+>>configs/train.json
+>Dataset
+>>data/train.csv
+>Checkpoint
+>>checkpoints/model.pt
+\end{dhkdir}
+
+각 구성 요소는 서로 다른 책임을 가지고 있다.
+
+그래서 실제 ML/DL 프로젝트에서는 모델 파라미터뿐 아니라 콛, 환경, 설정, 데이터의 버전까지 함께 관리하는 것이 중요하다.
+
+이 부분은 추후 실험 재현성과 모델 배포를 공부할 때 다시 등장하게 될 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+이번 학습 정리
+\end{dhksmry}
+\end{dhknote}
+
+이번에는 다음 흐름을 실제 코드로 연결했다.
+
+\begin{dhksmry}[centered]
+CSV 
+\da 
+DataFrame 
+\da 
+Tensor
+\da
+DataLoader
+\da
+Model
+\da
+Training
+\da
+Checkpoint 
+\end{dhksmry}
+
+그리고 이 전체 과정은 다음 실행 명령에서 시작했다.
+
+\begin{dhkzsh}
+python -m src.train \
+    --data ./data/train.csv \
+    --epochs 10 \
+    --batch-size 32 \
+    --output ./checkpoints/model.pt
+\end{dhkzsh}
+
+이제 우리가 처음에 배웠던 경로, CLI, import, 객체, 반복자, 파일 입출력이
+
+실제 학습 파이프라인 안에서 어떻게 연결되는지 확인하였다.
+
+\subsubsection{Hugging Face의 \zsh{from_pretrained()} 이해하기}
+
+여기서부터는 Hugging Face의 transformers, Conda 환경, 모델 캐시,
+
+환경변수, 실험 자동화를 하나의 구조로 연결한다.
+
+앞에서 작성한 PyTorch 회귀 모델은 로컬 CSV 파일을 읽고 학습하는 구조였다.
+
+하지만 Hugging Face를 사용하면 모델과 토크나이저를 외부 저장소에서 가져오고,
+
+다운로드한 파일을 캐시에 저장하며, 모델에 따라 인증 토큰도 필요해진다.
+
+즉, 이번 학습에서는 다음 질문에 답하는 것이 목표이다.
+
+\begin{dhksmry}[centered]
+Python 프로그램이 외부 모델을 가져와 학습하고,
+
+그 실행 환경과 결과를 재현 가능하게 관리하려면 어떤 구조가 필요할까?
+\end{dhksmry}
+
+먼저 아래의 코드를 살펴보자.
+
+\begin{dhkcode}
+from transformers import AutoTokenizer, AutoModel
+
+model_name = "distilbert-base-uncased"
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModel.from_pretrained(model_name)
+\end{dhkcode}
+
+우리는 이 코드를 실행하면 사전학습된 모델과 토크나이저를 사용할 수 있다는 것을 알 수 있다.
+
+그런데 Python 실행 환경 관점에서는 조금 더 깊게 이해할 필요가 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+from_pretrained()는 무엇을 하는가?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+model = AutoModel.from_pretrained(
+    "distilbert-base-uncased"
+)
+\end{dhkcode}
+
+이때 \zsh{from_pretrained()}는 단순히 모델 객체를 생성하는 함수가 아니다.
+
+일반적으로 다음 작업을 수행한다.
+
+\begin{dhksmry}
+    1. 모델 식별자를 해석한다.
+
+    2. 필요한 설정 파일과 가중치 파일을 찾는다.
+
+    3. 로컬 캐시에 사용할 수 있는 파일이 있는지 확인한다.
+
+    4. 필요한 파일이 없다면 Hugging Face Hub에서 다운로드한다.
+
+    5. 설정을 이용해 모델 구조를 생성한다.
+
+    6. 저장된 가중치를 모델에 적용한다.
+
+    7. 초기화된 모델 객체를 반환한다.
+\end{dhksmry}
+
+개념적으로 표현하면 다음과 같다.
+
+\begin{dhkbranch}[in=8]
+node main :: AutoModel.from_pretrained(model_name)
+arrow main
+node main :: Model Identifier
+arrow main
+node main :: Hugging Face Hub
+arrow main :: 필요한 파일 조회
+node main :: Local Cache
+branchline main -> conf :: config.json
+stop conf
+handoff main -> weight :: model weights
+arrow weight
+node weight :: Model 생성
+arrow weight
+node weight :: 가중치 적용
+arrow weight
+node weight :: Model Object
+stop weight
+\end{dhkbranch}
+
+단, 이미 캐시에 필요한 파일이 있으면 다운로드 하지 않고 사용할 수 있다.
+
+실제 파일 조회 및 다운로드 여부는 캐시 상태와 라이브러리 옵션에 따라 달라진다.
+
+여기서 중요한 점은 다음이다.
+
+\zsh{from_pretrained()}가 반환하는 것은
+
+메모리에 생성된 Python 모델 객체이지, 다운로드한 파일 경로가 아니다.
+
+이전에 배운 \zsh{pd.read_csv()}와 비교해 보자.
+
+\begin{dhktable}
+|코드	|외부 데이터	|반환 객체|
+|:---|:---|:---|
+|pd.read_csv(path)	|CSV 파일	|DataFrame|
+|torch.load(path)	|체크포인트 파일	|역직렬화된 객체|
+|AutoModel//*.from_pretrained(//*name)	|모델 설정과 가중치|	모델 객체|
+|AutoTokenizer//*.from_pretrained(//*name)|토크나이저 설정과//*관련 파일|토크나이저 객체|
+\end{dhktable}
+
+외부 데이터를 읽어서 Python 객체를 구성한다는 점에서는 비슷하지만, 각 함수가 수행하는 구체적인 작업은 다르다.
+
+\subsubsection{모델 식별자와 파일 경로의 차이}
+
+다음 문자열을 보자.
+
+\begin{dhkcode}
+model_name = "distilbert-base-uncased"
+\end{dhkcode}
+
+이 문자열은 일반적으로 Hugging Face Hub의 모델 저장소를 식별하는 데 사용된다.
+
+반면 다음 코드는 어떨까?
+
+\begin{dhkcode}
+model_path = "./models/distilbert"
+\end{dhkcode}
+
+이것은 로컬 파일 시스템 경로로 사용할 수 있는 문자열이다.
+
+\zsh{from_pretrained()}는 모델 식별자뿐 아니라 적절한 구조를 가진 로컬 디렉터리도 입력받을 수 있다.
+
+예를 들어 다음과 같은 디렉터리가 있다고 가정하자.
+
+\begin{dhkdir}[in=6]
+model/
+>distilbert/
+>>config.json
+>>model.safetensors
+>>tokenizer_config.json
+>>tokenizer.json
+>>vocab.txt
+\end{dhkdir}
+
+실제 파일 구성은 모델과 토크나이저 종류에 따라 달라질 수 있다.
+
+이제 다음처럼 사용할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+from transformers import AutoTokenizer, AutoModel
+
+model_dir = Path("models/distilbert")
+
+tokenizer = AutoTokenizer.from_pretrained(
+    model_dir
+)
+
+model = AutoModel.from_pretrained(
+    model_dir
+)
+\end{dhkcode}
+
+여기서 구분해야 할 개념은 세 가지다.
+
+\begin{dhktable}
+|개념|	의미|
+|:---|:---|
+|모델 식별자	|Hub에서 모델 저장소를 식별하는 문자열|
+|로컬 모델 디렉터리	|모델 파일이 저장된 파일 시스템 경로|
+|모델 객체|	Python 프로세스의 메모리에 생성된 모델 인스턴스|
+\end{dhktable}
+
+이 구분은 이전에 공부했던 이름, 객체, 경로, 파일의 차이와 직접 연결된다.
+
+\subsubsection{Hugging Face 캐시(Cache)의 역할}
+
+이제 캐시를 살펴보자.
+
+이전에 Hugging Face 모델을 사용하면서 파일 다운로드 오류나 토크나이저 파일 문제를 경험한 적이 있을 것이다.
+
+그런 문제를 이해하려면 캐시의 구조를 알아야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+캐시가 필요한 이유
+\end{dhksmry}
+\end{dhknote}
+
+모델을 실행할 때마다 수백 MB 또는 수 GB의 파일을 다운로드한다면 비효율적이다.
+
+그래서 Hugging Face는 다운로드한 파일을 로컬 캐시에 저장해 재사용할 수 있다.
+
+일반적인 흐름은 다움과 같다.
+
+\begin{dhkbranch}[in=8]
+node main :: 필요한 파일 확인
+branchline main -> ca :: 캐시에 사용 가능한 파일 존재
+arrow ca
+node ca :: 로컬 파일 사용
+handoff main -> nf :: 파일 없음
+arrow nf
+node nf :: Hugging Face Hub
+arrow nf
+node nf :: 다운로드
+arrow nf
+node nf :: Cache 저장
+arrow nf
+node nf :: 파일 사용
+\end{dhkbranch}
+
+역시ㅓ 캐시는 모델 객체 자체를 저장하는 공간이 아니다.
+
+모델 객체를 구성하는 데 필요한 파일을 저장하는 공간이다.
+
+따라서 Python 프로세스가 종료되더라도 캐시 파일은 일반적으로 디스크에 남아 있다.
+
+반면 메모리에 생성된 모델 객체는 프로세스 종료와 함께 사라진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+기본 캐시 위치
+\end{dhksmry}
+\end{dhknote}
+
+Hugging Face Hub의 일반적인 기본 캐시 위치는 다음과 같다.
+
+macOS/Linux:
+
+\begin{dhkzsh}
+~/.cache/huggingface/hub/
+\end{dhkzsh}
+
+Windows:
+
+\begin{dhkzsh}
+C:\Users\<username>\.cache\huggingface\hub\
+\end{dhkzsh}
+
+다만 환경변수와 라이브러리 설정에 따라 실제 위치는 달라질 수 있다.
+
+여기서 \zsh{~}는 사용자 홈 디렉터리를 나타내는 표현이다.
+
+Python에서는 다음과 같이 확인할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+
+print(Path.home())
+\end{dhkcode}
+
+그리고 일반적인 기본 경로를 구성하면 다음과 같다.
+
+\begin{dhkcode}
+cache_dir = (
+    Path.home()
+    / ".cache"
+    / "huggingface"
+    / "hub"
+)
+
+print(cache_dir)
+\end{dhkcode}
+
+다만 이 코드는 기본 경로를 계산할 뿐, 현재 Hugging Face 라이브러리가 실제로 사용하는 캐시 위치를 조회하는 코드는 아니다.
+
+실제 캐시 위치는 관련 환경변수와 라이브러리 설정을 확인해야 한다.
+
+\subsubsection{Hugging Face Hub 캐시의 내부 구조}
+
+Hub 캐시는 일반적으로 모델 저장소와 버전을 구분할 수 있는 구조를 사용한다.
+
+예를 들어 다음과 같은 형태다.
+
+\begin{dhkdir}[in=2]
+hub/
+> models--distilbert--distilbert-base-uncased/
+>> blobs/
+>> refs/
+>> snapshots/
+\end{dhkdir}
+
+각 디렉터리의 역할을 살펴보자.
+
+\begin{dhktable}
+|디렉터리|	역할|
+|:---|:---|
+|blobs/|	다운로드한 파일 내용 저장|
+|refs/|	브랜치나 태그 등의 참조 정보|
+|snapshots/	|특정 리비전의 파일 구성을 나타내는 경로|
+\end{dhktable}
+
+일반적인 캐시 구조에서는 \zsh{snapshots}의 파일들이 \zsh{blobs}에 저장된 파일을 가리키는 심볼릭 링크로 구성될 수 있다.
+
+환경에 따라 링크를 사용할 수 없는 경우에는 저장 방식이 달라질 수 있다.
+
+여기서 Git과 비슷한 구조가 등장하는 이유는 모델 저장소도 버전이 존재하기 때문이다.
+
+예를 들어 같은 모델 이름이라도 저장소가 업데이트되면 서로 다른 리비전의 파일이 존재할 수 있다.
+
+따라서 모델 이름만으로 모든 실행 환경이 완전히 고정되는 것은 아니다.
+
+\subsubsection{\zsh{HF_HOME}과 \zsh{HF_HUB_CACHE}}
+
+이제 환경변수를 연결해 보자.
+
+Hugging Face의 캐시 위치는 환경변수를 통해 설정할 수 있다.
+
+대표적인 환경변수는 다음과 같다.
+
+\begin{dhktable}
+|환경변수|	역할|
+|:---|:---|
+|HF_HOME|	Hugging Face 관련 로컬 데이터의 기본 위치|
+|HF_HUB_CACHE|	Hugging Face Hub 저장소 캐시 위치|
+|HF_TOKEN|	Hub 인증에 사용할 토큰|
+|HF_HUB_OFFLINE|	Hub의 네트워크 접근을 비활성화하는 설정|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+HF_HOME
+\end{dhksmry}
+\end{dhknote}
+
+예를 들어 macOS 터미널에서 다음과 같이 설정할 수 있다.
+
+\begin{dhkzshcode}
+export HF_HOME="$HOME/huggingface-data"
+\end{dhkzshcode}
+
+그러면 Hugging Face 라이브러리는 해당 위치를 기본 디렉터리로 사용할 수 있다.
+
+Hub 캐시의 기본 위치도 일반적으로 그 아래에 구성된다.
+
+\begin{dhkdir}[in=6]
+huggingface-data/
+> hub/
+\end{dhkdir}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+HF_HUB_CACHE
+\end{dhksmry}
+\end{dhknote}
+
+Hub 캐시 위치만 별도로 지정할 수도 있다.
+
+\begin{dhkzshcode}
+export HF_HUB_CACHE="$HOME/model-cache"
+\end{dhkzshcode}
+
+이 경우 Hub 모델 저장소 캐시의 위치를 별도로 관리할 수 있다.
+
+두 변수를 동시에 지정했다면 \zsh{HF_HUB_CACHE}가 Hub 캐시 위치를 직접 결정하는 설정이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Python에서 설정하기
+\end{dhksmry}
+\end{dhknote}
+
+이전에 배운 \zsh{os.environ}을 사용할 수도 있다.
+
+\begin{dhkcode}
+import os
+
+os.environ["HF_HOME"] = "/path/to/huggingface-data"
+\end{dhkcode}
+
+하지만 여기서 중요한 점이 있다.
+
+Hugging Face 관련 라이브러리를 import하기 전에 환경변수를 설정하는 것이 안전하다.
+
+일부 라이브러리는 import 과정에서 환경변수를 읽어 내부 설정을 초기화하기 때문이다.
+
+예를 들어 다음과 같은 순서가 좋다.
+
+\begin{dhkcode}
+import os
+
+os.environ["HF_HOME"] = "/path/to/huggingface-data"
+
+from transformers import AutoModel
+\end{dhkcode}
+
+반대로 이미 라이브러리를 import한 뒤 환경변수를 변경하면,
+
+변경한 설정이 현재 프로세스의 라이브러리 동작에 즉시 반영되지 않을 수 있다.
+
+이것이 7장에서 배웠던 환경변수와 Python 객체의 초기화 시점이 연결되는 부분이다.
+
+\subsubsection{환경변수와 \zsh{.env} 파일}
+
+이번에는 \zsh{.env} 파일을 살펴보자.
+
+먼저 중요한 사실부터 짚고 넘어간다.
+
+\zsh{.env} 파일은 Python이나 운영체제가 자동으로 읽어 환경변수로 등록해 주는 특별한 파일이 아니다.
+
+일반적으로 애플리케이션이나 별도의 도구가 \zsh{.env} 파일을 읽고 환경변수를 설정한다.
+
+예를 들어 프로젝트에 다음 파일이 있다고 가정하자.
+
+\begin{dhkdir}[in=6]
+transformer-project/
+> .env
+\end{dhkdir}
+
+내용
+
+\begin{dhkzsh}
+HF_HOME=/Users/user/huggingface-data
+HF_TOKEN=your_token_here
+\end{dhkzsh}
+
+이 파일은 단순한 텍스트 파일이다.
+
+Python이 실행되었다고 해서 자동으로 다음 값이 설정되는 것은 아니다.
+
+\begin{dhkcode}
+os.environ["HF_TOKEN"]
+\end{dhkcode}
+
+\zsh{.env}를 사용하려면 별도의 로딩 과정이 필요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+python-dotenv 사용하기
+\end{dhksmry}
+\end{dhknote}
+
+대표적인 방법은 \zsh{python-dotenv} 라이브러리를 사용하는 것이다.
+
+\begin{dhkzsh}
+python -m pip install python-dotenv
+\end{dhkzsh}
+
+그다음에 아래처럼 작성할 수 있다.
+
+\begin{dhkcode}
+from pathlib import Path
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+load_dotenv(
+    PROJECT_ROOT / ".env"
+)
+\end{dhkcode}
+
+이제 \zsh{.env} 파일의 설정을 현재 Python 프로세스의 환경변수로 읽어 들일 수 있다.
+
+\begin{dhkcode}
+import os
+
+token = os.environ.get("HF_TOKEN")
+\end{dhkcode}
+
+여기서 중요한 구분이 있다.
+
+\begin{dhkcode}
+load_dotenv(...)
+\end{dhkcode}
+
+는 \zsh{.env} 파일의 값을 환경변수로 로딩하는 작업이고,
+
+\begin{dhkcode}
+os.environ.get("HF_TOKEN")
+\end{dhkcode}
+
+은 현재 프로세스의 환경변수에서 값을 조회하는 작업이다.
+
+또한 \zsh{load_dotenv()}는 기본적으로 이미 존재하는 환경변수를 덮어쓰지 않는다.
+
+필요한 경우 \zsh{override=True}를 지정할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인증 토큰을 다룰 때의 주의사항
+\end{dhksmry}
+\end{dhknote}
+
+Hugging Face 토큰은 인증 정보이므로 소스 코드에 직접 작성하거나 로그에 출력하지 않는 것이 좋다.
+
+특히 다음 코드는 피해야 한다.
+
+\begin{dhkcode}
+print(os.environ["HF_TOKEN"])
+\end{dhkcode}
+
+그리고 \zsh{.env} 파일을 Git 저장소에 올리지 않도록 설정해야 한다.
+
+\zsh{.gitignore}에 다음 항목을 추가할 수 있다.
+
+\begin{dhkzsh}
+.env
+\end{dhkzsh}
+
+다만 \zsh{.gitignore}는 아직 추적되지 않은 파일이 Git에 새로 추가되는 것을 방지하는 용도다.
+
+이미 Git에서 추적 중인 파일을 자동으로 제거해 주지는 않는다.
+
+\subsubsection{Hugging Face 인증과 공개 모델}
+
+여기서 인증이 항상 필요한 것은 아니라는 점도 알아두자.
+
+예를 들어 다음과 같은 공개 모델은 일반적으로 별도의 인증 토큰 없이 다운로드할 수 있다.
+
+\begin{dhkcode}
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(
+    "distilbert-base-uncased"
+)
+\end{dhkcode}
+
+반면 접근 제한이 있는 모델이나 비공개 저장소에 접근하려면 인증이 필요할 수 있다.
+
+토큰을 명시적으로 전달하는 방식도 있지만, 라이브러리 버전에 따라 인수 이름이 다를 수 있다.
+
+예를 들어 최근 버전에서는 다음과 같은 형태를 사용할 수 있다.
+
+\begin{dhkcode}
+import os
+
+from transformers import AutoModel
+
+model = AutoModel.from_pretrained(
+    "some-org/private-model",
+    token=os.environ["HF_TOKEN"]
+)
+\end{dhkcode}
+
+Hugging Face CLI로 로그인한 경우에는 저장된 인증 정보를 라이브러리가 사용할 수도 있으므로, 반드시 매번 토큰을 코드에 전달해야 하는 것은 아니다.
+
+\subsubsection{오프라인에서 모델 사용하기}
+
+이번에는 다운로드한 모델을 네트워크 없이 사용하는 방법을 알아보자.
+
+앞에서 캐시가 존재한다고 했다.
+
+그렇다면 이미 다운로드한 모델은 인터넷 연결 없이도 사용할 수 있을까?
+
+필요한 파일이 로컬에 모두 존재한다면 가능하다.
+
+대표적으로 다음 옵션을 사용할 수 있다.
+
+\begin{dhkcode}
+from transformers import AutoTokenizer, AutoModel
+
+model_name = "distilbert-base-uncased"
+
+tokenizer = AutoTokenizer.from_pretrained(
+    model_name,
+    local_files_only=True
+)
+
+model = AutoModel.from_pretrained(
+    model_name,
+    local_files_only=True
+)
+\end{dhkcode}
+
+여기서
+
+\begin{dhkcode}
+local_files_only=True
+\end{dhkcode}
+
+는 로컬에 존재하는 파일만 사용하도록 요청하는 옵션이다.
+
+필요한 파일이 로컬에 없으면 다운로드하는 대신 오류가 발생한다.
+
+따라서 다음 두 상황을 구분해야 한다.
+
+\begin{dhkdir}[in=6]
+상황 A
+> 필요한 파일이 로컬에 있음
+> 오프라인 로딩 가능
+\end{dhkdir}
+
+\begin{dhkdir}[in=6]
+상황 B
+> 필요한 파일이 로컬에 없음
+> 오프라인 로딩 실패
+\end{dhkdir}
+
+환경변수로 Hub의 오프라인 모드를 활성화할 수도 있다.
+
+macOS/Linux:
+
+\begin{dhkzsh}
+export HF_HUB_OFFLINE=1
+\end{dhkzsh}
+
+다만 \zsh{HF_HUB_OFFLINE}은 Hub 라이브러리의 네트워크 접근을 제한하는 설정이므로, 애플리케이션 전체의 모든 네트워크 접근을 차단하는 것은 아니다.
+
+\subsubsection{모델 캐시와 모델 저장 디렉터리의 차이}
+
+여기서 혼동하기 쉬운 두 개념을 구분한다.
+
+첫 번째는 Hugging Face가 관리하는 캐시다.
+
+\begin{dhkzsh}
+~/.cache/huggingface/hub/
+\end{dhkzsh}
+
+두 번째는 개발자가 직접 저장하는 모델 디렉터리다.
+
+\begin{dhkdir}[in=6]
+transformer-project/
+>models/
+>>my-model/
+\end{dhkdir}
+
+예를 들어 다음 코드를 보자.
+
+\begin{dhkcode}
+model.save_pretrained(
+    "models/my-model"
+)
+
+tokenizer.save_pretrained(
+    "models/my-model"
+)
+\end{dhkcode}
+
+이 코드는 모델과 토크나이저를 지정한 디렉터리에 저장한다.
+
+그다음 아래처럼 다시 불러올 수 있다.
+
+\begin{dhkcode}
+model = AutoModel.from_pretrained(
+    "models/my-model"
+)
+
+tokenizer = AutoTokenizer.from_pretrained(
+    "models/my-model"
+)
+\end{dhkcode}
+
+두 방식의 차이를 정리하면 다음과 같다.
+
+\begin{dhktable}
+|구분	|Hugging Face 캐시|	save_pretrained() 디렉터리|
+|:---|:---|:---|
+|주요 목적|	다운로드 파일 재사용|	모델 결과물 저장 및 재사용|
+|관리 주체|	Hugging Face 라이브러리|	개발자|
+|위치	|캐시 설정에 따라 결정|	개발자가 지정|
+|버전 구조|	Hub 리비전 기반|	개발자가 관리|
+|프로젝트 산출물|	일반적으로 아님|	일반적으로 해당|
+\end{dhktable}
+
+특히 모델을 파인튜닝했다면 다운로드 캐시와 파인튜닝 결과물을 구분해서 관리하는 것이 좋다.
+
+\subsubsection{environment.yml}과 실행 환경 재현
+
+이제 Conda 환경으로 넘어가자.
+
+우리는 2장에서 Conda 환경을 만들고 활성화하는 방법을 배웠다.
+
+그런데 다른 컴퓨터에서 동일한 프로젝트를 실행하려면 어떻게 해야 할까?
+
+프로젝트 소스 코드만 복사한다고 충분하지는 않다.
+
+Python 버전과 필요한 라이브러리도 설치해야 한다.
+
+이때 사용할 수 있는 것이 \zsh{environment.yml}이다.
+
+예를 들어 다음과 같은 파일을 작성할 수 있다.
+
+YAML :
+
+\begin{dhkzsh}
+name: transformer-project
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - pip
+  - pandas
+  - numpy
+  - pip:
+      - torch
+      - transformers
+      - datasets
+      - accelerate
+      - python-dotenv
+\end{dhkzsh}
+
+이 파일은 Conda 환경을 구성하기 위한 선언적인 설정 파일이다.
+
+다음 명령으로 환경을 생성할 수 있다.
+
+\begin{dhkzsh}
+conda env create -f environment.yml
+\end{dhkzsh}
+
+그리고 활성화한다.
+
+\begin{dhkzsh}
+conda activate transformer-project
+\end{dhkzsh}
+
+여기서 중요한 점은 \zsh{environment.yml} 자체가 Python 인터프리터나 라이브러리를 포함하는 것은 아니라는 것이다.
+
+환경을 구성하는 데 필요한 정보를 기술한 파일이다.
+
+실제 패키지는 Conda와 pip가 설치한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+패키지 버전 고정
+\end{dhksmry}
+\end{dhknote}
+
+위 예제에서는 라이브러리 버전을 명시하지 않았다.
+
+그러면 설치 시점에 따라 서로 다른 버전이 설치될 수 있다.
+
+따라서 재현성이 중요한 프로젝트에서는 다음과 같이 버전을 명시하는 것이 좋다.
+
+\begin{dhkzsh}
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - transformers==4.30.2
+      - datasets==2.14.7
+      - accelerate==0.20.3
+\end{dhkzsh}
+
+이 버전들은 이전에 공부했던 Transformer 학습 환경과 관련된 예시이다.
+
+다만 실제 환경을 재구성할 때는 PyTorch, NumPy, Hugging Face Hub 등
+
+다른 의존성의 버전 호환성도 함께 검증해야 한다.
+
+특히 macOS Apple Silicon과 Windows에서는 사용할 수 있는 패키지 빌드가 다를 수 있다.
+
+따라서 동일한 \zsh{environment.yml}을 사용하더라도 모든 운영체제에서 완전히 동일한 바이너리 환경이 만들어진다고 보장할 수는 없다.
+
+\subsubsection{\zsh{sys.executable}로 실제 환경 검증하기}
+
+여기서 이전에 배운 \zsh{sys.executable}이 다시 등장한다.
+
+Conda 환경을 활성화했다고 생각해 보자.
+
+\begin{dhkzsh}
+conda activate transformer
+\end{dhkzsh}
+
+그다음 Python을 실행하면 일반적으로 활성화된 환경의 인터프리터가 선택된다.
+
+하지만 VS Code, Jupyter, 터미널 설정 등에 따라 실제 사용 중인 인터프리터가 다를 수 있다.
+
+따라서 다음 코드로 확인하는 것이 좋다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+예를 들어 macOS에서는 다음과 같은 경로가 나올 수 있다.
+
+\begin{dhkzsh}
+/Users/user/anaconda3/envs/transformer/bin/python
+\end{dhkzsh}
+
+Windows에서는 다음과 같을 수 있다.
+
+\begin{dhkzsh}
+C:\Users\user\anaconda3\envs\transformer\python.exe
+\end{dhkzsh}
+
+여기서 중요한 것은 환경 이름이 아니라 실제로 실행 중인 인터프리터의 경로다.
+
+또한 설치된 라이브러리의 버전도 확인할 수 있다.
+
+\begin{dhkcode}
+import torch
+import transformers
+
+print(torch.__version__)
+print(transformers.__version__)
+\end{dhkcode}
+
+이렇게 하면 현재 프로세스가 실제로 어떤 환경에서 실행되고 있는지 확인할 수 있다.
+
+\subsubsection{Jupyter 커널과 Conda 환경의 관계}
+
+Windows에서 Jupyter 커널 문제를 겪어본 경험이 있을 것이다.
+
+Jupyter Notebook을 실행할 때는 다음 두 개념을 구분해야 한다.
+
+\begin{dhksmry}
+    1. Jupyter 서버를 실행하는 환경
+
+    2. Notebook 코드가 실행되는 커널 환경
+\end{dhksmry}
+
+이 둘은 반드시 동일할 필요가 없다.
+
+예를 들어 다음과 같은 구조가 가능하다.
+
+\begin{dhkbranch}[in=8]
+node main :: Jupyter Server
+arrow main :: Notebook 실행 요청
+node main :: Jupyter Kernel
+handoff main -> j :: Python Interpreter
+handoff j -> c :: Conda Environment
+stop c
+\end{dhkbranch}
+
+따라서 터미널에서
+
+\begin{dhkzsh}
+conda activate transformer
+\end{dhkzsh}
+
+를 실행했다고 해서 이미 열려 있는 모든 Notebook이 자동으로 해당 환경을 사용하는 것은 아니다.
+
+Notebook 내부에서 다음 코드를 실행해 확인해야 한다.
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+이 경로가 의도한 Conda 환겨으이 Python을 가리키는지 확인하는 것이다.
+
+또한 커널에 필요한 라이브러리가 설치되어 있어야 한다.
+
+예를 들어 \zsh{ipykernel}이 필요하다면 해당 환경에 설치할 수 있다.
+
+\begin{dhkzsh}
+conda activate transformer
+
+python -m pip install ipykernel
+\end{dhkzsh}
+
+필요한 경우 커널을 등록할 수도 있다.
+
+\begin{dhkzsh}
+python -m ipykernel install \
+    --user \
+    --name transformer \
+    --display-name "Python (transformer)"
+\end{dhkzsh}
+
+이렇게 등록하면 Jupyter에서 해당 커널을 선택할 수 있다.
+
+여기서 \zsh{--name}은 커널의 내부 식별자이고,
+
+\zsh{--display-name}은 사용자에게 표시되는 이름이다.
+
+\subsubsection{실험 자동화와 \zsh{subprocess}}
+
+이제 8장에서 배웠던 \zsh{subprocess}를 연결해 보자.
+
+우리가 다음과 같은 학습 명령을 실행한다고 가정하자.
+
+\begin{dhkzsh}
+python -m src.train \
+    --data ./data/train.csv \
+    --epochs 10 \
+    --batch-size 32 \
+    --output ./checkpoints/model.pt
+\end{dhkzsh}
+
+그런데 배치 크기를 변경하면서 여러 실험을 수행하고 싶다면 어떻게 해야 할까?
+
+예를 들어 다음 세 가지 실험을 수행한다고 생각해 보자.
+
+\begin{dhktable}
+|실험|	Batch Size	|Epoch|
+|:---|:---|:---|
+|Experiment 1|	16|	10|
+|Experiment 2|	32|	10|
+|Experiment 3|	64|	10|
+\end{dhktable}
+
+이때 매번 터미널에서 명령을 입력할 수도 있지만 Python으로 자동화할 수도 있다.
+
+프로젝트에 다음 파일을 추가하자.
+
+\begin{dhkdir}[in=6]
+scripts/
+>run_experimnets.py
+\end{dhkdir}
+
+코드는 다음과 같다.
+
+\begin{dhkcode}
+# scripts/run_experiments.py
+
+import subprocess
+import sys
+
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+BATCH_SIZES = [16, 32, 64]
+
+
+def main():
+
+    for batch_size in BATCH_SIZES:
+
+        command = [
+            sys.executable,
+            "-m",
+            "src.train",
+            "--data",
+            "data/train.csv",
+            "--epochs",
+            "10",
+            "--batch-size",
+            str(batch_size),
+            "--output",
+            f"checkpoints/model_bs{batch_size}.pt"
+        ]
+
+        result = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            check=True
+        )
+
+        print(
+            f"Batch size {batch_size}: "
+            f"Exit code {result.returncode}"
+        )
+
+
+if __name__ == "__main__":
+    main()
+\end{dhkcode}
+
+이 코드를 실행하면 세 개의 학습 실험이 순서대로 실행된다.
+
+\begin{dhkzsh}
+python scripts/run_experiments.py
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+sys.executable을 사용하는 이유
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+sys.executable
+\end{dhkcode}
+
+이것은 현재 실행 중인 Python 인터프리터의 경로다.
+
+따라서 자식 프로세스에서도 동일한 Python 인터프리터를 사용하도록 할 수 있다.
+
+반면 다음처럼 작성하면
+
+\begin{dhkcode}
+"python"
+\end{dhkcode}
+
+Shell이나 운영체제의 실행 파일 검색 경로에 따라 다른 인터프리터가 선택될 가능성이 있다.
+
+그래서 실험 자동화에서는 \zsh{sys.executable}을 사용하는 것이 유용하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+cwd=PROJECT_ROOT의 역할
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+cwd=PROJECT_ROOT
+\end{dhkcode}
+
+이것은 자식 프로세스의 CWD를 프로젝트 루트로 지정한다.
+
+따라서 자식 프로세서으ㅔ서 다음 상대 경로를 사용하면
+
+\begin{dhkzsh}
+data/train.csv
+\end{dhkzsh}
+
+프로젝트 루트 기준으로 해석된다.
+
+또한 \zsh{python -m src.train}이 프로젝트 루트에서 실행되므로
+
+\zsh{src} 패키지를 찾는 데도 도움이 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+check=True의 역할
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드는
+
+\begin{dhkcode}
+check=True
+\end{dhkcode}
+
+자식 프로세스가 0이 아닌 종료 코드를 반환했을 때 \zsh{CalledProcessError}를 발생시킨다.
+
+따라서 학습 실험이 실패하면 오류를 무시한 채 다음 실험으로 진행하는 것을 방지할 수 있다.
+
+물론 실무에서는 실패한 실험을 기록하고 나머지 실험을 계속 실행하도록 설계할 수도 있다.
+
+그것은 실험 관리 정책에 따라 결정하면 된다.
+
+\subsubsection{실험 로그 관리하기}
+
+이제 학습 로그를 파일로 저장해 보자.
+
+다음처럼 프로젝트에 로그 디렉터리를 생성할 수 있다.
+
+\begin{dhkcode}
+log_dir = PROJECT_ROOT / "logs"
+
+log_dir.mkdir(
+    parents=True,
+    exist_ok=True
+)
+\end{dhkcode}
+
+그리고 각 실험의 로그 파일 경로를 만들자.
+
+\begin{dhkcode}
+log_path = log_dir / f"train_bs{batch_size}.log"
+\end{dhkcode}
+
+이제 다음처럼 실행할 수 있다.
+
+\begin{dhkcode}
+with log_path.open("w", encoding="utf-8") as log_file:
+
+    result = subprocess.run(
+        command,
+        cwd=PROJECT_ROOT,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        check=True
+    )
+\end{dhkcode}
+
+여기서 \zsh{stdout=log_file}은 자식 프로세스의 표준 출력을 파일에 연결한다.
+
+그리고
+
+\begin{dhkcode}
+stderr=subprocess.STDOUT
+\end{dhkcode}
+
+는 표준 오류 출력도 같은 대상으로 연결한다.
+
+따라서 정상 출력과 오류 메시지를 하나의 로그 파일에 저장할 수 있다.
+
+결과적으로 다음과 같은 구조가 만들어진다.
+
+\begin{dhkdir}[in=6]
+transformer-project/
+>checkpoints/
+>>model_bs16.pt
+>>model_bs32.pt
+>>model_bs64.pt
+>logs/
+>>train_bs16.log
+>>train_bs32.log
+>>train_bs64.log
+\end{dhkdir}
+
+여기서 중요한 점은 모델 파일과 로그 파일이 서로 다른 목적을 가진다는 것이다.
+
+모델 파일은 학습 결과의 파라미터를 저장하고, 로그 파일은 실행 과정에서 발생한 메시지를 기록한다.
+
+\subsubsection{실험 재현성(Reproducibility)}
+
+이제 마지막으로 실험 재현성을 살펴보자.
+
+머신러닝에서 재현성은 매우 중요한 개념이다.
+
+그런데 단순히 난수 시드만 고정한다고 모든 실험이 재현되는 것은 아니다.
+
+예를 들어 다음과 같이 작성할 수 있다.
+
+\begin{dhkcode}
+import random
+import numpy as np
+import torch
+
+seed = 42
+
+random.seed(seed)
+np.random.seed(seed)
+torch.manual_seed(seed)
+\end{dhkcode}
+
+이 코드는 Python, NumPy, PyTorch의 주요 난수 생성기를 초기화한다.
+
+하지만 실제 학습 결과에는 다음과 같은 요소들도 영향을 줄 수 있다.
+
+\begin{dhksmry}
+    - 데이터셋 버전
+
+    - 모델 초기 가중치
+
+    - 라이브러리 버전
+
+    - 하드웨어 종류
+
+    - 연산의 결정성
+
+    - 데이터 샘플링 순서
+
+    - 학습 설정
+
+    - 체크포인트의 상태
+\end{dhksmry}
+
+따라서 실험 재현성을 확보하려면 다음 정보들을 함께 관리하는 것이 좋다.
+
+\begin{dhktable}
+|구분|	기록할 정보|
+|:---|:---|
+|코드	|Git commit|
+|환경	|Python 및 라이브러리 버전|
+|데이터|	데이터셋 버전 또는 식별자|
+|모델|	모델 이름과 리비전|
+|설정|	Learning rate, batch size, epochs|
+|난수|	Random seed|
+|장치|	CPU, CUDA, MPS|
+|결과|	Checkpoint, metrics, logs|
+\end{dhktable}
+
+특히 Hugging Face 모델을 사용할 때는 모델 이름뿐 아니라 리비전도 기록하는 것이 좋다.
+
+예를 들어 다음처럼 작성할 수 있다.
+
+\begin{dhkcode}
+model = AutoModel.from_pretrained(
+    model_name,
+    revision=revision
+)
+\end{dhkcode}
+
+여기서 \zsh{revision}에 특정 커밋 해시를 지정하면 해당 리비전의 모델 파일을 요청할 수 있다.
+
+모델 저장소가 이후에 변경되더라도 동일한 리비전을 참조할 수 있다는 장점이 있다.
+
+다만 정확한 재현성을 위해서는 토크나이저, 데이터셋, 라이브러리 환경도 함께 고정해야 한다.
+
+\subsubsection{전체 프로젝트 실행 구조}
+
+이제 1~9장에서 배운 내용을 하나의 구조로 정리해 본다.
+
+\begin{dhkdiagram}[in=4]
+node user (1,2) :: User
+node shell (2,2) :: Shell
+node conda (3,2) :: Conda Environment
+node pp (4,2) :: Python Process
+node argv (5,1) :: sys.argv
+node env (5,2) :: os.environ
+node cwd (5,3) :: Path.cwd()
+node argp (6,1) :: argparse
+node ev (6,2) :: Environment//Variables
+node fp (6,3) :: File Paths
+node train (7,2) :: train.py
+node dset (8,1) :: Dataset
+node conf (8,2) :: Config
+node model (8,3) :: Model
+node tens (9,1) :: Tensor
+node param (9,2) :: Parameters
+node weight (9,3) :: Weights
+node tl (10,2) :: Training Loop
+node check (11,1) :: Checkpoint
+node metr (11,2) :: Metrics
+node logs (11,3) :: Logs
+node fs (12,2) :: File System
+
+edge user -> shell :: CLI Command
+edge shell -> conda :: conda activate transformer
+edge conda -> pp :: Python Interpreter
+split pp -> argv, env, cwd
+edge argv -> argp
+edge env -> ev
+edge cwd -> fp
+merge argp, ev, fp -> train 
+split train -> dset, conf, model 
+edge dset -> tens
+edge conf -> param
+edge model -> weight
+merge tens, param, weight -> tl
+split tl -> check, metr, logs
+merge check, metr, logs -> fs
+\end{dhkdiagram}
+
+그리고 실험 자동화까지 포함하면 다음 구조가 추가된다.
+
+\begin{dhkbranch}[in=8]
+node main :: run_experiments.py
+arrow main :: subprocess.run()
+node main :: Child Python Process
+arrow main :: python -m src.train
+node main :: Training
+branchline main -> c :: Checkpoint
+stop c
+branchline main -> m :: Metrics
+stop m
+branchline main -> l :: Logs
+stop l
+arrow main
+node main :: Exit Code
+arrow main
+node main :: Parent Python Process
+\end{dhkbranch}
+
+이것이 지금까지 배운 Python 실행 환경의 전체 구조다.
+
+\subsubsection{전체 커리큘럼 최종 정리}
+
+\begin{dhktable}
+|장|학습 주제|핵심 개념|
+|:---|:---|:---|
+|1장|Python 실행 환경과 외부 시스템 개요|sys, os, pathlib, 실행 환경과 외부 시스템의 관계|
+|2장|파일 시스템과 경로|Path, CWD, 절대·상대 경로, pathlib|
+|3장|경로의 기준점과 커맨드라인 실행|Path.cwd(), __file__, sys.path, Interpreter, Shell, sys.argv, argparse|
+|4장|Python 모듈·패키지와 Import 시스템|module, package, sys.path, python -m, sys.modules, namespace, binding|
+|5장|파일 입출력|Text, Binary, CSV, JSON|
+|6장|URL과 네트워크|HTTP, requests, 다운로드|
+|7장|환경변수|os.environ, PATH, PYTHONPATH|
+|8장|프로세스|subprocess, stdin/stdout/stderr|
+|9장|ML/DL 프로젝트 통합|학습 실행, 체크포인트, 캐시, 자동화|
+\end{dhktable}
+
+처음 이 커리큘럼을 구성한 이유는 Python의 기능을 하나씩 외우는 데 있지 않았다.
+
+\begin{dhksmry}
+    Python 프로그램이 어떤 환경에서 시작되고,
+
+    외부 데이터를 어떻게 가져오며,
+
+    객체를 어떻게 구성하고,
+
+    다른 프로세스와 어떻게 상호작용하고,
+
+    최종 결과를 어떻게 저장하는지 하나의 실행흐름으로 이해하는 것
+\end{dhksmry}
+
+이 목표였다.
+
+그 목표에 필요한 핵심 개념들을 이번 9장까지 모두 연결하였다.

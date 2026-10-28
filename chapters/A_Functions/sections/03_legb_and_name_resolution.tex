@@ -1,0 +1,700 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.3. LEGB와 이름 탐색
+% ==================================================
+
+\subsection{LEGB와 이름 탐색}
+
+Name Resolution · Static Scope Analysis · UnboundLocalError · global
+
+\subsubsection{이전 내용과의 연결}
+
+\zsh{A.1}에서는 함수 객체의 생성, 이름 바인딩, 호출과 반환을 학습하였다.
+
+\zsh{A.2}에서는 이를 중첩 함수(Nested Function)로 확장하면서 두 가지 사실을 확인하였다.
+
+\begin{dhksmry}
+    1. 함수 객체가 생성되는 시점과 함수 본문이 실행되는 시점은 다르다.
+
+    2. 함수 내부의 이름 탐색은 호출 위치가 아니라
+       
+       정의 위치에 따른 렉시컬 스코프를 기준으로 한다.
+\end{dhksmry}
+
+그런데 여기서 해결하지 않은 문제가 하나 있다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    print(x)
+
+func()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+\end{dhkzsh}
+
+\zsh{func()}의 지역 스코프에는 \zsh{x}가 없으므로 모듈의 전역 스코프에서 \zsh{x}를 찾은 것이다.
+
+그렇다면 다음 코드는 어떨까?
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    print(x)
+    x = 20
+
+func()
+\end{dhkcode}
+
+위에서 아래로 실행된다고 생각하면 \zsh{print(x)} 시점에는 아직 \zsh{x = 20}이 실행되지 않았으므로 전역 변수 \zsh{x = 10}을 사용할 것 같다.
+
+하지만 실제로는 다음 예외가 발생한다.
+
+\begin{dhkzsh}
+UnboundLocalError: cannot access local variable 'x' 
+where it is not associated with a value
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+Python은 이름을 사용할 때마다 무조건 LEGB 순서로 모든 네임스페이스를 검색하는 것이 아니기 때문이다.
+
+함수 본문을 실행하기 전에 해당 이름이 지역 이름인지, 외부 함수의 이름인지, 전역 이름인지 등을 판정하는 과정이 존재한다.
+
+이번 학습에서는 이 원리를 정확하게 분석할 것이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서는 다음 질문에 답할 수 있어야 한다.
+
+\begin{dhksmry}
+    1. LEGB의 각 영역은 정확히 무엇을 의미하는가?
+
+    2. 이름의 스코프는 언제 결정되고, 실제 객체는 언제 조회할까?
+
+    3. 함수 안에 대입문이 있다는 이유만으로 
+    
+       왜 UnboundLocalError가 발생할까?
+
+    4. global은 어떤 이름 바인딩 규칙을 변경할까?
+
+    5. global과 nonlocal은 어떤 점에서 다를까?
+
+    6. 이름 탐색(Name Resolution)과 객체의 속성 탐색(Attribute Lookup)은
+
+       왜 구별해야 할까?
+\end{dhksmry}
+
+특히 다음 구분을 중심으로 설명할 것이다.
+
+\begin{dhksmry}[centered]
+이름의 스코프를 정적으로 판정하는 과정과,
+
+실행 시점에 그 이름이 참조하는 객체를 조회하는 과정은 다르다.
+\end{dhksmry}
+
+\subsubsection{LEGB의 정확한 의미}
+
+LEGB는 Python에서 일반적인 이름 탐색을 설명하는 모델이다.
+
+각 문자는 다음 영역을 의미한다.
+
+\begin{dhktable}
+|구분|명칭|의미|
+|:---|:---|:---|
+|L|Local|현재 함수 호출의 지역 스코프|
+|E|Enclosing|렉시컬 구조상 현재 함수를 감싸는 외부 함수 스코프|
+|G|Global|해당 함수가 속산 모듈의 전역 스코프|
+|B|Builtins|Python의 내장 이름 스코프|
+\end{dhktable}
+
+기본적인 탐색 구조는 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node local (1,1) [accent] :: Local
+
+group enclosing(local) :: Enclosing
+group global(enclosing) :: Global
+group builtins(global) :: Builtins
+
+caption :: LEGB 네임스페이스의 포함 관계를 나타낸 개념도
+\end{dhkgraph}
+
+이 그림은 개념적인 스코프 구조를 나타낸다.
+
+실제 CPython이 모든 이름에 대해 네 개의 딕셔너리를 순서대로 검색한다는 의미는 아니다.
+
+일반적인 함수의 지역 변수는 최적화된 실행 환경에서 관리될 수 있고, 자유 변수는 셀(Cell)을 통해 접근할 수 있다.
+
+또한 \zsh{global}과 \zsh{nonlocal} 선언은 이름의 분류 자체를 변경한다.
+
+따라서 LEGB는 이름 탐색의 의미론적 구조를 이해하기 위한 모델로 사용하는 것이 정확하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+기본 예제
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+x = "Global"
+
+def outer():
+    x = "Enclosing"
+
+    def inner():
+        x = "Local"
+        print(x)
+
+    inner()
+
+outer()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Local
+\end{dhkzsh}
+
+\zsh{inner()}에서 사용한 \zsh{x}는 현재 함수의 지역 이름이므로 외부 스코프를 탐색할 필요가 없다.
+
+이번에는 지역 바인딩을 제거해 보자.
+
+\begin{dhkcode}
+x = "Global"
+
+def outer():
+    x = "Enclosing"
+
+    def inner():
+        print(x)
+
+    inner()
+
+outer()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Enclosing
+\end{dhkzsh}
+
+\zsh{inner}에는 지역 이름 \zsh{x}가 없고, 렉시컬 외부 함수 \zsh{outer}의 \zsh{x}를 참조하므로 \zsh{"Enclosing"}이 출력된다.
+
+다음으로 외부 함수의 \zsh{x}도 제거해 보자.
+
+\begin{dhkcode}
+x = "Global"
+
+def outer():
+
+    def inner():
+        print(x)
+
+    inner()
+
+outer()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Global
+\end{dhkzsh}
+
+이제 \zsh{inner}의 \zsh{x}는 전역 이름으로 분류되고, 모듈의 \zsh{x}를 조회한다.
+
+마지막으로 내장 이름을 살펴보자.
+
+\begin{dhkcode}
+def func():
+    print(len([10, 20, 30]))
+
+func()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+3
+\end{dhkzsh}
+
+일반적인 실행 환경에서 \zsh{len}은 지역이나 전역 스코프에 별도로 정의되어 있지 않으므로 내장 이름을 사용한다.
+
+여기까지는 익숙한 LEGB 설명이다.
+
+하지만 이것으로는 \zsh{UnboundLocalError}를 설명할 수 없다.
+
+\subsubsection{핵심 원리 - 이름의 정적 판정(Static Scope Analysis)}
+
+Python은 함수 본문을 실행하기 전에 해당 함수 블록의 이름 사용과 바인딩을 분석한다.
+
+이 과정에서 어떤 이름이 지역 이름인지, 자유 변수인지, 전역 이름인지 등이 결정된다.
+
+이러한 분석은 함수 호출 시점에 처음 수행되는 것이 아니라, 일반적으로 소스 코드가 컴파일되는 과정에서 수행된다.
+
+여기서 두 단계를 구분해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1단계. 이름의 분류
+\end{dhksmry}
+\end{dhknote}
+
+컴파일 단계에서 함수 블록의 이름 사용을 분석한다.
+
+예를 들어 다음과 같은 질문에 답하는 것이다.
+
+\begin{dhksmry}
+    - 현재 함수에서 x를 바인딩하는가?
+
+    - x에 global 선언이 있는가?
+
+    - x에 nonlocal 선언이 있는가?
+
+    - x가 외부 함수의 바인딩을 참조하는가?
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2단계. 실행 시점의 객체 조회
+\end{dhksmry}
+\end{dhknote}
+
+실제로 함수가 호출되면 해당 이름에 연결된 바인딩을 통해 객체를 조회한다.
+
+따라서 다음 두 문장은 서로 다른 의미를 가진다.
+
+이름의 스코프가 결정되었다.
+
+그 이름에 객체가 바인딩되었다.
+
+이름이 지역 변수로 분류되었다고 해서 그 지역 변수에 반드시 객체가 바인딩되어 있는 것은 아니다.
+
+바로 이 차이가 \zsh{UnboundLocalError}의 원인이다.
+
+\subsubsection{\zsh{UnboundLocalError}}는 왜 발생할까?
+
+다음 코드를 다시 살펴보자.
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    print(x)
+    x = 20
+
+func()
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+UnboundLocalError: cannot access local variable 'x' 
+where it is not associated with a value
+\end{dhkzsh}
+
+dㅖ외 메시지의 구체적인 표현은 Python의 버전에 따라 달라질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 컴파일 단계
+\end{dhksmry}
+\end{dhknote}
+
+Python은 \zsh{func}의 본문을 분석한다.
+
+\begin{dhkcode}
+def func():
+    print(x)
+    x = 20
+\end{dhkcode}
+
+여기서 다음 대입문을 발견한다.
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+일반적인 함수 블록에서 별도의 \zsh{global} 또는 \zsh{nonlocal} 선언 없이 이름에 대입하면, 그 이름은 해당 함수의 지역 이름으로 분류된다.
+
+따라서 \zsh{func} 내부의 \zsh{x}는 지역 변수로 판정된다.
+
+중요한 점은 대입문이 함수 본문의 뒤쪽에 있다는 사실이 이 판정에 영향을 주지 않는다는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 함수 호출
+\end{dhksmry}
+\end{dhknote}
+
+이제 \zsh{func()}가 호출된다.
+
+현재 호출의 지역 실행 환경에는 \zsh{x}라는 지역 이름을 위한 자리가 있지만, 아직 객체가 바인딩되지 않았다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. print(x) 실행
+\end{dhksmry}
+\end{dhknote}
+
+다음 문장이 실행된다.
+
+\begin{dhkcode}
+print(x)
+\end{dhkcode}
+
+Python은 이미 \zsh{x}를 지역 이름으로 판정했으므로 그 지역 바인딩에서 객체를 가져오려고 한다.
+
+그런데 아직 \zsh{x = 20}이 실행되지 않았다.
+
+따라서 \zsh{x}에는 객체가 바인딩되어 있지 않다.
+
+그 결과 \zsh{UnboundLocalError}가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 전역 변수로 넘어가지 않는 이유
+\end{dhksmry}
+\end{dhknote}
+
+여기가 가장 중요하다.
+
+전역 스코프에는 분명히 다음 바인딩이 존재한다.
+
+\begin{dhkcode}
+x = 10
+\end{dhkcode}
+
+하지만 \zsh{func} 내부의 \zsh{x}는 이미 지역 이름으로 판정되었다.
+
+따라서 지역 이름을 읽는 과정에서 바인딩되지 않은 상태가 발견되었다고 해서 전역 스코프로 다시 탐색을 진행하지 않는다.
+
+즉, 다음처럼 동작하는 것이 아니다.
+
+\begin{dhksmry}[centered]
+지역 x 발견
+\da
+아직 값이 없음
+\da
+전역 x 검색
+\da
+10 사용
+\end{dhksmry}
+
+실제 의미론적 동작은 다음에 가깝다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: 컴파일 단계
+node n2 (2,2) :: x를 지역 이름으로 판정
+node n22 (3,2)
+node n3 (3,1) :: 실행 단계
+node n4 (4,2) :: 지역 x 읽기 시도
+node n5 (5,2) :: 아직 바인딩 되지 않음
+node n6 (6,2) :: UnboundLocalError
+
+edge n1 -- n2 :: VH
+edge n2 -> n22
+edge n3 -- n4 :: VH
+edge n4 -> n5
+edge n5 -> n6
+\end{dhkdiagram}
+
+LEGB는 지역 이름이 바인딩되지 않았을 때 무조건 다음 스코프로 넘어간다는 규칙이 아니다.
+
+이 차이를 정확하게 이해해야 한다.
+
+\subsubsection{조건문 안의 대입도 지역 이름을 결정한다}
+
+이제 조금 더 흥미로운 예제를 살펴보자.
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    if False:
+        x = 20
+
+    print(x)
+
+func()
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+UnboundLocalError
+\end{dhkzsh}
+
+실제로 \zsh{if False} 내부의 대입문은 실행되지 않는다.
+
+그런데도 \zsh{x}는 지역 이름으로 판정된다.
+
+왜 그럴까?
+
+함수 블록의 지역 이름 판정은 일반적으로 해당 대입문이 실제 실행되는지 여부와 독립적이기 때문이다.
+
+컴파일러는 함수 블록에 있는 바인딩 연산을 분석한다.
+
+따라서 다음 코드도 마찬가지다.
+
+\begin{dhkcode}
+x = 10
+
+def func(flag):
+    if flag:
+        x = 20
+
+    return x
+
+print(func(True))
+print(func(False))
+\end{dhkcode}
+
+첫 번째 호출에서는 20이 출력된다.
+
+두 번째 호출에서는 \zsh{UnboundLocalError}가 발생한다.
+
+여기서 중요한 차이는 다음과 같다.
+
+\begin{dhktable}
+|구분|func(True)|func(False)|
+|:---|:---|:---|
+|x의 스코프|Local|Local|
+|x = 20 실행 여부|	실행|	실행되지 않음|
+|지역 x 바인딩|	존재|	존재하지 않음|
+|결과|	20|	UnboundLocalError|
+\end{dhktable}
+
+같은 함수의 이름 분류는 호출할 때마다 달라지지 않지만, 실제 바인딩 상태는 실행 경로에 따라 달라질 수 있다.
+
+이것이 정적 스코프 판정과 동적 실행 상태의 차이다.
+
+\subsubsection{대입 연산만 지역 이름을 만드는 것은 아니다}
+
+지금까지는 \zsh{x = 20}을 중심으로 설명하였다.
+
+하지만 지역 이름을 만드는 바인딩 연산은 대입문만 있는 것이 아니다.
+
+예를 들어 함수 내부의 다음 구문도 이름을 바인딩할 수 있다.
+
+\begin{dhkcode}
+def func(x):
+    ...
+\end{dhkcode}
+
+매개변수 \zsh{x}는 함수의 지역 이름이다.
+
+\begin{dhkcode}
+def func():
+    import math
+\end{dhkcode}
+
+여기서 \zsh{math}도 지역 이름이다.
+
+\begin{dhkcode}
+def func():
+    for item in [1,2,3]:
+        pass
+\end{dhkcode}
+
+\zsh{item} 역시 지역 이름으로 분류된다.
+
+또한 함수 내부의 \zsh{def, class, with ... as}, 
+
+예외 처리의 \zsh{except ... as} 등도 바인딩에 관여할 수 있다.
+
+다음 예제를 살펴보자.
+
+\begin{dhkcode}
+value = 100
+
+def func():
+    print(value)
+
+    for value in []:
+        pass
+
+func()
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+UnboundLocalError
+\end{dhkzsh}
+
+반복 대상이 빈 리스트이므로 \zsh{for}문의 본문은 실행되지 않는다.
+
+하지만 \zsh{for value in ...}의 \zsh{value}는 함수 블록에서 바인딩 대상이 되는 이름이다.
+
+따라서 \zsh{value}는 지역 이름으로 분류된다.
+
+이름 분류는 단순히 \zsh{=} 문자의 존재만으로 결정되는 것이 아니라, Python 문법에서 어떤 구문이 이름을 바인딩하는지에 따라 결정된다는 점을 기억해야 한다.
+
+\subsubsection{\zsh{global}의 정확한 역할}
+
+이제 \zsh{global}을 살펴보자.
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    global x
+
+    print(x)
+    x = 20
+
+func()
+
+print(x)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+20
+\end{dhkzsh}
+
+dㅕ기서 \zsh{global x}는 무엇을 하는 걸까?
+
+많이 하는 오해는 다음과 같다.
+
+\begin{dhksmry}[centered]
+global은 지역 변수를 전역 변수로 이동시킨다.
+\end{dhksmry}
+
+하지만 정확하지 않다.
+
+\zsh{global x}는 현재 코드 블록에서 \zsh{x}를 지역 이름으로 취급하지 않고, 모듈의 전역 이름으로 취급하도록 지정하는 선언문이다.
+
+즉, \zsh{global}은 객체를 이동시키는 연산이 아니다.
+
+이름의 스코프 판정에 영향을 주는 선언이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+먼저 모듈에서 다음 문장이 실행된다.
+
+\begin{dhkcode}
+x = 10
+\end{dhkcode}
+
+모듈 네임스페이스의 \zsh{x}가 정수 객체 10을 참조한다.
+
+이후 \zsh{func}가 정의된다.
+
+컴파일 과정에서 다음 선언을 분석한다.
+
+\begin{dhkcode}
+global x
+\end{dhkcode}
+
+따라서 \zsh{func} 내부의 \zsh{x}는 전역 이름으로 분류된다.
+
+이제 \zsh{func()}가 호출된다.
+
+\begin{dhkcode}
+print(x)
+\end{dhkcode}
+
+전역 이름 \zsh{x}를 조회하므로 10이 출력된다.
+
+다음 문장이 실행된다.
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+이 대입은 지역 이름을 새로 바인딩하는 것이 아니다.
+
+모듈 전역 네임스페이스의 \zsh{x}를 정수 객체 20에 재바인딩한다.
+
+따라서 함수 호출이 끝난 뒤에도
+
+\begin{dhkcode}
+print(x)
+\end{dhkcode}
+
+는 20을 출력하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+바인딩 구조
+\end{dhksmry}
+\end{dhknote}
+
+호출 전:
+
+\begin{dhksmry}
+    Global Namespace
+
+    x \ra int(10)
+\end{dhksmry}
+
+호출 후:
+
+\begin{dhksmry}
+    Global Namespace
+
+    x \ra int(20)
+\end{dhksmry}
+
+기존 정수 객체 10이 20으로 변경된 것이 아니다.
+
+전역 이름 \zsh{x}가 새로운 정수 객체를 참조하도록 재바인딩된 것이다.
+
+이 차이는 \zsh{A.1}에서 학습한 이름 바인딩과 동일한 원리다.
+
+\subsubsection{\zsh{global}은 반드시 전역 변수가 이미 존재해야 사용할 수 있을까?}
+
+그렇지는 않다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def create_global():
+    global message
+    message = "Hello"
+
+create_global()
+
+print(message)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Hello
+\end{dhkzsh}
+
+\zsh{global message} 선언 자체가 전역 이름에 객체를 바인딩하는 것은 아니다.
+
+실제로 다음 대입문이 실행될 때
+
+\begin{dhkcode}
+message = "Hello"
+\end{dhkcode}
+
+모듈의 전역 네임스페이스에 \zsh{message}가 바인딩되는 것이다.
+
+따라서 다음 코드는 다르게 동작한다.
+

@@ -1,0 +1,1201 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.3. 클래스와 인스턴스 — Person과 Person()은 어떻게 다른가?
+% ==================================================
+
+\subsection{클래스와 인스턴스 — \zsh{Person}과 \zsh{Person()}은 어떻게 다른가?}
+
+2.2에서는 Python의 \zsh{class}문이 단순한 선언이 아니라, 클래스 본문을 실행하고 클래스 객체를 생성한 뒤 이름에 바인딩하는 문장이라는 사실을 학습했다.
+
+이번 2.3에서는 생성된 클래스 객체를 호출하면 어떤 일이 발생하는지 살펴본다.
+
+특히 다음 세 표현식의 차이를 정확하게 이해하는 것이 목표다.
+
+\begin{dhkcode}
+Person
+Person()
+p = Person()
+\end{dhkcode}
+
+겉으로 보기에는 \zsh{()} 의 유무와 대입문 정도의 차이지만,
+
+Python의 객체 모델에서는 서로 다른 동작을 의미한다.
+
+이번 학습에서는 다음 질문에 답할 것이다.
+
+\begin{dhksmry}
+1. 클래스와 인스턴스는 정확히 무엇이 다른가?
+
+2. \zsh{Person}과 \zsh{Person()}은 각각 무엇을 의미하는가?
+
+3. 인스턴스가 생성될 때 클래스 객체도 복사되는가?
+
+4. 하나의 클래스로 여러 인스턴스를 생성하면 어떤 관계가 형성되는가?
+
+5. 인스턴스는 자신의 클래스를 어떻게 알 수 있는가?
+
+6. \zsh{is}, \zsh{==}, \zsh{type()}, \zsh{isinstance()}는 어떤 차이가 있는가?
+
+7. 이러한 구조가 Pytorch 모델에서는 어떻게 사용되는가?
+\end{dhksmry}
+
+\subsubsection{개념 정의 - 클래스와 인스턴스}
+
+먼저 가장 기본적인 코드부터 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+\end{dhkcode}
+
+이 코드를 실행하면 Python은 \zsh{Person}이라는 클래스 객체를 생성한다.
+
+여기서 아직 \zsh{Person}의 인스턴스를 생성한 것은 아니다.
+
+이후 다음 코드를 실행한다고 가정하자.
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+이때 일반적인 클래스에서는 새로운 인스턴스 객체가 생성된다.
+
+따라서 두 객체를 구분해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체(Class Object)
+\end{dhksmry}
+\end{dhknote}
+
+클래스 객체는 인스턴스의 생성과 동작을 정의하는 객체다.
+
+\begin{dhkcode}
+Person
+\end{dhkcode}
+
+\zsh{Person}이라는 이름은 클래스 객체를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 객체(Instance Object)
+\end{dhksmry}
+\end{dhknote}
+
+인스턴스는 클래스 객체를 기반으로 생성된 개별 객체다.
+
+\begin{dhkcode}
+Person()
+\end{dhkcode}
+
+이 표현식은 클래스 객체를 호출한다.
+
+일반적인 경우 새로운 인스턴스를 생성하고 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스를 참조하는 이름
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+오른쪽 표현식의 평가 결과를 왼쪽 이름 \zsh{p}에 바인딩한다.
+
+따라서 전체 관계는 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node per (1,1) :: Person
+node c (1,3) :: 클래스 객체
+node i (3,3) :: 인스턴스 객체
+node p (5,1) :: p
+
+edge per -> c
+edge c -> i :: Person()호출
+edge p -> i :: HV
+\end{dhkdiagram}
+
+여기서 중요한 사실은 클래스 객체와 인스턴스 객체가 별도로 존재한다는 것이다.
+
+클래스는 인스턴스를 생성하기 위한 정의이지만, Python에서는 그 정의 자체도 하나의 객체다.
+
+\begin{dhktable}
+|구분|	클래스 객체|	인스턴스 객체|
+|:---|:---|:---|
+|예시|	Person|	Person()의 반환값|
+|일반적인 타입|	type|	Person|
+|생성 시점|	class 정의문 실행 시|	클래스 호출 시|
+|주요 역할|	인스턴스의 구조와 동작 정의|	개별 객체의 상태와 동작 표현|
+|여러 개 생성 가능 여부|	클래스 정의를 다시 실행하면 새 클래스 객체 생성 가능|	같은 클래스에서 여러 인스턴스 생성 가능|
+\end{dhktable}
+
+여기서 인스턴스가 반드시 개별적인 상태를 가져야 하는 것은 아니다.
+
+\begin{dhkcode}
+class Person:
+    pass
+\end{dhkcode}
+
+이처럼 속성이 없는 클래스의 인스턴스도 정상적인 인스턴스 객체다.
+
+\subsubsection{\zsh{Person}과 \zsh{Person()}의 차이}
+
+이제 두 표현식을 비교해 보자.
+
+\begin{dhkcode}
+Person
+
+Person()
+\end{dhkcode}
+
+이전에 함수 객체를 공부하면서 다음 두 표현식의 차이를 학습했다.
+
+\begin{dhkcode}
+add
+
+add()
+\end{dhkcode}
+
+\zsh{add}는 함수 객체를 참조하고, \zsh{add()}는 함수 객체를 호출하는 표현식이다.
+
+클래스도 이와 비슷하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Person - 클래스 객체 참조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    pass
+
+print(Person)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+여기서는 클래스 객체를 참조할 뿐, 새로운 인스턴스를 생성하지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Person() - 클래스 객체 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+\zsh{()}는 앞에 있는 호출 가능한 객체를 호출하는 문법이다.
+
+따라서 Python은 \zsh{Person}이 참조하는 클래스 객체를 호출한다.
+
+일반적인 클래스 객체 호출은 인스턴스 생성과 초기화 과정으로 이어진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+p = Person() - 반환값 바인딩
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+이 대입문을 개념적으로 나누면 다음과 같다.
+
+\begin{dhksmry}[centered]
+1. Person 이름 평가
+
+\da
+
+2. 클래스 객체 획득
+
+\da
+
+3. 클래스 객체 호출
+
+\da
+
+4. 인스턴스 생성 및 초기화
+
+\da
+
+5. 호출 결과 반환
+
+\da
+
+6. p 이름에 반환된 객체 바인딩
+\end{dhksmry}
+
+중요한 것은 \zsh{p}가 객체를 생성하는 것이 아니라는 점이다.
+
+객체 생성은 오른쪽의 \zsh{Person()} 호출 과정에서 이루어진다.
+
+왼쪽의 \zsh{p}는 그 결과를 참조하는 이름일 뿐이다.
+
+이전에 학습한 이름과 객체의 바인딩 개념이 그대로 적용되는 것이다.
+
+\subsubsection{하나의 클래스에서 여러 인스턴스 생성하기}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p1 = Person()
+p2 = Person()
+p3 = Person()
+\end{dhkcode}
+
+여기서 \zsh{Person} 클래스 객체는 하나다.
+
+하지만 \zsh{Person()}을 세 번 호출했으므로 일반적인 생성 과정에서는 서로 다른 인스턴스 세 개가 만들어진다.
+
+\begin{dhkdiagram}[in=6]
+node per (1,2) :: Person
+node c (3,2) :: 클래스 객체
+node pi1 (4,1) :: Person()
+node pi2 (4,2) :: Person()
+node pi3 (4,3) :: Person()
+node i1 (6,1) :: 인스턴스1
+node i2 (6,2) :: 인스턴스2
+node i3 (6,3) :: 인스턴스3
+node p1 (8,1) :: p1
+node p2 (8,2) :: p2
+node p3 (8,3) :: p3
+
+edge per -> c
+split c -> pi1, pi2, pi3
+edge pi1 -> i1
+edge pi2 -> i2
+edge pi3 -> i3
+
+edge p1 -> i1
+edge p2 -> i2
+edge p3 -> i3
+\end{dhkdiagram}
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+print(p1 is p2)
+print(p2 is p3)
+print(p1 is p3)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+False
+False
+\end{dhkzsh}
+
+\zsh{is}는 두 표현식이 동일한 객체를 참조하는지 검사한다.
+
+각각 새로운 인스턴스를 생성했기 때문에 결과가 모두 \zsh{False}다.
+
+그런데 다음 코드는 어떨까?
+
+\begin{dhkcode}
+p1 = Person()
+p2 = p1
+
+print(p1 is p2)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+이번에는 \zsh{Person()}을 한 번만 호출했다.
+
+\zsh{p2 = p1}은 새로운 인스턴스를 생성하는 코드가 아니다.
+
+기존 인스턴스에 새로운 이름을 바인딩한다.
+
+\begin{dhkdiagram}[in=6]
+node p1 (1,1) :: p1
+node i (2,2) :: 인스턴스 객체
+node p2 (3,1) :: p2
+
+edge p1 -> i :: HV
+edge p2 -> i :: HV
+\end{dhkdiagram}
+
+이 구조는 이전에 살펴본 이름과 객체의 관계와 동일하다.
+
+이름을 새로 만든다고 객체가 새로 생성되는 것은 아니다.
+
+\subsubsection{인스턴스가 생성되면 클래스도 복사되는가?}
+
+여기서 중요한 질문이 하나 생긴다.
+
+\begin{dhkcode}
+p1 = Person()
+p2 = Person()
+\end{dhkcode}
+
+이렇게 인스턴스를 두 개 생성하면 \zsh{Person} 클래스 객체도 두 개로 복사될까?
+
+아니다.
+
+일반적인 인스턴스 생성에서는 클래스 객체가 복사되지 않는다.
+
+두 인스턴스는 동일한 클래스 객체를 자신의 타입으로 가진다.
+
+다음 코드로 확인할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p1 = Person()
+p2 = Person()
+
+print(type(p1) is Person)
+print(type(p2) is Person)
+print(type(p1) is type(p2))
+\end{dhkcode}
+
+출력:
+\begin{dhkzsh}
+True
+True
+True
+\end{dhkzsh}
+
+관계를 표현하면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node per (1,2) :: Person
+node c (3,2) :: 클래스 객체
+node t1 (5,1) :: type
+node t2 (5,3) :: type
+node i1 (7,1) :: 인스턴스1
+node i2 (7,3) :: 인스턴스2
+node p1 (9,1) :: p1
+node p2 (9,3) :: p2
+
+edge per -> c
+edge t1 -> c :: VH
+edge t2 -> c :: VH
+edge i1 -> t1
+edge i2 -> t2
+edge p1 -> i1
+edge p2 -> i2
+\end{dhkdiagram}
+
+두 인스턴스는 각각 독립적인 객체이지만 동일한 클래스 객체를 타입으로 참조한다.
+
+이 구조가 중요한 이유는 메서드와 클래스 속성 때문이다.
+
+예를 들어 다음 클래스를 보자.
+
+\begin{dhkcode}
+class Person:
+
+    def introduce(self):
+        print("Hello")
+\end{dhkcode}
+
+인스턴스를 여러 개 생성해도 일반적으로 \zsh{introduce} 함수 객체가 인스턴스마다 복사되는 것은 아니다.
+
+\begin{dhkcode}
+p1 = Person()
+p2 = Person()
+\end{dhkcode}
+
+\zsh{introduce} 함수 객체는 클래스의 네임스페이스에 존재한다.
+
+\begin{dhkcode}
+print(Person.__dict__["introduce"])
+\end{dhkcode}
+
+각 인스턴스에서 다음처럼 접근할 수 있다.
+
+\begin{dhkcode}
+p1.introduce()
+p2.introduce()
+\end{dhkcode}
+
+Python은 인스턴스를 통해 메서드에 접근할 때 클래스의 함수 객체를 찾아 해당 인스턴스에 바인딩된 메서드로 제공한다.
+
+이 과정은 2.5에서 자세히 학습한다.
+
+현재 단계에서는 다음 사실을 기억하면 충분하다.
+
+\begin{dhksmry}[centered]
+인스턴스가 여러 개 존재하더라도 
+
+클래스에 정의된 메서드가 인스턴스마다 복사되는 것은 아니다.
+\end{dhksmry}
+
+\subsubsection{인스턴스는 자신의 클래스를 어떻게 알 수 있는가?}
+
+앞에서 다음 코드를 사용했다.
+
+\begin{dhkcode}
+type(p1)
+\end{dhkcode}
+
+그렇다면 Python은 \zsh{p1}이 \zsh{Person}의 인스턴스라는 사실을 어떻게 알까?
+
+Python 객체는 자신의 타입에 대한 정보를 가진다.
+
+일반적인 Python 객체에서는 \zsh{__class__} 속성을 통해 해당 정보를 확인할 수 있다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+
+print(p.__class__)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+다음 코드도 확인해 보자.
+
+\begin{dhkcode}
+print(p.__class__ is Person)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+따라서 다음 두 표현식은 이 예제에서 같은 클래스 객체를 반환한다.
+
+\begin{dhkcode}
+type(p)
+p.__class__
+\end{dhkcode}
+
+다만 엄밀하게는 두 표현식의 동작이 항상 완전히 동일한 것은 아니다.
+
+\zsh{type(p)}는 객체의 실제 타입을 확인하는 반면,
+
+\zsh{p.__class__}는 속성 접근을 통해 얻는 값이므로 사용자 정의 클래스의 특수한 속성 처리에 영향을 받을 수 있다.
+
+일반적인 Python 클래스를 공부하는 현재 단계에서는 둘 다 인스턴스와 클래스의 관계를 확인하는 방법으로 이해해도 충분하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+타입과 인스턴스 관계
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 다시 보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+\end{dhkcode}
+
+각 표현식의 타입을 확인하면 다음과 같다.
+
+\begin{dhkcode}
+print(type(p))
+pirnt(type(Person))
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+<class 'type'>
+\end{dhkzsh}
+
+즉,
+
+\begin{dhkzsh}
+type(p) = Person
+type(Person) = type
+\end{dhkzsh}
+
+
+이 관계는 2.2에서 배운 내용과 연결된다.
+
+\begin{dhkdiagram}[in=6]
+node t (1, 1) :: type
+node per (3, 1) :: Person
+node p (5, 1) :: p
+
+edge t -> per :: 클래스 객체의 타입
+edge per -> p :: 인스턴스 객체의 타입
+\end{dhkdiagram}
+
+여기서 다시 강조할 점은 이 관계가 상속 관계가 아니라 타입과 인스턴스의 관계라는 것이다.
+
+상속은 이후 2.8에서 별도로 학습한다.
+
+\subsubsection{객체의 동일성과 동등성 - \zsh{is}와 \zsh{==}}
+
+클래스와 인스턴스를 이해할 때 반드시 구분해야 하는 개념이 있다.
+
+바로 객체의 동일성(Identity)과 동등성(Equality)이다.
+
+이전에 객체와 바인딩을 공부하면서 살펴봤던 개념이기도 하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+is - 동일한 객체인가?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p1 = Person()
+p2 = Person()
+p3 = p1
+
+print(p1 is p2)
+print(p1 is p3)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+\zsh{is}는 두 이름이 같은 객체를 참조하는지 확인한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+== - 두 객체가 동등한가?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(p1 == p2)
+print(p1 == p3)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+이 예제에서는 \zsh{Person} 클래스에 동등성 비교를 위한 별도의 메서드를 정의하지 않았다.
+
+따라서 기본적인 객체 비교 동작에 따라 서로 다른 인스턴스는 동등하지 않은 것으로 평가된다.
+
+하지만 \zsh{==}의 동작은 클래스에서 \zsh{__eq__()}를 정의하여 변경할 수 있다.
+
+다음 예제를 보자.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, other):
+        if not isinstance(other, Person):
+            return NotImplemented
+        
+        return self.name == other.name
+\end{dhkcode}
+
+이제 다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+p1 = Person("Kim")
+p2 = Person("Kim")
+
+print(p1 is p2)
+print(p1 == p2)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{p1}과 \zsh{p2}는 서로 다른 인스턴스 객체다.
+
+따라서 \zsh{is}는 \zsh{False}다.
+
+하지만 \zsh{__eq__()}에서는 두 인스턴스의 \zsh{name} 속성이 같은지 비교하도록 정의했다.
+
+따라서 \zsh{==}는 \zsh{True}가 된다.
+
+정리하면 다음과 같다.
+
+\begin{dhktable}
+|연산자|비교 기준|
+|:---|:---|
+|is|두 표현식이 동일한 객체를 참조하는가?|
+|==|객체가 정의한 동등성 비교 결과는 무엇인가?|
+\end{dhktable}
+
+특히 머신러닝에서는 Tensor 객체의 \zsh{==}가 원소별 비교를 수행한다는 점도 기억해 둘 필요가 있다.
+
+따라서 Python 객체의 동일성 비교와 Tensor 값 비교는 구분해서 사용해야 한다.
+
+\subsubsection{\zsh{type()}과 \zsh{isinstance()}의 차이}
+
+이번에는 객체의 타입을 검사하는 두 방법을 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+type() - 객체의 실제 타입 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+print(type(p))
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class '__main__.Person'>
+\end{dhkzsh}
+
+정확히 \zsh{Person} 클래스의 인스턴스인지 확인하려면 다음처럼 작성할 수 있다.
+
+\begin{dhkcode}
+print(type(p) is Person)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+isinstance() - 클래스 관계를 고려한 검사
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(isinstance(p, Person))
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+그런데 상속이 등장하면 차이가 발생한다.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+class Student(Person):
+    pass
+
+s = Student()
+\end{dhkcode}
+
+여기서 \zsh{Student}는 \zsh{Person}을 상속받는다.
+
+다음 결과를 확인해 보자.
+
+\begin{dhkcode}
+print(type(s) is Person)
+print(type(s) is Student)
+
+print(isinstance(s, Person))
+print(isinstance(s, Student))
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+True
+True
+True
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{s}의 실제 타입은 \zsh{Student}다.
+
+따라서 다음 비교는 \zsh{False}다.
+
+\begin{dhkcode}
+type(s) is Person
+\end{dhkcode}
+
+하지만 \zsh{Student}는 \zsh{Person}을 상속하므로 \zsh{s}는 \zsh{Person}의 인스턴스이기도 하다.
+
+따라서 다음 비교는 \zsh{True}다.
+
+\begin{dhkcode}
+isinstance(s, Person)
+\end{dhkcode}
+
+정리하면 다음과 같다.
+
+\begin{dhktable}
+|표현식|	의미|
+|:---|:---|
+|type(s) is Person|	실제 타입이 정확히 Person인가?|
+|type(s) is Student	|실제 타입이 정확히 Student인가?|
+|isinstance(s, Person)	|Person 또는 그 하위 클래스의 인스턴스인가?|
+|isinstance(s, Student)	|Student 또는 그 하위 클래스의 인스턴스인가?|
+\end{dhktable}
+
+\zsh{isinstance()}에는 추상 기반 클래스나 사용자 정의 인스턴스 검사 규칙 등 추가적인 동작도 있지만,
+
+현재는 상속 관계를 고려한다는 점을 이해하면 충분하다.
+
+이 개념은 이후 PyTorch에서 중요하게 사용된다.
+
+\subsubsection{클래스 정의를 다시 실행하면 어떻게 되는가?}
+
+이번에는 이름과 객체의 바인딩 관점에서 조금 더 깊게 살펴보자.
+
+다음 코드를 실행한다고 가정하자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+\end{dhkcode}
+
+이 시점의 관계는 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node per (1,1) :: Person
+node c (1,3) :: 클래스 객체 A
+node t (3,3) :: type
+node i (5,3) :: 인스턴스 p
+
+edge per -> c
+edge i -> t
+edge t -> c
+\end{dhkdiagram}
+
+그런데 같은 이름으로 클래스를 다시 정의하면 어떻게 될까?
+
+\begin{dhkcode}
+class Person:
+    pass
+\end{dhkcode}
+
+Python은 기존 클래스 객체를 수정하는 것이 아니라, 새로운 클래스 객체를 생성하고
+
+\zsh{Person}이라는 이름을 그 객체에 다시 바인딩한다.
+
+따라서 기존 인스턴스 \zsh{p}는 이전 클래스 객체를 타입으로 유지한다.
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+class Person:
+    pass
+
+p = Person()
+
+OldPerson = Person
+
+class Person:
+    pass
+
+
+print(OldPerson is Person)
+print(type(p) is OldPerson)
+print(type(p) is Person)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+True
+False
+\end{dhkzsh}
+
+실행 과정을 나타내면 다음과 같다.
+
+처음 클래스 정의 후
+
+\begin{dhkdiagram}[in=6]
+node per (1,1) :: Person
+node c (1,3) :: 클래스 객체 A
+edge per ->c
+\end{dhkdiagram}
+
+인스턴스 생성 후
+
+\begin{dhkdiagram}[in=6]
+node per (1,1) :: Person
+node c (1,3) :: 클래스 객체 A
+node i (3,3) :: 인스턴스 p
+edge per ->c
+edge i ->c
+\end{dhkdiagram}
+
+클래스 재정의 후
+
+\begin{dhkdiagram}[in=6]
+node op (1,1) :: OldPerson
+node c (1,3) :: 클래스 객체 A
+node i (3,3) :: 인스턴스 p
+node per (5,1) :: Person
+node b (5,3) :: 클래스 객체 B
+
+edge op -> c
+edge i -> c
+edge per -> b
+\end{dhkdiagram}
+
+여기서 \zsh{Person}이라는 이름은 새로운 클래스 객체 B를 참조하지만,
+
+기존 인스턴스 \zsh{p}의 타입은 여전히 클래스 객체 A다.
+
+이 개념은 Jupyter Notebook에서 클래스를 여러 번 정의할 때 특히 중요하다.
+
+예를 들어 Notebook에서 모델 클래스를 정의한 셀을다시 실행하면 새로운 클래스 객체가 만들어질 수 있다.
+
+하지만 이전에 생성한 모델 인스턴스가 자동으로 새로운 클래스의 인스턴스로 바뀌는 것은 아니다.
+
+따라서 다음과 같은 상황이 발생할 수 있다.
+
+\begin{dhkcode}
+model = MyModel()
+\end{dhkcode}
+
+이후 \zsh{MyModel} 클래스 정의 셀을 다시 실행하더라도 기존 \zsh{model}은
+
+이전 클래스 정의를 기반으로 생성된 인스턴스다.
+
+이런 경우에는 새 클래스 정의를 반영하려면 일반적으로 모델 인스턴스를 다시 생성해야 한다.
+
+\subsubsection{PyTorch와의 연결 - 모델 클래스와 모델 인스턴스}
+
+이제 PyTorch 코드에 적용해 보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10,5)
+
+    def forward(self,x):
+        return self.linear(x)
+\end{dhkcode}
+
+이 코드를 실행하면 \zsh{MyModel}이라는 클래스 객체가 생성된다.
+
+아직 모델 인스턴스를 생성한 것은 아니다.
+
+다음 코드를 실행하면
+
+\begin{dhkcode}
+model = MyModel()
+\end{dhkcode}
+
+\zsh{MyModel} 클래스 객체가 호출되고 모델 인스턴스가 생성된다.
+
+여기서 중요한 차이가 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+모델 클래스
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+MyModel
+\end{dhkcode}
+
+모델의 구조와 동작을 정의하는 클래스 객체다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+모델 인스턴스
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+model = MyModel()
+\end{dhkcode}
+
+실제 \zsh{nn.Linear} 계층과 파라미터를 포함하는 모델 객체다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+여러 모델 인스턴스 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+model1 = MyModel()
+model2 = MyModel()
+\end{dhkcode}
+
+두 모델은 같은 클래스의 인스턴스지만 서로 다른 객체다.
+
+\begin{dhkcode}
+print(model1 is model2)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+또한 각각 \zsh{nn.Linear} 계층도 별도로 생성된다.
+
+\begin{dhkcode}
+print(model1.linear is model2.linear)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+따라서 일반적으로 두 모델은 서로 독립적인 파라미터를 가진다.
+
+\begin{dhkdiagram}[in=6]
+node mm (1,2) :: MyModel
+node c (3,2) :: 클래스 객체
+node m1 (4,1) :: MyModel()
+node m2 (4,3) :: MyModel()
+node mm1 (6,1) :: model1
+node mm2 (6,3) :: model2
+node la (8,1) :: nn.Linear A
+node lb (8,3) :: nn.Linear B
+node pa (10,1) :: Parameters A
+node pb (10,3) :: Parameters B
+edge mm ->c
+split c -> m1,m2
+edge m1 -> mm1
+edge mm1 -> la
+edge la -> pa
+edge m2 -> mm2
+edge mm2 -> lb
+edge lb -> pb
+\end{dhkdiagram}
+
+여기서 중요한 것은 클래스 객체는 공유하지만,
+
+인스턴스 내부에 생성된 계층과 파라미터는 별도로 존재한다는 점이다.
+
+이는 딥러닝 실험에서 중요한 의미를 가진다.
+
+예를 들어 동일한 모델 아키텍처를 사용하면서 서로 다른 초기 파라미터를 가진 모델을 여러 개 생성할 수 있다.
+
+\begin{dhkcode}
+model1 = MyModel()
+model2 = MyModel()
+\end{dhkcode}
+
+두 모델은 같은 아키텍처를 가지지만, 별도의 파라미터 객체를 가진다.
+
+초기 가중치의 실제 값이 서로 다른지는 난수 상태와 초기화 방식에 따라 달라진다.
+
+이러한 구조는 여러 모델을 비교하거나 서로 다른 학습 실험을 수행할 때 활용된다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서는 클래스 객체와 인스턴스 객체의 관계를 살펴보았다.
+
+핵심 내용을 정리하면 다음과 같다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 객체와 인스턴스 객체는 서로 다른 객체다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Person
+Person()
+\end{dhkcode}
+
+\zsh{Person}은 클래스 객체를 참조하고, \zsh{Person()}은 클래스 객체를 호출하는 표현식이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스는 클래스 객체를 호출하여 생성할 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p = Person()
+\end{dhkcode}
+
+일반적인 클래스에서는 새로운 인스턴스가 생성되고 \zsh{p}에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+하나의 클래스에서 여러 인스턴스를 생성할 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p1 = Person()
+p2 = Person()
+\end{dhkcode}
+
+일반적으로 두 인스턴스는 서로 다른 객체다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스를 생성한다고 클래스 객체가 복사되는 것은 아니다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+type(p1) is type(p2)
+\end{dhkcode}
+
+같은 클래스에서 생성한 인스턴스들은 동일한 클래스 객체를 타입으로 가진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+이름의 재바인딩은 객체의 재생성과 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p2 = p1
+\end{dhkcode}
+
+이 코드는 새로운 인스턴스를 생성하지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+is와 ==는 서로 다른 비교 연산이다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p1 is p2
+p1 == p2
+\end{dhkcode}
+
+\zsh{is}는 객체의 동일성을 검사하고, \zsh{==}는 객체의 동등성을 검사한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+type()과 isinstance()는 검사 목적이 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+type(p) is Person
+isinstance(p, Person)
+\end{dhkcode}
+
+전자는 실제 타입을 정확히 비교하고, 후자는 일반적으로 상속 관계까지 고려한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스를 다시 정의하면 새로운 클래스 객체가 생성된다.
+\end{dhksmry}
+\end{dhknote}
+
+기존 인스턴스는 이전 클래스 객체를 자신의 타입으로 유지한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch 모델도 클래스와 인스턴스를 구분해야 한다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+MyModel
+MyModel()
+\end{dhkcode}
+
+\zsh{MyModel}은 모델 클래스 객체이고,
+
+\zsh{MyModel()}은 일반적으로 실제 계층과 파라미터를 가진 모델 인스턴스를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2.3에서 반드시 이해해야 할 결론
+\end{dhksmry}
+\end{dhknote}
+
+이번 학습의 핵심 구조는 다음과 같다.
+
+\begin{dhkdiagram}[in=12]
+node c (1,1) :: Class Object
+node i (3,1) :: Instance Object
+node n (5,1) :: Name Binding
+edge c->i :: 호출
+edge i ->n :: 반환
+\end{dhkdiagram}
+
+그리고 하나의 클래스 객체를 기반으로 여러 인스턴스가 생성될 수 있다.
+
+\begin{dhkdiagram}[in=10]
+node per (3,1) :: Person
+node p1 (1,3) :: p1
+node p2 (3,3) :: p2
+node p3 (5,3) :: p3
+
+edge per -> p1
+edge per -> p2
+edge per -> p3
+\end{dhkdiagram}
+
+여기서 \zsh{Person}은 클래스 객체이고,
+
+\zsh{p1, p2, p3}는 각각 해당 클래스의 인스턴스를 참조하는 이름이다.
+
+클래스는 인스턴스의 타입과 동작을 정의하고, 인스턴스는 그 클래스를 기반으로 생성된 개별 객체다.
+
+다음 \zsh{2.4. 인스턴스 속성과 네임스페이스}에서는
+
+지금까지 구분한 클래스 객체와 인스턴스 객체를 기반으로
+
+\zsh{self.name}이 실제로 어디에 저장되는지,
+
+\zsh{__dict__}가 어떤 역할을 하는지,
+
+Python이 속성을 어떻게 찾아가는지 살펴볼 것이다.

@@ -1,0 +1,267 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 1.1 Introduction
+% ==================================================
+
+\subsection{Python 실행 환경과 외부 시스템 개요}
+
+\subsubsection{\zsh{sys}는 파일 경로용 패키지가 아니다}
+
+\begin{dhknote}
+\begin{dhksmry}
+sys $\neq$ 시스템의 파일이나 디렉터리를 다루는 패키지
+
+sys = 현재 실행 중인 Python interpreter와 
+      그 실행 환경에 접근하는 모듈
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import sys
+
+print(sys.version) # 현재 어떤 Python인가? 
+print(sys.executable) # 현재 어떤 Python 실행 파일을 쓰는가?
+print(sys.argv) # 이 프로그램을 실행할 때 무엇을 전달받았는가?
+print(sys.path) # import할 모듈을 어디서 찾는가?
+\end{dhkcode}
+
+위 4개의 print문의 인수는 전부 파일 조작 기능이 아니다.
+
+\begin{dhkcode}
+from pathlib import Path # 파일 경로 다루는 패키지
+import os # 운영체제 기능을 다루는 패키지
+\end{dhkcode}
+
+그러므로 아래와 같이 생각하자.
+
+\begin{dhkdir}
+sys
+>Python interpreter
+>실행 인수
+>import 검색 경로
+>stdin / stdout / stderr
+>프로그램 종료 등
+\end{dhkdir}
+
+\begin{dhkdir}
+os
+>운영 체제
+>환경 변수
+>프로세스 관련 기능
+>일부 파일 시스템 기능
+\end{dhkdir}
+
+\begin{dhkdir}
+pathlib
+>파일/디렉터리 경로
+\end{dhkdir}
+
+\subsubsection{그런데 왜 sys를 배우다 보면 경로가 나오는가?}
+
+대표적인 원인은 \texttt{sys.path}이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+sys.path $\neq$ 내 컴퓨터의 파일 경로를 탐색하는 기능
+
+sys.path = \textbf{Python이 import 할 모듈을 찾는 위치들의 목록}
+\end{dhksmry}
+\end{dhknote}
+
+예를 들어:
+
+\begin{dhkcode}
+import numpy
+\end{dhkcode}
+
+라는 코드를 실행했다고 하면 Python 입장에서는 문제가 발생한다.
+
+\begin{dhksmry}[centered]
+numpy가 어디 있는데?
+\end{dhksmry}
+
+컴퓨터에는 수십만 개의 파일이 있을 수 있다.
+
+Python이 C 드라이브나 SSD 전부를 뒤지는 것이 아니다.
+
+Python은 정해진 검색 위치를 가지고 있고 그것을 확인하는 게:
+
+\begin{dhkcode}
+import sys
+
+print(sys.path)
+\end{dhkcode}
+
+위 코드의 결과는 대략 아래와 같다.
+
+\begin{dhkzsh}
+[
+'/Users/user/project',
+'/Users/user/anaconda3/envs/transformer/lib/python310.zip',
+'/Users/user/anaconda3/envs/transformer/lib/python3.10',
+...
+'/Users/user/anaconda3/envs/transformer/lib/python3.10/site-packages'
+]
+\end{dhkzsh}
+
+여기에서 \zsh{site-packages}는 \zsh{pip install transformers}같은 걸 하면 설치된 Python 패키지가 들어가는 대표적인 위치다.
+
+그렇기에:
+
+\begin{dhkcode}
+import transformers
+\end{dhkcode}
+
+가 가능한 것이다.
+
+\subsubsection{이것을 conda 가상환경과 연결해보자}
+
+윈도우에서 Conda 환경이:
+
+\begin{dhkzsh}
+C:\Users\user\anaconda3\envs\transformer\
+\end{dhkzsh}
+
+에 있을 때 터미널에서 conda 가상환경을 활성화하고 파이썬에서:
+
+\begin{dhkcode}
+import sys
+
+print(sys.executable)
+\end{dhkcode}
+
+을 하면 결과는
+
+\begin{dhkzsh}
+C:\Users\user\anaconda3\envs\transformer\python.exe
+\end{dhkzsh}
+
+가 나온다.
+
+즉,
+
+\begin{dhksmry}[centered]
+Conda environment
+\da
+transformer
+\da
+그 환경의 Python interpreter
+\da
+\zsh{C:\Users\user\anaconda3\envs\transformer\python.exe}
+\end{dhksmry}
+
+가 연결된다.
+
+\subsubsection{파일 경로는 또 다른 문제다}
+
+예를 들어 프로젝트가:
+
+\begin{dhkdir}[in=8]
+transformer/
+>notebooks/
+>>attention.ipynb
+>data/
+>>emoitons.csv
+>model/
+>train.py
+\end{dhkdir}
+
+라고 할 때, \zsh{train.py}에서 데이터를 읽고 싶다면:
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.read_csv(
+    'data/emotions.csv'
+)
+\end{dhkcode}
+
+여기서 \zsh{'data/emotions.csv'}는 \zsh{sys.path}와 직접적인 관계가 없다.
+
+이 것은 \textbf{파일 시스템 경로}다.
+
+그래서 중요한 개념이 등장한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+현재 작업 디렉터리
+
+Current Working Directory
+
+CWD
+\end{dhksmry}
+\end{dhknote}
+
+\subsubsection{그래서 우리가 제일 먼저 깊게 배워야 하는 것은 \zsh{sys}가 아니다}
+
+추천 순서는:
+
+\begin{dhksmry}[centered]
+파일 시스템
+\da
+경로
+\da
+절대 경로 / 상대 경로
+\da
+현재 작업 디렉터리
+\da
+pathlib
+\da
+Python 프로그램 실행
+\da
+sys.argv
+\da
+sys.executable
+\da
+import
+\da
+sys.path
+\end{dhksmry}
+
+\subsubsection{최종적으로는 이런 코드를 이해하는 것이 목표다}
+
+예를 들어 몇 단계 뒤에는 터미널에서:
+
+\begin{dhkzsh}
+python train.py \
+    --data ./data/emotions.csv \
+    --model distilbert-base-uncased \
+    --epochs 5 \
+    --output ./models/emotion-model
+\end{dhkzsh}
+
+를 실행할 때:
+
+\begin{dhkbranch}[in=5]
+node main :: Shell
+arrow main :: python train.py --data ...
+
+node main :: Python interpreter
+arrow main :: sys.argv
+
+node main :: train.py
+
+branchline main -> data :: --data
+arrow data
+node data :: Path("./data/emotions.csv")
+arrow data
+node data :: local filesystem
+stop data
+
+handoff main -> model :: --model
+arrow model
+node model :: Hugging Face model identifier
+stop model
+\end{dhkbranch}
+
+그리고 내부에서는:
+
+\begin{dhkcode}
+sys.executable # 어떤 Python이 실행 중인지 알 수 있음
+sys.path # Python이 import할 package를 어디서 찾는지 확인 할 수 있음
+os.environ # 환경 변수에 접근할 수도 있음
+\end{dhkcode}
+
+이 정도가 되면 \textbf{CLI, Conda, VS Code, Jupyter, Python import, 파일 경로, URL, ML 학습 스크립트가 전부 하나의 시스템으로 보이기 시작한다.}
+

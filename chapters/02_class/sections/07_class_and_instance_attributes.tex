@@ -1,0 +1,1141 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.7. 클래스 속성과 인스턴스 속성 — Python은 속성을 어떤 순서로 탐색하는가?
+% ==================================================
+
+\subsection{클래스 속성과 인스턴스 속성 - Python은 속성을 어떤 순서로 탐색하는가?}
+
+2.4에서는 인스턴스 속성이 일반적으로 \zsh{__dict__}에 저장된다는 사실을 학습했고, 2.5에서는 클래스에 정의된 함수 객체가 인스턴스를 통해 접근될 때 바운드 메서드로 변환되는 과정을 살펴보았다.
+
+이번 2.7에서는 두 개념을 연결해 볼 것이다.
+
+클래스와 인스턴스에 같은 이름의 속성이 존재하면 Python은 어떤 값을 선택할까?
+
+그리고 더 근본적으로, 인스턴스에 존재하지 않는 메서드나 속성을 어떻게 찾아 사용할 수 있을까?
+
+이번 학습의 핵심 질문은 다음과 같다.
+
+\begin{dhksmry}
+1. 클래스 속성과 인스턴스 속성은 어디에 저장되는가?
+
+2. 클래스 속성은 모든 인스턴스가 공유하는가?
+
+3. 같은 이름의 속성이 존재하면 어떤 속성이 우선하는가?
+
+4. p.attribute = value와 Person.attribute = value는 어떻게 다른가?
+
+5. Mutable 클래스 속성에서 예상치 못한 공유 문제가 발생하는 이유는 무엇인가?
+
+6. 디스크립터는 일반적인 속성 탐색 순서를 어떻게 변경하는가?
+
+7. 이 구조가 PyTorch의 nn.Module과 어떻게 연결되는가?
+\end{dhksmry}
+
+\subsubsection{개념 정의 - 클래스 속성과 인스턴스 속성}
+
+먼저 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    def __init__(self, name):
+        self.name = name
+
+p1 = Person("Kim")
+p2 = Person("Lee")
+\end{dhkcode}
+
+여기에는 두 종류의 속성이 존재한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 속성(Class Attribute)
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+species = "Human"
+\end{dhkcode}
+
+클래스 본문에서 정의된 속성이다.
+
+\zsh{Person} 클래스 객체의 네임스페이스에 저장된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 속성(Instance Attribute)
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+self.name = name
+\end{dhkcode}
+
+인스턴스에 설정된 속성이다.
+
+일반적인 사용자 정의 객체에서는 인스턴스의 \zsh{__dict__}에 저장된다.
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+print(Person.__dict__["species"])
+
+print(p1.__dict__)
+print(p2.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Human
+{'name': 'Kim'}
+{'name': 'Lee'}
+\end{dhkzsh}
+
+이 구조를 그림으로 나타내면 다음과 같다.
+
+\begin{dhkgraph}
+node n1 (1,2) [accent] :: __dict__ // species -> "Human"
+node n2 (2,1) :: __dict__ // name -> "Kim"
+node n3 (2,3) :: __dict__ // name -> "Lee"
+group g1(n1) :: Person 클래스 객체
+group g2(n2) :: p1 인스턴스
+group g3(n3) :: p2 인스턴스
+
+split g1 -> g2, g3
+
+caption :: 클래스 속성은 클래스 객체에, 인스턴스 속성은 각 인스턴스에 저장된다.
+\end{dhkgraph}
+
+여기서 중요한 점은 속성이 인스턴스마다 복사되는 것이 아니라는 사실이다.
+
+\begin{dhkcode}
+print(p1.species)
+print(p2.species)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Human
+Human
+\end{dhkzsh}
+
+\zsh{p1}과 \zsh{p2} 모두 \zsh{species} 속성에 접근할 수 있지만, 두 인스턴스의 \zsh{__dict__}에는 \zsh{species}가 존재하지 않는다.
+
+Python이 인스턴스에서 속성을 찾을 때 클래스 객체도 탐색하기 때문에 가능한 일이다.
+
+\subsubsection{클래스 속성은 어떻게 공유되는가?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+p1 = Person()
+p2 = Person()
+\end{dhkcode}
+
+여기서 \zsh{p1.species}와 \zsh{p2.species}는 모두 클래스에 저장된 동일한 속성을 통해 값을 얻는다.
+
+\begin{dhkcode}
+pritn(p1.species is p2.species)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+하지만 이것을 모든 인스턴스가 \zsh{species}라는 인스턴스 속성을 각각 가지고 있다고 이해하면 안 된다.
+
+실제 저장 위치는 클래스 객체다.
+
+\begin{dhkcode}
+print(p1.__dict__)
+print(p2.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{}
+{}
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 속성을 변경하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+Person.species = "Homo sapiens"
+
+print(p1.species)
+print(p2.species)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Homo sapiens
+Homo sapiens
+\end{dhkzsh}
+
+클래스 속성의 바인딩을 변경했기 때문에, 해당 클래스 속성을 참조하던 인스턴스에서 새로운 값이 관찰되는 것이다.
+
+여기서 이전에 학습했던 이름과 객체의 바인딩 개념을 다시 적용할 수 있다.
+
+\begin{dhkcode}
+Person.species = "Homo sapiens"
+\end{dhkcode}
+
+이 표현식은 기존 문자열 객체를 변경하는 것이 아니라, 클래스의 \zsh{species} 속성이 다른 문자열 객체를 참조하도록 재바인딩하는 동작이다.
+
+그렇다면 인스턴스를 통해 변경하면 어떻게 될까?
+
+\subsubsection{인스턴스 속성이 클래스 속성을 가리는 현상 - Shadowing}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+p1 = Person()
+p2 = Person()
+
+p1.species = "Modified"
+
+print(p1.species)
+print(p2.species)
+print(Person.species)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Modified
+Human
+Human
+\end{dhkzsh}
+
+왜 \zsh{p1.species}만 변경되었을까?
+
+일반적인 속성 설정에서는 다음 코드가
+
+\begin{dhkcode}
+p1.species = "Modified"
+\end{dhkcode}
+
+클래스의 \zsh{species}를 수정하지 않고 \zsh{p1} 인스턴스에 같은 이름의 속성을 생성하기 때문이다.
+
+확인해 보자.
+
+\begin{dhkcode}
+print(p1.__dict__)
+print(p2.__dict__)
+print(Person.__dict__["species"])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'species': 'Modified'}
+{}
+Human
+\end{dhkzsh}
+
+이제 속성 저장 구조는 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,2) :: species -> "Human"
+node n2 (2,1) [accent]:: species -> "Modified" // 인스턴스 속성 우선
+node n3 (2,3) :: __dict__
+group g1(n1) :: Person 클래스
+group g2(n2) :: p1 인스턴스
+group g3(n3) :: p2 인스턴스
+
+split g1 -> g2, g3
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 속성 참조
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{p1}에는 이제 자체적인 \zsh{species} 속성이 있다.
+
+일반적인 속성 탐색에서는 클래스 속성보다 인스턴스 속성이 우선된다.
+
+이러한 현상을 \zsh{속성 가리기(Shadowing)}라고 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 속성을 삭제하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+del p1.species
+
+print(p1.species)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Human
+\end{dhkzsh}
+
+인스턴스에 저장된 \zsh{species}가 삭제되었으므로, 다시 클래스 속성이 발견되는 것이다.
+
+여기서 한 가지를 정확하게 구분해야 한다.
+
+클래스 속성이 사라졌다가 복구된 것이 아니다.
+
+클래스 속성은 계속 존재했지만, 인스턴스에 같은 이름의 속성이 있을 때 탐색 결과에서 가려졌던 것뿐이다.
+
+\subsubsection{속성 탐색의 정확한 우선순위}
+
+지금까지는 인스턴스 속성이 클래스 속성보다 우선한다고 설명했다.
+
+하지만 이 설명은 모든 상황에서 정확하지는 않다.
+
+Python의 기본적인 인스턴스 속성 탐색에는 \zsh{디스크립터(Descriptor)}라는 중요한 예외가 있기 때문이다.
+
+일반적인 사용자 정의 객체에서 \zsh{object.__getattribute__()}가 수행하는 속성 읽기를 단순화하면 다음 순서로 이해할 수 있다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: 1. 데이터 디스크립터 // 클래스 및 상속 계층에서 탐색
+node n2 (2,1) [accent] :: 2. 인스턴스 __dict__ // 인스턴스에 직접 저장된 속성
+node n3 (3,1) :: 3. 비데이터 디스크립터 / 클래스 속성 // 클래스 및 상속 계층에서 탐색
+node n4 (4,1) :: 4. __getattr__ // 기본 탐색 실패 시 후속 처리
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+caption :: 기본 인스턴스 속성 읽기의 개념적 우선순위
+\end{dhkgraph}
+
+여기서 데이터 디스크립터와 비데이터 디스크립터의 차이를 알아야 한다.
+
+\begin{dhktable}
+|구분|제공하는 특수 메서드| 기본적인 탐색 우선순위|
+|:---|:---|:---|
+|데이터 디스크립터|__get__과 __set__ //*또는 __delete__|인스턴스 딕셔너리보다 높음|
+|비데이터 디스크립터|__get__만 제공|인스턴스 딕셔너리보다 낮음|
+|일반 클래스 속성|디스크립터 프로토콜 없음|인스턴스 딕셔너리보다 낮음|
+\end{dhktable}
+
+정확히 말하면 데이터 디스크립터는 \zsh{__set__()} 또는 \zsh{__delete__()}를 정의한 디스크립터다.
+
+\zsh{__get__()}도 제공하는 경우가 일반적이다.
+
+이제 왜 이런 규칙이 필요한지 살펴보자.
+
+\subsubsection{비데이터 디스크립터 - 일반 인스턴스 메서드}
+
+2.5에서 일반적인 함수 객체는 \zsh{__get__()}을 제공한다고 학습했다.
+
+따라서 클래스에 정의된 일반적인 함수 객체는 비데이터 디스크립터다.
+
+\begin{dhkcode}
+class Person:
+    def introduce(self):
+        print("Hello")
+
+
+p = Person()
+\end{dhkcode}
+
+다음 코드를 실행하면
+
+\begin{dhkcode}
+p.introduce()
+\end{dhkcode}
+
+Python은 클래스에 저장된 함수 객체를 찾아 바운드 메서드로 제공한다.
+
+그런데 인스턴스에 같은 이름의 속성을 직접 설정하면 어떻게 될까?
+
+\begin{dhkcode}
+p.introduce = "Not a method"
+
+print(p.introduce)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Not a method
+\end{dhkzsh}
+
+왜 함수가 아니라 문자열이 반환될까?
+
+일반적인 함수 객체는 비데이터 디스크립터이므로, 인스턴스의 \zsh{__dict__}에 같은 이름이 존재하면 인스턴스 속성이 우선하기 때문이다.
+
+\begin{dhkcode}
+print(p.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'introduce': 'Not a method'}
+\end{dhkzsh}
+
+이 상태에서 다음 코드를 실행하면
+
+\begin{dhkcode}
+p.introduce()
+\end{dhkcode}
+
+오류가 발생한다.
+
+\begin{dhkzsh}
+TypeError: 'str' object is not callable
+\end{dhkzsh}
+
+하지만 클래스의 함수 객체는 여전히 존재한다.
+
+\begin{dhkcode}
+Person.introduce(p)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Hello
+\end{dhkzsh}
+
+이 예제는 두 가지 중요한 사실을 보여준다.
+
+\begin{dhksmry}
+1. 인스턴스 메서드는 일반적으로 클래스에 저장된 함수 객체다.
+
+2. 인스턴스에 같은 이름의 속성을 만들면 그 메서드를 가릴 수 있다.
+\end{dhksmry}
+
+따라서 메서드 호출 역시 속성 탐색의 결과라는 사실을 이해할 수 있다.
+
+\subsubsection{데이터 디스크립터 - \zsh{property}의 동작}
+
+이번에는 인스턴스 속성보다 우선하는 데이터 디스크립터를 살펴보자.
+
+Python의 \zsh{property}는 대표적인 예시다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        print("getter 실행")
+        return self._name
+\end{dhkcode}
+
+이제 다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+p = Person("Kim")
+
+print(p.name)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+getter 실행
+Kim
+\end{dhkzsh}
+
+여기서 \zsh{p.name}은 단순한 인스턴스 딕셔너리 조회가 아니다.
+
+\zsh{Person} 클래스의 \zsh{name} 속성에는 \zsh{property} 객체가 저장되어 있다.
+
+\begin{dhkcode}
+print(type(Person.__dict__["name"]))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'property'>
+\end{dhkzsh}
+
+그리고 \zsh{property} 객체는 디스크립터 프로토콜을 제공한다.
+
+따라서 \zsh{p.name}에 접근하면 \zsh{property}의 \zsh{__get__()} 메커니즘을 통해 getter 함수가 실행되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스 딕셔너리에 같은 이름을 직접 넣으면?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+p.__dict__["name"] = "Lee"
+
+print(p.__dict__)
+print(p.name)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'_name': 'Kim', 'name': 'Lee'}
+getter 실행
+Kim
+\end{dhkzsh}
+
+여기서 흥미로운 결과가 발생했다.
+
+인스턴스 딕셔너리에는 분명히 \zsh{"name": "Lee"}가 존재한다.
+
+그런데 \zsh{p.name}은 \zsh{"Kim"}을 반환한다.
+
+왜 그럴까?
+
+\zsh{property}는 데이터 디스크립터이므로 인스턴스의 \zsh{__dict__}보다 높은 우선순위를 갖기 때문이다.
+
+따라서 \zsh{p.name}을 읽을 때는 인스턴스 딕셔너리의 \zsh{"name"}보다 클래스에 정의된 \zsh{property}가 우선된다.
+
+이것이 단순히 인스턴스 속성이 클래스 속성보다 우선한다고만 설명하면 부족한 이유다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+setter를 정의하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        self._name = value
+\end{dhkcode}
+
+이제 다음 코드가 가능하다.
+
+\begin{dhkcode}
+p = Person("Kim")
+
+p.name = "Lee"
+
+print(p.name)
+print(p.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+Lee
+{'_name': 'Lee'}
+\end{dhkzsh}
+
+여기서 \zsh{p.name = "Lee"}는 단순히 인스턴스 딕셔너리에 \zsh{"name"}을 저장하는 동작이 아니다.
+
+\zsh{property}의 setter를 통해 \zsh{_name} 속성이 변경된다.
+
+따라서 \zsh{property}를 이용하면 속성 접근 문법은 유지하면서 내부적으로 읽기와 쓰기 동작을 제어할 수 있다.
+
+\subsubsection{Mutable 클래스 속성의 공유 문제}
+
+이번에는 실제 Python 프로그래밍에서 자주 발생하는 문제를 살펴보자.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Person:
+    hobbies = []
+
+
+p1 = Person()
+p2 = Person()
+\end{dhkcode}
+
+\zsh{hobbies}는 클래스 속성이다.
+
+따라서 두 인스턴스가 같은 리스트 객체를 참조할 수 있다.
+
+\begin{dhkcode}
+print(p1.hobbies is p2.hobbies)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+이제 다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+p1.hobbies.append("Reading")
+
+print(p1.hobbies)
+print(p2.hobbies)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+['Reading']
+['Reading']
+\end{dhkzsh}
+
+왜 \zsh{p2.hobbies}에도 \zsh{"Reading"}이 추가되었을까?
+
+\zsh{p1.hobbies}와 \zsh{p2.hobbies}가 동일한 리스트 객체를 참조하기 때문이다.
+
+여기서 중요한 것은 \zsh{append()}가 속성을 재바인딩하는 동작이 아니라, 기존 리스트 객체를 변경하는 동작이라는 사실이다.
+
+\begin{dhkcode}
+p1.hobbies.append("Reading")
+\end{dhkcode}
+
+이 코드는 다음과 같은 과정을 거친다.
+
+\begin{dhksmry}
+1. p1.hobbies를 통해 클래스 속성의 리스트 객체를 갖는다.
+
+2. 해당 리스트 객체의 append() 메서드를 호출한다.
+
+3. 기존 리스트 객체의 내용이 변경된다.
+
+4. p2.hobbies도 같은 리스트 객체를 참조하므로 변경된 내용이 관찰된다.
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+반대로 재바인딩하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p1.hobbies = ["Music"]
+
+print(p1.hobbies)
+print(p2.hobbies)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+['Music']
+['Reading']
+\end{dhkzsh}
+
+이번에는 결과가 달라졌다.
+
+왜냐하면 \zsh{p1.hobbies = ["Music"]}은 일반적인 속성 설정 규칙에 따라 \zsh{p1} 인스턴스에 새로운 \zsh{hobbies} 속성을 만들기 때문이다.
+
+즉, 기존 클래스 속성의 리스트 객체를 변경한 것이 아니라 인스턴스 속성을 새로 설정한 것이다.
+
+\begin{dhktable}
+|코드|동작|다른 인스턴스에 미치는 영향|
+|:---|:---|:---|
+|p1.hobbies//*.append("Reading")|	공유 리스트 객체 변경|	같은 리스트를 참조하면 영향 있음|
+|p1.hobbies = ["Music"]|	인스턴스 속성 재바인딩|	클래스 속성 자체에는 영향 없음|
+|Person.hobbies = []|	클래스 속성 재바인딩|	클래스 속성을 참조하는 인스턴스에 영향|
+\end{dhktable}
+
+이 차이는 Python의 Mutable / Immutable, 객체 동일성, 이름 바인딩을 이해하는 데 매우 중요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+권장하는 구조
+\end{dhksmry}
+\end{dhknote}
+
+인스턴스마다 독립적인 리스트가 필요하다면 다음처럼 작성해야 한다.
+
+\begin{dhkcode}
+class Person:
+    def __init__(self):
+        self.hobbies = []
+\end{dhkcode}
+
+이렇게 하면 인스턴스가 초기화될 때마다 새로운 리스트 객체가 생성된다.
+
+\begin{dhkcode}
+p1 = Person()
+p2 = Person()
+
+print(p1.hobbies is p2.hobbies)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+따라서 인스턴스마다 독립적으로 변경해야 하는 Mutable 데이터는 일반적으로 인스턴스 속성으로 관리하는 것이 적절하다.
+
+\subsubsection{클래스 속성을 변경하는 것과 인스턴스 속성을 변경하는 것}
+
+이번에는 속성 변경을 조금 더 체계적으로 비교해 보자.
+
+\begin{dhkcode}
+class Counter:
+    count = 0
+\end{dhkcode}
+
+여기서 \zsh{count}는 클래스 속성이다.
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+c1 = Counter()
+c2 = Counter()
+
+c1.count += 1
+print(c1.count)
+print(c2.count)
+print(Counter.count)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+1
+0
+0
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{c1.count += 1}은 일반적인 정수 속성에 대해 개념적으로 다음과 같은 읽기와 쓰기 과정을 수행한다.
+
+\begin{dhkcode}
+value = c1.count
+value = value + 1
+c1.count = value
+\end{dhkcode}
+
+처음에는 \zsh{c1}에 \zsh{count} 인스턴스 속성이 없으므로 클래스 속성 \zsh{Counter.count}에서 0을 읽는다.
+
+그다음 1을 더한 결과를 \zsh{c1.count}에 설정한다.
+
+따라서 \zsh{c1}에 새로운 인스턴스 속성이 생성되는 것이다.
+
+\begin{dhkcode}
+print(c1.__dict__)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{'count': 1}
+\end{dhkzsh}
+
+반면 다음 코드는 클래스 속성을 변경한다.
+
+\begin{dhkcode}
+Counter.count += 1
+\end{dhkcode}
+
+이제 다음과 같이 출력될 것이다.
+
+\begin{dhkcode}
+print(c1.count)
+print(c2.count)
+print(Counter.count)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+1
+1
+1
+\end{dhkzsh}
+
+\zsh{c1.count}는 자신의 인스턴스 속성을 가지고 있으므로 여전히 1이고, 
+
+\zsh{c2.count}는 클래스 속성을 읽으므로 변경된 1을 반환한다.
+
+이 예제에서는 우연히 같은 값이 출력되지만, 실제 참조 위치는 서로 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 전체에서 공유할 상태라면?
+\end{dhksmry}
+\end{dhknote}
+
+다음과 같이 명시적으로 클래스 속성을 수정할 수 있다.
+
+\begin{dhkcode}
+class Counter:
+    count = 0
+
+    def __init__(self):
+        Counter.count += 1
+\end{dhkcode}
+
+\begin{dhkcode}
+c1 = Counter()
+c2 = Counter()
+c3 = Counter()
+
+print(Counter.count)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+3
+\end{dhkzsh}
+
+이 예제에서는 인스턴스가 생성될 때마다 클래스 속성 \zsh{count}를 증가시킨다.
+
+다만 상속 관계까지 고려하면 \zsh{Counter.count}처럼 특정 클래스 이름을 직접 사용하는 방식과 \zsh{type(self).count}처럼 실제 인스턴스의 타입을 사용하는 방식은 서로 다른 동작을 만들 수 있다.
+
+이 차이는 2.8에서 연결해 살펴볼 것이다.
+
+\subsubsection{\zsh{__getattribute__(), __getattr__(), __setattr__()}의 역할}
+
+지금까지 속성 탐색과 설정 규칙을 살펴보았다.
+
+그렇다면 Python은 이러한 동작을 어떤 메서드로 처리할까?
+
+일반적인 사용자 정의 객체에서 중요한 특수 메서드는 다음과 같다.
+
+\begin{dhktable}
+|특수 메서드|	역할|
+|:---|:---|
+|__getattribute__()|	속성을 읽을 때 호출되는 기본 접근 메커니즘|
+|__getattr__()|	일반적인 속성 탐색이 실패한 경우 호출되는 후속 메커니즘|
+|__setattr__()|	속성을 설정할 때 호출|
+|__delattr__()|	속성을 삭제할 때 호출|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__getattr__() 예제
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    def __getattr__(self, name):
+        return f"{name} 속성은 존재하지 않습니다."
+
+
+p = Person()
+
+print(p.age)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+age 속성은 존재하지 않습니다.
+\end{dhkzsh}
+
+일반적인 속성 탐색에서는 \zsh{age}를 찾지 못했다.
+
+그런데 \zsh{__getattr__()}이 정의되어 있으므로 Python은 후속 처리로 해당 메서드를 호출한다.
+
+따라서 \zsh{AttributeError} 대신 문자열을 반환한 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__setattr__() 예제
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    def __setattr__(self, name, value):
+        print(f"{name} 속성 설정")
+
+        object.__setattr__(self, name, value)
+
+
+p = Person()
+p.name = "Kim"
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+name 속성 설정
+\end{dhkzsh}
+
+여기서 \zsh{object.__setattr__()}을 호출한 이유는 기본적인 속성 설정 동작을 수행하기 위해서다.
+
+만약 다음처럼 작성하면 어떻게 될까?
+
+\begin{dhkcode}
+class Person:
+    def __setattr__(self, name, value):
+        self.name = value
+\end{dhkcode}
+
+이 코드는 위험하다.
+
+\zsh{self.name = value} 자체가 다시 \zsh{__setattr__()}을 호출하므로 무한 재귀가 발생할 수 있기 때문이다.
+
+따라서 \zsh{__setattr__()}을 재정의할 때는 기본 속성 설정을 수행하기 위해
+
+\zsh{object.__setattr__()} 등을 적절히 사용해야 한다.
+
+\subsubsection{PyTorch와의 연결 - \zsh{nn.Module}은 왜 속성 접근을 재정의하는가?}
+
+이제 PyTorch의 다음 코드를 다시 살펴보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+여기서 다음 코드는 일반적인 속성 설정처럼 보인다.
+
+\begin{dhkcode}
+self.linear = nn.Linear(10,5)
+\end{dhkcode}
+
+하지만 \zsh{nn.Module}은 속성 설정 메커니즘을 확장해 하위 모듈을 등록하도록 구성되어 있다.
+
+일반적인 사용자 정의 클래스에서는 다음처럼 동작할 수 있다.
+
+\begin{dhkcode}
+self.__dict__["linear"] = linear_object
+\end{dhkcode}
+
+반면 \zsh{nn.Module}은 \zsh{__setattr__()}을 재정의하여, \zsh{nn.Module} 인스턴스가 설정될 때 내부 등록 구조인 \zsh{_modules}를 사용해 관리한다.
+
+개념적으로 다음과 같은 구조다.
+
+\begin{dhkbranch}[in=8]
+node main :: MyModel 인스턴스
+branchline main -> a :: 일반 인스턴스 상태
+stop a
+branchline main -> b :: _modules
+handoff b -> b2 :: "linear" -> nn.Linear 인스턴스
+stop b2
+stop b
+branchline main -> c :: _parameters
+stop c
+handoff main -> d :: _buffers
+stop d
+\end{dhkbranch}
+
+여기서 중요한 사실은 Python의 일반적인 속성 접근 문법을 그대로 사용하면서 내부 저장 규칙은 클래스가 재정의할 수 있다는 것이다.
+
+따라서 다음 코드도 가능하다.
+
+\begin{dhkcode}
+model = MyModel()
+
+print(model.linear)
+\end{dhkcode}
+
+\zsh{model.linear}에 접근하면 PyTorch의 속성 탐색 메커니즘이 등록된 하위 모듈을 찾아 반환한다.
+
+또한 등록된 모듈과 파라미터는 다음 기능들과 연관된다.
+
+\begin{dhkcode}
+model.parameters()
+model.state_dict()
+model.to("cpu")
+\end{dhkcode}
+
+이 기능들이 가능한 이유는 단순히 \zsh{self.linear}라는 이름을 사용했기 때문이 아니다.
+
+\zsh{nn.Module}이 제공하는 속성 등록 및 관리 규약을 따르기 때문이다.
+
+직접 확인해 보자.
+
+\begin{dhkcode}
+model = MyModel()
+
+print(model.__dict__.keys())
+print(model._modules)
+\end{dhkcode}
+
+\zsh{model.__dict__}에는 PyTorch의 내부 관리 구조를 포함한 여러 속성이 저장되어 있고,
+
+\zsh{_modules}에는 등록된 하위 모듈이 저장되어 있다.
+
+이처럼 PyTorch는 Python의 객체 모델을 활용해 복잡한 모델 구조를 관리하고 있다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서 반드시 이해해야 할 내용을 정리해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 속성과 인스턴스 속성은 서로 다른 네임스페이스에 저장된다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    species = "Human"
+
+    def __init__(self, name):
+        self.name = name
+\end{dhkcode}
+
+\zsh{species}는 클래스 속성이고 \zsh{name}은 인스턴스 속성이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 속성은 인스턴스마다 자동으로 복사되지 않는다.
+\end{dhksmry}
+\end{dhknote}
+
+인스턴스는 속성 탐색을 통해 클래스 속성에 접근할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+일반적인 속성에서는 인스턴스 속성이 클래스 속성을 가릴 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p.species = "Modified"
+\end{dhkcode}
+
+이 코드는 보통 클래스 속성을 변경하는 것이 아니라 인스턴스 속성을 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+데이터 디스크립터는 
+
+인스턴스 딕셔너리보다 높은 탐색 우선순위를 가진다.
+\end{dhksmry}
+\end{dhknote}
+
+대표적인 예는 \zsh{property}이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+일반적인 인스턴스 메서드는 비데이터 디스크립터다.
+\end{dhksmry}
+\end{dhknote}
+
+따라서 인스턴스에 같은 이름의 속성이 존재하면 메서드가 가려질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Mutable 클래스 속성은 여러 인스턴스가 공유할 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Person:
+    hobbies = []
+\end{dhkcode}
+
+이런 구조에서는 한 인스턴스의 리스트 변경이 다른 인스턴스에도 관찰될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+속성의 변경과 재바인딩은 서로 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+p.hobbies.append("Reading")
+p.hobbies = ["Music"]
+\end{dhkcode}
+
+첫 번째는 기존 리스트 객체의 변경이고, 두 번째는 속성의 재바인딩이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Python은 특수 메서드를 통해 
+
+속성 접근 및 설정 동작을 확장할 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+__getattribute__()
+__getattr__()
+__setattr__()
+__delattr__()
+\end{dhkcode}
+
+이 메서드들은 객체의 속성 관리 방식을 사용자 정의할 수 있게 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch의 nn.Module은 이러한 메커니즘을 활용한다.
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{self.linear = nn.Linear(...)}는 단순한 속성 설정을 넘어 하위 모듈 등록으로 연결된다.
+
+\subsubsection{2.7에서 반드시 이해해야 할 결론}
+
+이번 학습의 핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+Attribute Access
+\da
+Descriptor Priority
+\da
+Instance Namespace
+\da
+Class / Inheritance Namespace
+\da
+Attribute Resolution
+\end{dhksmry}
+
+이것은 기본적인 인스턴스 속성 탐색 과정을 단순화한 구조다.
+
+특히 다음 두 코드를 구분할 수 있어야 한다.
+
+\begin{dhkcode}
+p.attribute = value
+
+Person.attribute = value
+\end{dhkcode}
+
+첫 번째는 일반적으로 인스턴스 속성을 설정하고, 두 번째는 클래스 객체의 속성을 설정한다.
+
+또한 다음 두 코드의 차이도 이해해야 한다.
+
+\begin{dhkcode}
+p.items.append(value)
+
+p.items = new_list
+\end{dhkcode}
+
+첫 번째는 참조한 객체를 변경하는 동작이고, 두 번째는 속성에 새로운 객체를 연결하는 동작이다.
+
+결국 Python의 속성 접근은 단순히 객체 안의 값을 읽는 것이 아니라, 객체의 네임스페이스와 클래스 계층, 디스크립터 프로토콜을 결합해 이름을 해석하는 과정이다.
+
+다음 2.8에서는 이 속성 탐색 규칙을 클래스 사이의 관계로 확장해 볼 것이다.
+
+특히 자식 클래스가 부모 클래스의 메서드를 사용할 수 있는 이유, 같은 이름의 메서드를 재정의하면 어떤 일이 발생하는지, 상속이 단순한 코드 재사용을 넘어 어떤 의미를 가지는지 설명할 것이다.

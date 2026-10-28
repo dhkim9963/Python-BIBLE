@@ -1,0 +1,1249 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% 2.12. PyTorch nn.Module의 객체 모델 — 지금까지 배운 Python 클래스 개념의 통합
+% ==================================================
+
+2.2부터 2.11까지 Python의 클래스와 객체 모델을 학습하였다.
+
+이번 2.12는 새로운 문법을 많이 배우는 단계라기보다, 지금까지 학습한 개념들이 실제 딥러닝 프레임워크에서 어떻게 결합되는지 확인하는 단계다.
+
+특히 다음 코드를 단순히 암기하는 것이 아니라, 각 문장이 어떤 객체를 생성하고, 어디에 저장하며, 어떤 탐색과 호출 과정을 거치는지 설명할 수 있게 되는 것이 목표다.
+
+\begin{dhkcode}
+import torch
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear1 = nn.Linear(10, 20)
+        self.relu = nn.ReLU()
+        self.linear2 = nn.Linear(20, 5)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.relu(x)
+        x = self.linear2(x)
+        return x
+
+
+model = MyModel()
+x = torch.randn(2, 10)
+y = model(x)
+\end{dhkcode}
+
+이 코드에서 우리가 추적할 것은 크게 네 가지다.
+
+\begin{dhksmry}
+1. 클래스와 인스턴스가 어떻게 생성되는가?
+
+2. self.linear1 같은 하위 모듈은 어디에 저장되는가?
+
+3. model(x)는 어떻게 forward()로 연결되는가?
+
+4. PyTorch는 파라미터와 하위 모듈을 어떻게 관리하는가?
+\end{dhksmry}
+
+\subsubsection{\zsh{nn.Module}은 무엇인가?}
+
+먼저 \zsh{nn.Module} 자체를 살펴보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+print(type(nn.Module))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'type'>
+\end{dhkzsh}
+
+\zsh{nn.Module}은 클래스 객체다.
+
+따라서 다음 정의는
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    pass
+\end{dhkcode}
+
+Python의 일반적인 상속과 동일한 원리로 동작한다.
+
+\begin{dhkcode}
+print(MyModel.__bases__)
+print(MyModel.__mro__)
+\end{dhkcode}
+
+출력 예시:
+
+\begin{dhkzsh}
+(<class 'torch.nn.modules.module.Module'>,)
+
+(<class '__main__.MyModel'>,
+ <class 'torch.nn.modules.module.Module'>,
+ <class 'object'>)
+\end{dhkzsh}
+
+즉, \zsh{MyModel}은 \zsh{nn.Module}을 상속하는 새로운 클래스 객체다.
+
+\zsh{nn.Module}이 가진 메서드와 특수 메서드들은 \zsh{MyModel}의 MRO를 통해 사용될 수 있다.
+
+예를 들어 다음 메서드들이 있다.
+
+\begin{dhkcode}
+model.parameters()
+model.state_dict()
+model.train()
+model.eval()
+model.to("cpu")
+\end{dhkcode}
+
+이 메서드들을 우리가 \zsh{MyModel} 안에 직접 정의하지 않았더라도 사용할 수 잇는 이유는 상속 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+nn.Module의 핵심 역할
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{nn.Module}은 단순히 \zsh{forward()}를 호출하는 기능만 제공하지 않는다.
+
+모델 내부의 상태와 구조를 관리하는 기반 클래스다.
+
+대표적으로 다음을 관리한다.
+
+\begin{dhktable}
+|관리 대상|	내부 등록 위치|	예시|
+|:---|:---|:---|
+|하위 모듈|	_modules|	nn.Linear, nn.ReLU|
+|학습 파라미터|	_parameters|	nn.Parameter|
+|버퍼|	_buffers|	BatchNorm의 running statistics|
+\end{dhktable}
+
+이 세 가지는 앞으로 모델을 이해할 때 계속 등장하게 될 것이다.
+
+\subsubsection{\zsh{model = MyModel()} - 객체 생성 과정}
+
+먼저 다음 코드만 살펴보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+
+
+model = MyModel()
+\end{dhkcode}
+
+2.6에서 학습한 내용을 적용하면 \zsh{MyModel()}은 클래스 객체를 호출하는 표현식이다.
+
+일반적인 클래스 생성 과정은 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: MyModel() // 클래스 객체 호출
+node n2 (2,1) :: type.__call__ // 일반적인 클래스 생성 메커니즘
+node n3 (3,1) :: __new__ // MyModel 인스턴스 생성
+node n4 (4,1) [accent] :: MyModel.__init__ // 인스턴스 초기화
+node n5 (5,1) :: model // 생성된 인스턴스에 이름 바인딩
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+edge n4 -> n5
+\end{dhkgraph}
+
+여기서 \zsh{model}이라는 이름은 새로 생성된 \zsh{MyModel} 인스턴스를 참조하게 된다.
+
+\begin{dhkcode}
+print(type(model) is MyModel)
+print(isinstance(model, nn.Module))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+이것은 일반적인 Python 객체 생성과 다르지 않다.
+
+차이는 초기화 과정에서 \zsh{nn.Module}이 제공하는 내부 관리 구조가 설정된다는 점이다.
+
+\subsubsection{\zsh{super().__init__()}은 왜 먼저 실행해야 하는가?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+2.9에서 배운 것처럼 \zsh{super()}는 MRO를 기준으로 다음 구현을 탐색한다.
+
+이 경우 MRO는 다음과 같다.
+
+\begin{dhksmry}[centered]
+MyModel \ra nn.Module \ra object
+\end{dhksmry}
+
+따라서 \zsh{super().__init__()}은 \zsh{nn.Module.__init__()}으로 연결된다.
+
+이 초기화 과정에서 PyTorch가 모듈 등록과 상태 관리에 필요한 내부 구조를 준비한다.
+
+대표적으로 다음과 같은 속성들이 있다.
+
+\begin{dhkcode}
+self._parameters
+self._buffers
+self._modules
+\end{dhkcode}
+
+이들은 보통 딕셔너리 형태의 내부 등록 공간이다.
+
+초기화 이후 다음처럼 확인할 수 있다.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+
+model = MyModel()
+
+print(type(model._parameters))
+print(type(model._buffers))
+print(type(model._modules))
+\end{dhkcode}
+
+일반적인 실행 결과:
+
+\begin{dhkzsh}
+<class 'dict'>
+<class 'dict'>
+<class 'dict'>
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+초기화 순서를 바꾸면?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class BadModel(nn.Module):
+    def __init__(self):
+        self.linear = nn.Linear(10, 5)
+        super().__init__()
+
+model = BadModel()
+\end{dhkcode}
+
+일반적인 PyTorch에서는 다음과 같은 오류가 발생한다.
+
+\begin{dhkzsh}
+AttributeError: cannot assign module before Module.__init__() call
+\end{dhkzsh}
+
+왜 이런 문제가 발생할까?
+
+\zsh{self.linear}에 \zsh{nn.Linear} 인스턴스를 대입하는 작업은 단순한 Python 속성 대입이 아니기 때문이다.
+
+\zsh{nn.Module}은 하위 모듈을 자동으로 등록하는 메커니즘을 제공한다.
+
+그런데 그 등록을 위한 내부 상태가 아직 준비되지 않았다면 하위 모듈을 등록할 수 없다.
+
+따라서 일반적인 PyTorch 모델에서는 다음 순서를 지켜야 한다.
+
+\begin{dhkcode}
+def __init__(self):
+    super().__init__()
+
+    self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+\zsh{super().__init__()}은 단순한 관례가 아니라, PyTorch 모듈의 등록 시스템을 사용하기 위한 초기화 단계다.
+
+\subsubsection{\zsh{self.lienar = nn.Linear(...)}는 일반적인 속성 대입인가?}
+
+이번 학습에서 가장 중요한 부분 중 하나다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+self.linear = nn.Linear(10, 5)
+\end{dhkcode}
+
+일반적인 Python 클래스라면 다음과 같은 동작을 기대할 수 있다.
+
+\begin{dhkcode}
+self.__dict__["linear"] = ...
+\end{dhkcode}
+
+하지만 \zsh{nn.Module}에서는 조금 다르다.
+
+2.7에서 학습했던 \zsh{__setattr__()}이 개입하기 때문이다.
+
+\zsh{nn.Module}은 \zsh{__setattr__()}을 재정의해서 대입되는 객체의 종류에 따라 등록 방식을 다르게 처리한다.
+
+예를 들어 \zsh{nn.Module} 인스턴스를 속성에 대입하면 하위 모듈로 등록할 수 있다.
+
+실제로 확인해 보자.
+
+\begin{dhkcode}
+import torch.nn as nn
+
+
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10, 5)
+
+
+model = MyModel()
+\end{dhkcode}
+
+이제 인스턴스 딕셔너리를 확인해 보자.
+
+\begin{dhkcode}
+print("linear" in model.__dict__)
+print("linear" in model._modules)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+\zsh{linear}라는 이름은 일반적인 인스턴스 딕셔너리에 직접 저장되지 않았다.
+
+대신 \zsh{_modules}에 등록되어 있다.
+
+\begin{dhkcode}
+print(model._modules)
+\end{dhkcode}
+
+출력 예시:
+
+\begin{dhkzsh}
+{'linear': Linear(in_features=10, out_features=5, bias=True)}
+\end{dhkzsh}
+
+이 결과는 중요한 의미를 가진다.
+
+\zsh{self.linear}이라는 속성 접근 문법을 사용한다고 해서 반드시 \zsh{linear}라는 이름이 \zsh{self.__dict__}에 저장되어 있는 것은 아니다.
+
+2.7에서 학습한 일반적인 속성 탐색 구조가 PyTorch에서는 사용자 정의 속성 접근 메커니즘에 의해 확장된 것이다.
+
+\subsubsection{\zsh{_modules}에 저장된 객체는 어떻게 \zsh{self.linear}로 접근되는가?}
+
+여기서 자연스럽게 의문이 생긴다.
+
+\zsh{linear}가 \zsh{model.__dict__}에 없다면 다음 코드는 어떻게 동작할까?
+
+\begin{dhkcode}
+model.linear
+\end{dhkcode}
+
+그 이유는 \zsh{nn.Module}이 \zsh{__getattr__()}도 제공하기 때문이다.
+
+일반적인 속성 탐색으로 원하는 속성을 찾지 못하면 \zsh{__getattr__()}이 호출될 수 있다고 배웠다.
+
+PyTorch는 이 메커니즘을 활용해 등록된 파라미터, 버퍼, 화위 모듈을 속성처럼 접근할 수 있게 한다.
+
+개념적인 흐름은 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: model.linear // 속성 접근
+node n2 (2,1) :: 일반 속성 탐색 // 클래스/인스턴스 속성 확인
+node n3 (3,1) :: nn.Module.__getattr__ // 일반 탐색에서 찾지 못한 경우
+node n4 (4,1) :: model._modules['linear'] // 등록된 하위 모듈 조회
+node n5 (5,1) :: nn.Linear 인스턴스 // 객체 반환
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+edge n4 -> n5
+
+caption :: 일반적인 등록 하위 모듈에 대한 속성 접근을 단순화한 흐름
+\end{dhkgraph}
+
+즉, 다음 두 표현식은 일반적으로 같은 하위 모듈 객체를 참조한다.
+
+\begin{dhkcode}
+print(model.linear is model._modules["linear"])
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+여기서 우리가 학습한 두 특수 메서드가 연결된다.
+
+\begin{dhksmry}
+    __setattr__() : 하위 모듈 등록
+
+    __getattr__() : 등록된 하위 모듈 조회
+\end{dhksmry}
+
+이것이 PyTorch가 일반적인 Python 속성 문법을 사용하면서도 내부적으로 모델 구조를 관리할 수 있는 이유 중 하나다.
+
+\subsubsection{\zsh{nn.Linear} 인스턴스의 파라미터는 어디에 저장되는가?}
+
+이제 다음 코드로 넘어가 보자.
+
+\begin{dhkcode}
+linear = nn.Linear(10,5)
+\end{dhkcode}
+
+\zsh{linear}는 \zsh{nn.Linear} 클래스의 인스턴스다.
+
+이 인스턴스에는 대표적으로 다음 파라미터가 있다.
+
+\begin{dhkcode}
+linear.weight
+linear.bias
+\end{dhkcode}
+
+각각의 타입을 확인해 보자.
+
+\begin{dhkcode}
+print(type(linear.weight))
+print(type(linear.bias))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+<class 'torch.nn.parameter.Parameter'>
+<class 'torch.nn.parameter.Parameter'>
+\end{dhkzsh}
+
+여기서 \zsh{nn.parameter}는 일반적인 텐서와 관련된 특수한 클래스다.
+
+\zsh{torch.Tensor}를 상속하며, \zsh{nn.Module}의 속성으로 대입되면 파라미터로 자동 등록될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+내부 등록 위치 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print("weight" in linear.__dict__)
+print("weight" in linear._parameters)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+즉, \zsh{weight}는 \zsh{_parameters}에 등록되어 있다.
+
+\begin{dhkcode}
+print(linear._parameters.keys())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+dict_keys(['weight', 'bias'])
+\end{dhkzsh}
+
+여기서 중요한 점은 모든 텐서가 자동으로 파라미터로 등록되는 것은 아니라는 것이다.
+
+다음 코드를 비교해 보자.
+
+\begin{dhkcode}
+class Example(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.a = torch.randn(3)
+        self.b = nn.Parameter(torch.randn(3))
+
+example = Example()
+
+print("a" in example._parameters)
+print("b" in example._parameters)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+일반 텐서 \zsh{a}는 자동으로 학습 파라미터로 등록되지 않는다.
+
+반면 \zsh{nn.parameter} 객체인 \zsh{b}는 파라미터로 등록된다.
+
+이 차이는 오빝마이저와 모델 상태 관리에서 매우 중요하다.
+
+\subsubsection{\zsh{_modules, _parameters, _buffers}의 차이}
+
+지금까지 두 종류의 등록 공간을 확인했다.
+
+\begin{dhksmry}
+    _modules : 하위 모듈
+
+    _parameters : 파라미터
+\end{dhksmry}
+
+여기에 하나가 더 있다.
+
+바로 \zsh{_buffers}다.
+
+버퍼는 모델 상태의 일부이지만 일반적으로 옵티마이저가 학습하는 파라미터는 아닌 텐서를 관리할 때 사용한다.
+
+예를 들어 Batch Normalization의 running mean과 running variance가 대표적이다.
+
+직접 버퍼를 등록할 수도 있다.
+
+\begin{dhkcode}
+class Example(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(3, 2)
+
+        self.scale = nn.Parameter(
+            torch.ones(2)
+        )
+
+        self.register_buffer(
+            "running_value",
+            torch.zeros(2)
+        )
+
+model = Example()
+\end{dhkcode}
+
+이제 내부 등록 구조를 확인해 보자.
+
+\begin{dhkcode}
+print(model._modules.keys())
+print(model._parameters.keys())
+print(model._buffers.keys())
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+dict_keys(['linear'])
+dict_keys(['scale'])
+dict_keys(['running_value'])
+\end{dhkzsh}
+
+이 구조를 정리하면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,2) :: nn.Module 인스턴스
+node n2 (2,1) :: linear // 하위 모듈
+node n3 (2,2) :: scale // 학습 파라미터
+node n4 (2,3) :: running_value // 비파라미터 상태
+group g1(n1) [accent] :: model
+group g2(n2) :: _modules
+group g3(n3) :: _parameters 
+group g4(n4) :: _buffers
+split g1 -> g2, g3, g4
+
+caption :: 하위 모듈인 linear 역시 자체 등록 공간을 가진다. // linear._parameters -> weight, bias
+\end{dhkgraph}
+
+여기서 중요한 구조가 하나 더 있다.
+
+\zsh{model.linear}는 또 다른 \zsh{nn.Module} 인스턴스다.
+
+따라서 \zsh{model.linear}도 자체적인 \zsh{_parameters, _modules, _buffers}를 가질 수 있다.
+
+이것이 PyTorch 모델이 계층적으로 구성되는 기반이다.
+
+\subsubsection{\zsh{model.parameters()}는 어떻게 하위 모듈의 파라미터를 찾는가?}
+
+다음 모델을 다시 보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear1 = nn.Linear(10, 20)
+        self.relu = nn.ReLU()
+        self.linear2 = nn.Linear(20, 5)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.relu(x)
+        x = self.linear2(x)
+        return x
+
+model = MyModel()
+\end{dhkcode}
+
+이제 다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+for name, parameter in model.named_parameters():
+    print(name, tuple(parameter.shape))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+linear1.weight (20, 10)
+linear1.bias (20,)
+linear2.weight (5, 20)
+linear2.bias (5,)
+\end{dhkzsh}
+
+여기서 주목할 점은 \zsh{MyModel} 자체의 \zsh{_parameters}에는 직접 등록한 파라미터가 없을 수 있다는 것이다.
+
+\begin{dhkcode}
+print(model._parameters)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+{}
+\end{dhkzsh}
+
+그런데도 \zsh{model.named_parameters()}는 네 개의 파라미터를 찾는다.
+
+왜 그럴까?
+
+\zsh{nn.Module}이 등록된 하위 모듈들을 재귀적으로 탐색할 수 있기 때문이다.
+
+개념적으로 다음 구조를 탐색하는 것이다.
+
+\begin{dhkdir}[in=6]
+model
+>linear1
+>>weight
+>>bias
+>relu
+>linear2
+>>weight
+>>bias
+\end{dhkdir}
+
+\zsh{relu}에는 일반적으로 학습 파라미터가 없으므로 \zsh{named_parameters()} 결과에 나타나지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+중요한 구분
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+model.parameters()
+\end{dhkcode}
+
+는 파라미터를 순회할 수 있는 Iterator를 반환한다.
+
+\begin{dhkcode}
+model.named_parameters()
+\end{dhkcode}
+
+는 파라미터 이름과 파라미터 객체의 쌍을 순회할 수 있는 Iterator를 반환한다.
+
+따라서 다음 코드를 사용할 수 있다.
+
+\begin{dhkcode}
+optimizer = torch.optim.Adam(
+    model.parameters(),
+    lr=0.001
+)
+\end{dhkcode}
+
+dㅗㅂ티마이저는 이 Iterator를 통해 모델의 등록된 파라미터를 전달받는 것이다.
+
+여기서 2.10에서 학습한 Iterator 프로토콜이 다시 등장한다.
+
+\subsubsection{\zsh{state_dict()}는 무엇을 저장하는가?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+state = model.state_dict()
+\end{dhkcode}
+
+\zsh{state_dict()}는 모델의 상태를 이름과 텐서 값의 대응 관계로 제공한다.
+
+기본적으로 등록되 ㄴ파라미터와 영속적(persistent) 버퍼가 포함된다.
+
+예를 들어 앞의 \zsh{MyModel}에서는 다음 키를 얻을 수 있다.
+
+\begin{dhkcode}
+print(list(model.state_dict().keys()))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+['linear1.weight',
+ 'linear1.bias',
+ 'linear2.weight',
+ 'linear2.bias']
+\end{dhkzsh}
+
+여기서 중요한 사실은 다음과 같다.
+
+\zsh{state_dict()}는 모델 객체 전체를 그대로 저장하는 것이 아니라, 모델의 등록된 상태를 구조화해서 제공하는 메커니즘이다.
+
+따라서 모델 구조를 정의하는 클래스와 그 클래스의 파라미터 값은 개념적으로 구분해야 한다.
+
+예를 들어 다음 코드는 모델 상태를 파일로 저장하는 일반적인 방식이다.
+
+\begin{dhkcode}
+torch.save(
+    model.state_dict(),
+    "model.pt"
+)
+\end{dhkcode}
+
+다시 불러올 때는 먼저 같은 구조의 모델 인스턴스를 생성한 뒤 상태를 로드할 수 있다.
+
+\begin{dhkcode}
+model = MyModel()
+
+state = torch.load(
+    "model.pt",
+    map_location="cpu",
+    weights_only=True
+)
+
+model.load_state_dict(state)
+\end{dhkcode}
+
+여기서 \zsh{MyModel()}은 모델 구조를 생성하고,
+
+\zsh{load_state_dict()}는 등록된 상태를 해당 모델에 반영한다.
+
+이것이 모델의 구조와 상태를 분리하는 방식이다.
+
+\subsubsection{\zsh{model(x)} - 호출 메커니즘과 \zsh{forward()}}
+
+이제 모델 실행으로 넘어가 보자.
+
+\begin{dhkcode}
+x = torch.randn(2, 10)
+
+y = model(x)
+\end{dhkcode}
+
+여기서 \zsh{model}은 함수 객체가 아니다.
+
+\zsh{MyModel} 인스턴스다.
+
+그런데도 \zsh{model(x)}라는 호출 문법을 사용할 수 있다.
+
+2.10에서 학습한 \zsh{__call__()} 프로토콜 때문이다.
+
+\zsh{nn.Module}은 모델 인스턴스를 호출 간으하게 만드는 메커니즘을 제공한다.
+
+따라서 다음 결과를 얻을 수 있다.
+
+\begin{dhkcode}
+print(callable(model))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+호출 과정
+\end{dhksmry}
+\end{dhknote}
+
+개념적으로 다음과 같은 흐름이다.
+
+\begin{dhkbranch}[in=8]
+node main :: model(x)
+arrow main
+node main :: nn.Module의 호출 메커니즘
+arrow main
+node main :: MyModel.forward(x)
+branchline main -> n1 :: self.linear1(x)
+stop n1
+branchline main -> n2 :: self.relu(x)
+stop n2
+branchline main -> n3 :: self.linear2(x)
+stop n3
+arrow main
+node main :: y 변환
+\end{dhkbranch}
+
+여기서 중요한 것은 \zsh{forward()}를 우리가 직접 호출하지 않았다는 점이다.
+
+\zsh{model(x)}가 상속된 호출 메커니즘을 통해 \zsh{forward()}를 실행하도록 연결된 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실제 메서드 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(model.forward.__self__ is model)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\zsh{forward()}는 인스턴스 메서드이므로 \zsh{model}에 바인딩된다.
+
+또한 다음처럼 확인할 수 있다.
+
+\begin{dhkcode}
+print(model.forward.__func__ is MyModel.forward)
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+즉, \zsh{forward()} 역시 2.5에서 학습한 일반적인 바운드 메서드의 원리로 동작한다.
+
+\subsubsection{\zsh{forward()}를 오버라이딩했는데 왜 \zsh{nn.Module}이 이를 호출할 수 있는가?}
+
+이 부분은 2.8의 상속과 오버라이딩을 연결하는 중요한 지점이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def forward(self, x):
+        return x * 2
+\end{dhkcode}
+
+\zsh{nn.Module}은 호출 메커니즘을 제공하고, 자식 클래스는 \zsh{forward()}를 오버라이딩한다.
+
+그런데 부모 클래스의 호출 메커니즘은 자식 클래스의 \zsh{forward()}를 실행할 수 있다.
+
+왜 그럴까?
+
+호출 메커니즘이 실제 모델 인스턴스의 \zsh{forward} 속성을 조회하기 때문이다.
+
+이때 \zsh{self}는 실제 \zsh{MyModel} 인스턴스다.
+
+따라서 일반적인 속성 탐색 규칙에 따라 \zsh{MyModel.forward}가 선택된다.
+
+이것을 간단한 일반 Python 클래스로 표현하면 다음과 같다.
+
+\begin{dhkcode}
+class Base:
+    def __call__(self, x):
+        return self.forward(x)
+
+    def forward(self, x):
+        raise NotImplementedError
+
+
+class Child(Base):
+    def forward(self, x):
+        return x * 2
+
+obj = Child()
+
+print(obj(10))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+20
+\end{dhkzsh}
+
+여기서 \zsh{Child}는 \zsh{__call__()}을 정의하지 않았다.
+
+하지만 \zsh{Base.__call__()}을 상속했다.
+
+그리고 \zsh{Base.__call__()} 내부에서 다음 코드를 실행한다.
+
+\begin{dhkcode}
+self.forward(x)
+\end{dhkcode}
+
+여기서 \zsh{self}는 \zsh{Child} 인스턴스다.
+
+따라서 \zsh{Child.forward()}가 선택된다.
+
+이 구조가 PyTorch의 모델 호출을 이해하기 위한 핵심적인 Python 객체 모델이다.
+
+단, 실제 \zsh{nn.Module}의 호출 메커니즘에는 Hook 처리 등 추가적인 기능이 포함되어 있다.
+
+\subsubsection{\zsh{model.forward(x)} 대신 \zsh{model(x)}를 사용하는 이유}
+
+다음 두 표현식을 비교해 보자.
+
+\begin{dhkcode}
+y1 = model(x)
+
+y2 = model.forward(x)
+\end{dhkcode}
+
+두 표현식 모두 \zsh{forward()}의 계산을 실행할 수 있다.
+
+하지만 실행 경로는 같지 않다.
+
+첫 번째는 \zsh{nn.Module}의 호출 메커니즘을 사용한다.
+
+두 번째는 \zsh{forward()}를 직접 호출한다.
+
+PyTorch는 모듈 호출 과정에서 여러 Hook을 처리할 수 있다.
+
+예를 들어 다음과 같은 Hook이 있다.
+
+\begin{dhksmry}
+    - Forward pre-hook
+
+    - Forward hook
+
+    - Backward 관련 hook
+\end{dhksmry}
+
+\zsh{model.forward(x)}를 직접 호출하면 모듈 호출 메커니즘을 우회하므로 이러한 처리가 정상적으로 적용되지 않을 수 있다.
+
+따라서 일반적인 모델 실행에서는 다음 형태를 사용해야 한다.
+
+\begin{dhkcode}
+y = model(x)
+\end{dhkcode}
+
+이것은 단순한 스타일 문제가 아니라 객체 호출 프로토콜을 통해 프레임워크의 실행 메커니즘을 사용한다는 의미다.
+
+\subsubsection{모델 구조와 계산 그래프는 같은 것인가?}
+
+여기서 중요한 개념적 구분을 하나 해야 한다.
+
+우리는 지금까지 \zsh{nn.Module}이 하위 모듈ㅇ르 등록하고 관리하는 구조를 살펴보았다.
+
+그런데 이 구조와 자동 미분을 위한 계산 그래프는 동일하지 않다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+모듈 구조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdir}[in=6]
+MyModel
+>linear1
+>relu
+>linear2
+\end{dhkdir}
+
+이 구조는 Python 객체와 하위 모듈의 등록 관계를 나타낸다.
+
+모델 인스턴스가 어떤 하위 모듈ㅇ르 가지고 있는지 설명하는 구조다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+계산 그래프
+\end{dhksmry}
+\end{dhknote}
+
+반면 다음 코드가 실행되면
+
+\begin{dhkcode}
+x = torch.randn(2, 10)
+
+y = model(x)
+\end{dhkcode}
+
+텐서 연산이 수행된다.
+
+\begin{dhksmry}[centered]
+x
+\da
+Linear 연산
+\da
+ReLU 연산
+\da
+Linear 연산
+\da
+y
+\end{dhksmry}
+
+이 연산들 중 자동 미분 추적 대상이 되는 연산들은 역전파를 위한 그래프에 반영된다.
+
+여기서 중요한 차이는 다음과 같다.
+
+\begin{dhktable}
+|구분|	모듈 구조|	자동 미분 계산 그래프|
+|:---|:---|:---|
+|기반|	Python 객체 및 모듈 등록|	텐서 연산|
+|주요 목적|	모델 구성 및 상태 관리|	미분 계산|
+|생성 시점|	주로 모델 초기화 과정|	추적 대상 연산이 실행될 때|
+|관리 대상|	모듈, 파라미터, 버퍼|	연산 관계 및 역전파 정보|
+|동적 변화|	모듈 구조 변경 가능|	실행 경로에 따라 달라질 수 있음|
+\end{dhktable}
+
+특히 PyTorch의 일반적인 eager 실행에서는 연산이 수행되면서 자동 미분 그래프가 구성된다.
+
+따라서 ㅁ듈 등록 구조가 곧 계산 그래프인 것은 아니다.
+
+이 구분은 이후 Transformer 모델을 분석할 때도 중요하다.
+
+\subsubsection{Transformer에서는 이 구조가 어떻게 확장되는가?}
+
+다음은 단순화한 Transformer 블록이다.
+
+\begin{dhkcode}
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+
+        self.attention = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=8,
+            batch_first=True
+        )
+
+        self.norm = nn.LayerNorm(d_model)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.ReLU(),
+            nn.Linear(4 * d_model, d_model)
+        )
+
+    def forward(self, x):
+        attn_out, _ = self.attention(x, x, x)
+
+        x = self.norm(x + attn_out)
+
+        x = x + self.ffn(x)
+
+        return x
+\end{dhkcode}
+
+이 코드는 지금까지 배운 Python 객체 모델을 그대로 사용한다.
+
+먼저 클래스 객체가 생성된다.
+
+\begin{dhkcode}
+TransformerBlock
+\end{dhkcode}
+
+그다음 인스턴스를 생성한다.
+
+\begin{dhkcode}
+block = TransformerBlock(512)
+\end{dhkcode}
+
+이 과정에서 하위 모듈들이 등록된다.
+
+\begin{dhkdir}[in=6]
+TransformerBlock 인스턴스
+> attention
+>> MultiheadAttention
+> norm
+>> LayerNorm
+>ffn
+>>Sequential
+>>>Linear
+>>>ReLU
+>>>Linear
+\end{dhkdir}
+
+이제 다음 코드를 실행하면
+
+\begin{dhkcode}
+x = torch.randn(2, 16, 512)
+
+y = block(x)
+\end{dhkcode}
+
+\zsh{nn.Module}의 호출 메커니즘을 통해 \zsh{ransformerBlock.forward()}가 실행된다.
+
+그 내부에서 다시 하위 모듈들을 호출한다.
+
+\begin{dhkcode}
+self.attention(x, x, x)
+self.norm(x + attn_out)
+self.ffn(x)
+\end{dhkcode}
+
+각 하위 모듈도 \zsh{nn.Module} 인스턴스이므로 동일한 호출 메커니즘을 사요한다.
+
+즉, Transformer는 특별한 Python 객체 시스템 위에서 동작하는 것이 아니라, 우리가 지금까지 학습한 클래스·상속·메서드·특수 메서드·모듈 등록 구조를 계층적으로 조합한 모델이다.
+
+\subsubsection{지금까지의 객체 모델을 하나의 그림으로 정리하기}
+
+다음 코드를 다시 보자.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+
+
+model = MyModel()
+y = model(x)
+\end{dhkcode}
+
+이 코드를 객체 관계와 실행 관계로 구분해 보면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: MyModel 클래스 객체  // nn.Module 상속, forward 정의
+node n2 (2,1) [accent] :: model 인스턴스 // _modules["linear"] -> nn.Linear 인스턴스 // linear._parameters -> weight, bias // 상속된 __call__ 메커니즘
+node n3 (3,1) :: nn.Module 호출 처리 // Hook 등 프레임워크 실행 처리
+node n4 (4,1) [accent] :: MyModel.forward(x) // self.linear(x) -> 텐서 연산
+node n5 (5,1) :: 객체 생성 -> 등록 -> 호출 -> 연산
+
+edge n1 -> n2 :: MyModel()
+edge n2 -> n3 :: model(x)
+edge n3 -> n4
+\end{dhkgraph}
+
+이제 코드 한 줄마다 어떤 객체와 메커니즘이 사용되는지 연결할 수 있다.
+
+\subsubsection{최종 확인 - 지금까지의 Python 클래스 학습과 연결}
+
+2.2부터 2.12까지의 내용을 정리해 보자.
+
+\begin{dhktable}
+|단원|	핵심 개념|	PyTorch에서의 대응|
+|:---|:---|:---|
+|2.2|	클래스도 객체|	MyModel, nn.Module|
+|2.3|	클래스와 인스턴스|	model = MyModel()|
+|2.4|	인스턴스 속성과 네임스페이스|	self.linear|
+|2.5|	메서드와 self|	forward(self, x)|
+|2.6|	__new__, __init__|	모델 생성 및 초기화|
+|2.7|	클래스·인스턴스 속성|	_modules, _parameters, 속성 등록|
+|2.8|	상속과 오버라이딩|	nn.Module 상속, forward() 재정의|
+|2.9|	super()와 MRO|	super().__init__()|
+|2.10|	특수 메서드|	model(x)|
+|2.11|	메서드 종류|	forward, from_config, 검증 메서드|
+|2.12|	객체 모델 통합|	모델 등록·상태 관리·실행|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+마지막으로 반드시 구분해야 할 다섯 가지
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫째, 클래스 객체와 인스턴스 객체는 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+MyModel
+model
+\end{dhkcode}
+
+\zsh{MyModel}은 클래스 객체이고, \zsh{model}은 그 인스턴스다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+둘째, 속성 접근 문법과 실제 저장 위치는 다를 수 있다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+model.linear
+\end{dhkcode}
+
+는 일반적으로 \zsh{_modules}에 등록된 하위 모듈을 조회한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+셋째, 파라미터와 일반 텐서는 등록 방식이 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+self.weight = nn.Parameter(...)
+self.tensor = torch.randn(...)
+\end{dhkcode}
+
+첫 번째는 학습 파라미터로 등록되고, 두 번째는 일반적으로 자동 등록되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+넷째, model(x)와 model.forward(x)는 실행 경로가 다르다.
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{model(x)}는 \zsh{nn.Module}의 호출 메커니즘을 사용한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+다섯째, 모듈 구조와 계산 그래프는 서로 다른 개념이다.
+\end{dhksmry}
+\end{dhknote}
+
+모듈 구조는 객체의 구성 관계이고, 자동 미분 계산 그래프는 텐서 연산의 관계이다.
+
+\subsubsection{Python 클래스와 객체 모델 학습 완료}
+
+이번 2.12까지 학습했다면 다음 코드의 의미를 객체 모델 관점에서 설명할 수 있는 기반이 갖춰진 것이다.
+
+\begin{dhkcode}
+class MyModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(10, 5)
+
+    def forward(self, x):
+        return self.linear(x)
+\end{dhkcode}
+
+핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+Class Object
+\da
+Instance Creation
+\da
+Module Initialization
+\da
+Attribute Registration
+\da
+Callable Protocol
+\da
+Overridden forward
+\da
+Tensor Operations
+\end{dhksmry}
+
+이제 Python 클래스는 단순히 \zsh{class}와 \zsh{self}를 사용하는 문법이 아니라, 객체 생성·네임스페이스·디스크립터·상속·MRO·특수 메서드가 결합된 실행 시스템으로 이해할 수 있다.
