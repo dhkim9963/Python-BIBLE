@@ -698,3 +698,19 @@ message = "Hello"
 
 따라서 다음 코드는 다르게 동작한다.
 
+\begin{dhkcode}
+def func():
+    global message
+    print(message)
+
+func()
+\end{dhkcode}
+
+현재 모듈에 \zsh{message}가 없고 내장 이름으로도 존재하지 않는 일반적인 상황이라면 \zsh{NameError}가 발생한다.
+
+즉, \zsh{global} 선언이 있다고 해서 그 이름에 자동으로 \zsh{None} 같은 객체가 바인딩되는 것은 아니다.
+
+\subsubsection{\zsh{global}의 범위는 어디까지일까?}
+
+
+
