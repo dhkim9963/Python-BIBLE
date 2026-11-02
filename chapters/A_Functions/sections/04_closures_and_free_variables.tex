@@ -1,5 +1,2518 @@
 % !TeX root = ../main.tex
 
 % ==================================================
-% A.4. 클로저 생서오가 자유 변수
+% A.4. 클로저 생성과 자유 변수
 % ==================================================
+
+\subsection{클로저(Closure)의 생성과 자유 변수(Free Variable)}
+
+Closure · Free Variable · Cell Object · Lexical Environment · Variable Lifetime
+
+\subsubsection{이전 학습과의 연결}
+
+지금까지 함수 객체를 세 단계에 걸쳐 학습하였다.
+
+\begin{dhktable}
+|단원|	핵심 개념|	확립한 원리|
+|:---|:---|:---|
+|A.1|	함수 객체와 이름 바인딩|	def는 함수 객체를 생성하고 이름에 바인딩한다.|
+|A.2|	중첩 함수와 Lexical Scope|	함수의 렉시컬 외부 스코프는 정의 위치에 따라 결정된다.|
+|A.3|	LEGB와 이름의 정적 판정|	이름의 스코프 분류와 실행 시점의 객체 조회는 구별된다.|
+|A.4|	클로저와 자유 변수|	함수 객체가 외부 바인딩에 접근하는 환경을 어떻게 유지하는지 분석한다.|
+\end{dhktable}
+
+\zsh{A.2}와 \zsh{A.3}에서는 다음 코드를 여러 차례 살펴보았다.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    return inner
+
+f = outer()
+
+print(f())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+\end{dhkzsh}
+
+이 결과를 지금까지 배운 개념으로 설명하면 다음과 같다.
+
+\begin{dhksmry}
+1. outer() 호출 중 x가 정수 객체 10에 바인딩된다.
+
+2. def inner가 실행되면서 새로운 함수 객체가 생성된다.
+
+3. inner 내부의 x는 outer의 지역 스코프를 참조하는
+   자유 변수로 판정된다.
+
+4. return inner를 통해 함수 객체가 반환된다.
+
+5. 이후 f()를 호출하면 inner가 실행되고 10을 반환한다.
+\end{dhksmry}
+
+하지만 아직 설명하지 않은 부분이 있다.
+
+\zsh{outer()}의 실행이 종료되었는데, \zsh{inner()}는 어떻게 \zsh{outer}의 지역 변수 \zsh{x}에 접근할 수 있을까?
+
+여기서 두 가지 가능성을 생각해 볼 수 있다.
+
+\begin{dhksmry}
+    - inner 함수 객체가 생성될 때
+      x의 값인 10을 복사해서 보관하는가?
+
+    - 아니면 x라는 이름의 바인딩에 계속 접근할 수 있도록
+      별도의 구조를 유지하는 것인가?
+\end{dhksmry}
+
+Python의 클로저는 두 번째 방식에 해당한다.
+
+이번 학습에서는 이 구조를 함수 객체, 코드 객체, 자유 변수, 셀 객체의 관계로 분석할 것이다.
+
+\subsubsection{이번 단원의 핵심 질문}
+
+이번 단원을 마치면 다음 질문에 답할 수 있어야 한다.
+
+\begin{dhksmry}
+1. 클로저(Closure)란 정확히 무엇인가?
+
+2. 자유 변수(Free Variable)는 일반적인 지역 변수와 어떻게 다른가?
+
+3. inner 함수 객체는 외부 변수의 값을 복사하는가,
+   바인딩을 참조하는가?
+
+4. __closure__와 셀 객체(Cell Object)는 어떤 관계인가?
+
+5. co_freevars와 co_cellvars는 무엇을 나타내는가?
+
+6. 외부 함수의 실행이 종료되어도 클로저가 유지되는 이유는 무엇인가?
+
+7. 서로 다른 클로저는 상태를 공유하는가?
+
+8. 클로저와 전역 변수 참조는 어떻게 다른가?
+\end{dhksmry}
+
+여기서 가장 중요한 구분은 다음이다.
+
+\begin{dhksmry}[centered]
+클로저는 외부 함수의 실행 프레임 전체를 보존하는 구조가 아니라,
+
+함수가 필요로 하는 렉시컬 외부 바인딩에 접근할 수 있도록 하는 구조다.
+\end{dhksmry}
+
+이 문장을 이해하는 것이 이번 학습의 목표다.
+
+\subsubsection{클로저의 정확한 정의}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 클로저란 무엇인가?
+\end{dhksmry}
+\end{dhknote}
+
+클로저(Closure)는 일반적으로 다음 두 요소가 결합된 구조를 의미한다.
+
+\begin{dhksmry}
+1. 실행할 함수의 코드
+
+2. 그 코드가 참조하는 렉시컬 외부 변수의 바인딩에 접근할 수 있는 환경
+\end{dhksmry}
+
+이를 개념적으로 나타내면 다음과 같다.
+
+\[
+\text{Closure}
+=
+\text{Function Code}
++
+\text{Captured Lexical Environment}
+\]
+
+다만 이 수식은 개념적인 표현이지 Python 내부 객체의 실제 덧셈이나 결합 연산을 의미하지는 않는다.
+
+Python에서는 이러한 구조가 함수 객체와 클로저 셀을 통해 구현될 수 있다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    return inner
+
+
+f = outer()
+\end{dhkcode}
+
+\zsh{f}는 일반적인 Python 함수 객체를 참조한다.
+
+\begin{dhkcode}
+print(type(f))
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+<class 'function'>
+\end{dhkzsh}
+
+즉, 클로저를 형성했다고 해서 별도의 \zsh{Closure} 타입 인스턴스가 생성되는 것은 아니다.
+
+\zsh{inner}는 여전히 함수 객체다.
+
+다만 이 함수 객체는 외부 변수 \zsh{x}에 접근하기 위한 클로저 환경을 가지고 있다.
+
+그 환경은 다음 속성으로 확인할 수 있다.
+
+\begin{dhkcode}
+print(f.__closure__)
+\end{dhkcode}
+
+일반적인 CPython에서는 다음과 유사한 결과가 출력된다.
+
+\begin{dhkzsh}
+(<cell at 0x...: int object at 0x...>,)
+\end{dhkzsh}
+
+메모리 주소는 실행 환경에 따라 달라진다.
+
+여기서 중요한 것은 출력에 \zsh{cell}이라는 객체가 등장한다는 사실이다.
+
+이 셀 객체가 이번 학습의 핵심이다.
+
+\subsubsection{자유 변수(Free Variable)란 무엇인가?}
+
+클로저를 이해하려면 먼저 자유 변수의 의미를 정확하게 알아야 한다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+    y = 20
+
+    def inner():
+        z = 30
+        return x + z
+
+    return inner
+\end{dhkcode}
+
+여기에는 세 개의 이름이 등장한다.
+
+\begin{dhksmry}
+    - x
+
+    - y
+
+    - z
+\end{dhksmry}
+
+그런데 이 세 이름은 \zsh{inner}를 기준으로 서로 다른 성격을 가진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. z는 지역 변수(Local Variable)
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def inner():
+    z = 30
+    return x + z
+\end{dhkcode}
+
+\zsh{z}는 \zsh{inner} 내부에서 바인딩된다.
+
+따라서 \zsh{inner}의 지역 이름이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. x는 자유 변수(Free Variable)
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{inner} 내부에서는 \zsh{x}를 읽지만, \zsh{x}를 지역 이름으로 바인딩하지 않는다.
+
+대신 렉시컬 외부 함수 \zsh{outer}에서 정의한 \zsh{x}를 사용한다.
+
+따라서 \zsh{inner}를 기준으로 \zsh{x}는 자유 변수다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. y는 외부 함수의 지역 변수지만 inner의 자유 변수는 아니다
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{y}는 \zsh{outer}의 지역 변수다.
+
+그러나 \zsh{inner}에서 사용하지 않는다.
+
+따라서 \zsh{inner}가 접근해야 하는 외부 바인딩 목록에 포함될 필요가 없다.
+
+이를 정리하면 다음과 같다.
+
+\begin{dhktable}
+|이름|outer 기준|inner 기준|
+|:---|:---|:---|
+|x|지역 변수|자유 변수|
+|y|지역 변수|사용하지 않는 이름|
+|z|정의되지 않은 이름|지역 변수|
+\end{dhktable}
+
+여기서 중요한 사실이 있다.
+
+하나의 이름은 어떤 함수 블록을 기준으로 분석하는지에 따라 서로 다른 분류를 가질 수 있다.
+
+\zsh{x}는 \zsh{outer}에서는 지역 이름이지만, \zsh{inner}에서는 자유 변수다.
+
+이것은 모순이 아니다.
+
+스코프 분석의 기준이 서로 다르기 때문이다.
+
+\subsubsection{\zsh{co_freevars}와 \zsh{co_cellvars}}
+
+이제 Python이 이러한 이름 관계를 어떻게 기록하는지 확인해 보자.
+
+함수 객체에는 \zsh{__code__} 속성이 있다.
+
+이 속성은 해당 함수의 코드 객체(Code Object)를 참조한다.
+
+코드 객체에는 자유 변수와 셀 변수에 관한 정보가 포함되어 있다.
+
+대표적인 속성이 다음 두 가지다.
+
+\begin{dhksmry}
+    - co_freevars
+
+    - co_cellvars
+\end{dhksmry}
+
+먼저 코드를 실행해 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+    y = 20
+
+    def inner():
+        z = 30
+        return x + z
+
+    return inner
+
+
+f = outer()
+
+print(outer.__code__.co_cellvars)
+print(f.__code__.co_freevars)
+print(f.__code__.co_cellvars)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('x',)
+('x',)
+()
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. outer.__code__.co_cellvars
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+outer.__code__.co_cellvars
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('x',)
+\end{dhkzsh}
+
+\zsh{outer}의 지역 변수 \zsh{x}는 중첩 함수 \zsh{inner}에서 참조된다.
+
+따라서 \zsh{outer}에서는 이 바인딩을 셀을 통해 관리해야 한다.
+
+이러한 지역 이름을 셀 변수(Cell Variable)라고 한다.
+
+반면 \zsh{y}는 중첩 함수에서 사용되지 않으므로 \zsh{co_cellvars}에 포함되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. f.__code__.co_freevars
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+f.__code__.co_freevars
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('x',)
+\end{dhkzsh}
+
+\zsh{f}는 \zsh{inner} 함수 객체를 참조하고 있다.
+
+\zsh{inner}의 코드에서는 외부 함수의 \zsh{x}를 사용하고 있으므로 \zsh{x}가 자유 변수로 기록된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. f.__code__.co_cellvars
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+f.__code__.co_cellvars
+\end{dhkcode}
+
+결과는 빈 튜플이다.
+
+\begin{dhkzsh}
+()
+\end{dhkzsh}
+
+\zsh{inner} 내부의 지역 변수 \zsh{z}는 더 기핑 중첩된 함수에서 참조되지 않는다.
+
+따라서 \zsh{inner}에는 셀 변수로 관리할 지역 이름이 없는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+정리
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|속성|기준|의미|
+|:---|:---|:---|
+|co_freevars|	현재 코드 객체|	외부 함수 스코프에서 가져와야 하는 자유 변수 이름|
+|co_cellvars|	현재 코드 객체|	중첩 함수에서 접근할 수 있도록 셀로 관리하는 현재 함수의 지역 변수 이름|
+\end{dhktable}
+
+여기서 주의해야 할 점이 있다.
+
+\zsh{co_freevars}와 \zsh{co_cellvars}는 이름에 관한 정보를 제공한다.
+
+실제 외부 객체를 직접 저장하는 속성은 아니다.
+
+실제 바인딩에 접근하기 위한 구조는 다음에 살펴볼 \zsh{__closure__}와 연결된다.
+
+\subsubsection{셀 객체(Cell Object)의 역할}
+
+이제 클로저의 실제 구조를 살펴보자.
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    return inner
+
+
+f = outer()
+
+print(f.__code__.co_freevars)
+print(len(f.__closure__))
+print(f.__closure__[0].cell_contents)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('x',)
+1
+10
+\end{dhkzsh}
+
+하나씩 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. co_freevars
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+f.__code__.co_freevars
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+('x',)
+\end{dhkzsh}
+
+\zsh{inner}가 외부 함수의 \zsh{x}를 사용한다는 사실을 나타낸다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. __closure__
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+f.__closure__
+\end{dhkcode}
+
+\zsh{__closure__}는 함수 객체가 참조하는 클로저 셀들의 튜플이다.
+
+클로저 셀이 없다면 \zsh{None}이 될 수 있다.
+
+여기서는 자유 변수 \zsh{x}에 대응하는 셀 객체 하나가 존재하므로 튜플의 길이가 1이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. cell_contents
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+f.__closure__[0].cell_contents
+\end{dhkcode}
+
+\zsh{cell_contents}는 셀에 현재 바인딩된 객체를 가져오는 속성이다.
+
+따라서 결과는 10이 된다.
+
+여기서 중요한 관계를 정리해 보자.
+
+\begin{dhkdiagram}
+node n1 (1,1) :: f
+node n2 (2,1) :: inner 함수 객체
+node n3 (3,2) :: __code__
+node n4 (4,3) :: co_freevars = ('x',)
+node n5 (5,2) :: __closure__
+node n6 (6,2) :: tuple
+node n7 (7,2) :: [0]
+node n8 (7,3) :: Cell 객체
+node n9 (8,3) :: cell_contents
+node n10 (8,4) :: int(10)
+
+edge n1 -> n2
+edge n2 -- n3 :: VH
+edge n3 -- n4 :: VH
+edge n2 -- n5 :: VH
+edge n5 -> n6
+edge n6 -- n7
+edge n7 -> n8
+edge n8 -- n9
+edge n9 -> n10
+\end{dhkdiagram}
+
+이 구조에서 중요한 것은 \zsh{x}라는 이름과 10이라는 객체가 서로 다른 역할을 한다는 사실이다.
+
+\begin{dhksmry}
+    - co_freevars는 어떤 자유 변수 이름이 필요한지 나타낸다.
+
+    - __closure__는 그 자유 변수에 대응하는 셀 객체를 제공한다.
+
+    - 셀 객체는 현재 바인딩된 객체를 참조한다.
+\end{dhksmry}
+
+따라서 클로저가 단순히 정수 값 10을 함수 객체에 복사해 넣었다고 이해하면 정확하지 않다.
+
+함수 객체는 셀을 통해 외부 바인딩에 접근하는 구조를 유지하는 것이다.
+
+\subsubsection{자유 변수가 여러 개라면?}
+
+이번에는 외부 변수 두 개를 사용하는 함수를 만들어 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+    y = 20
+
+    def inner():
+        return x + y
+
+    return inner
+
+
+f = outer()
+
+print(f.__code__.co_freevars)
+
+for name, cell in zip(
+    f.__code__.co_freevars,
+    f.__closure__
+):
+    print(name, cell.cell_contents)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('x', 'y')
+x 10
+y 20
+\end{dhkzsh}
+
+이 코드에서 \zsh{co_freevars}와 \zsh{__closure__}는 서로 대응하는 순서를 가지고 있다.
+
+따라서 다음과 같이 해석할 수 있다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1):: co_freevars // ('x','y')
+node n2 (2,1):: (
+node n3 (3,1) :: 'x'
+node n4 (4,1) :: ,
+node n5 (5,1) :: 'y'
+node n6 (6,1) :: )
+node n21 (1,3):: __closure__ // (cell_x, cell_y)
+node n22 (2,3):: (
+node n23 (3,3) :: cell_x
+node n24 (4,3) :: ,
+node n25 (5,3) :: cell_y
+node n26 (6,3) :: )
+
+edge n3 -- n23
+edge n5 -- n25
+\end{dhkdiagram}
+
+정확히는 동일한 인덱스끼리 대응한다.
+
+\begin{dhksmry}[centered]
+co_freevars[0] = 'x'  ↔  __closure__[0] = cell_x
+
+co_freevars[1] = 'y'  ↔  __closure__[1] = cell_y
+\end{dhksmry}
+
+그리고 각 셀에는 현재 객체가 바인딩되어 있다.
+
+\begin{dhksmry}[centered]
+cell_x \ra int(10)
+
+cell_y \ra int(20)
+\end{dhksmry}
+
+이 대응 관계는 클로저를 디버깅하거나 함수 객체의 내부 구조를 확인할 때 유용하다.
+
+다만 이 이름의 순서를 소스 코드에서 등장한 순서라고 일반화하면 안 된다.
+
+중요한 것은 \zsh{co_freevars}의 순서와 \zsh{__closure__}셀의 순서가 대응한다는 사실이다.
+
+\subsubsection{클로저는 값을 복사하는가, 바인딩을 유지하는가?}
+
+이번 학습에서 가장 중요한 실험이다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    x = 20
+
+    return inner
+
+
+f = outer()
+
+print(f())
+print(f.__closure__[0].cell_contents)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+20
+20
+\end{dhkzsh}
+
+왜 10이 아니라 20일까?
+
+이 코드를 실행 순서대로 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. outer() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+x = 10
+\end{dhkcode}
+
+\zsh{outer}의 지역 이름 \zsh{x}가 정수 객체 10에 바인딩된다.
+
+그런데 \zsh{x}는 중첩 함수 \zsh{inner}에서 참조되는 이름이다.
+
+따라서 이 바인딩은 클로저 셀을 통해 접근할 수 있도록 관리된다.
+
+개념적으로 다음과 같다.
+
+\begin{dhkdir}[in=6]
+outer() 실행 환경
+> x에 대응하는 Cell
+>> int(10)
+\end{dhkdir}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. inner 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def inner():
+    return x
+\end{dhkcode}
+
+\zsh{inner} 함수 객체가 생성된다.
+
+이 함수 객체는 \zsh{x}에 대응하는 셀 객체를 참조한다.
+
+\begin{dhkdiagram}[in=2]
+node n1 (1,1) :: outer() 실행 환경
+node n2 (3,2) :: Cell 객체
+node n3 (1,3) :: inner 함수 객체
+node n4 (3,3) :: __closure__[0]
+node n5 (5,2) :: int(10)
+
+edge n1 -> n2 :: VH
+edge n3 -> n4 
+edge n4 -> n2
+edge n2 -> n5
+\end{dhkdiagram}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. x = 20 실행
+\end{dhksmry}
+\end{dhknote}
+
+이제 다음 문장이 실행된다.
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+정수 객체 10이 20으로 변경되는 것은 아니다.
+
+\zsh{x}에 대응하는 바인딩이 새로운 정수 객체 20을 참조하도록 변경되는 것이다.
+
+클로저 셀 관점에서는 다음과 같이 이해할 수 있다.
+
+\begin{dhkdiagram}[in=2]
+node n1 (1,1) :: outer() 실행 환경
+node n2 (3,2) :: Cell 객체
+node n3 (1,3) :: inner 함수 객체
+node n4 (3,3) :: __closure__[0]
+node n5 (5,2) :: int(20)
+
+edge n1 -> n2 :: VH
+edge n3 -> n4 
+edge n4 -> n2
+edge n2 -> n5
+\end{dhkdiagram}
+
+여기서 \zsh{inner} 함수 객체를 다시 생성한 것은 아니다.
+
+기존 함수 객체가 참조하는 셀의 바인딩 대상이 변경된 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. inner 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+return inner
+\end{dhkcode}
+
+\zsh{inner} 함수 객체가 반환되고 \zsh{f}에 바인딩된다.
+
+이후 \zsh{outer()} 호출이 종료된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. f() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{f()}를 호출하면 \zsh{inner} 본문이 실행된다.
+
+\zsh{return x}
+
+\zsh{x}는 자유 변수이므로 대응하는 클로저 셀을 통해 현재 객체를 조회한다.
+
+현재 셀은 정수 객체 20을 참조하고 있다.
+
+따라서 20이 반환된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+핵심 결론
+\end{dhksmry}
+\end{dhknote}
+
+클로저는 자유 변수의 값을 함수 정의 시점에 고정하는 구조가 아니다.
+
+클로저는 자유 변수의 바인딩에 접근할 수 있도록 하는 구조다.
+
+이 차이는 이후 데코레이터에서 상태를 유지하거나 변경하는 원리를 이해하는 데 중요하다.
+
+\subsubsection{외부 함수가 종료되어도 클로저가 유지되는 이유}
+
+이제 가장 근본적인 질문으로 돌아가 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    return inner
+
+
+f = outer()
+\end{dhkcode}
+
+\zsh{outer()}의 호출은 종료되었다.
+
+그런데도 \zsh{f()}는 10을 반환한다.
+
+여기서 흔히 다음과 같이 이해하기 쉽다.
+
+\begin{dhksmry}[centered]
+외부 함수가 종료되어도 지역 변수 전체가 메모리에 남아 있기 때문이다.
+\end{dhksmry}
+
+하지만 이 설명은 지나치게 단순화되어 있다.
+
+정확하게는 반환된 함수 객체가 필요한 클로저 셀을 참조하고 있기 때문에 해당 바인딩에 접근할 수 있는 것이다.
+
+함수 호출의 실행 프레임 전체가 반드시 유지되어야 하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+outer() 실행 중의 구조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1):: outer 실행 환경
+node n2 (2,1):: x
+node n3 (2,2) :: Cell 객체
+node n4 (4,2) :: int(10)
+node n5 (5,1) :: inner
+node n6 (5,2) :: 함수 객체
+node n7 (7,3) :: Cell
+
+edge n2 -> n3
+edge n3 -> n4
+edge n5 -> n6
+edge n6 -> n7 :: VH
+\end{dhkdiagram}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+outer() 종료 후의 구조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: 모듈 네임 스페이스
+node n2 (2,2) :: f
+node n3 (2,3) :: inner 함수 객체
+node n4 (4,3) :: __closure__
+node n5 (6,3) :: Cell 객체
+node n6 (8,3) :: int(10)
+
+edge n1 -- n2 :: VH
+edge n2 -> n3
+edge n3 -> n4
+edge n4 -> n5
+edge n5 -> n6
+\end{dhkdiagram}
+
+여기서 \zsh{outer()} 호출의 일반적인 실행은 끝났다.
+
+하지만 \zsh{f}가 \zsh{inner} 함수 객체를 참조하고 있고, 그 함수 객체가 셀 객체를 참조하고 있다.
+
+따라서 셀과 그 셀이 참조하는 객체는 계속 접근 가능한 상태로 유지될 수 있다.
+
+이 구조를 이해할 때 다음 세 가지를 구별해야 한다.
+
+\begin{dhktable}
+|대상|outer() 종료 후|
+|:---|:---|
+|outer() 호출의 실행|	종료됨|
+|반환된 inner 함수 객체|	f가 참조하므로 유지됨|
+|inner가 참조하는 클로저 셀|	함수 객체를 통해 유지됨|
+\end{dhktable}
+
+CPython에서는 일반적인 참조 관리와 가비지 컬렉션 메커니즘이 객체의 수명에 관여한다.
+
+다만 특정 객체가 언제 메모리에서 해제되는지는 Python 구현과 참조 관계에 따라 달라질 수 있으므로, 이를 단순히 함수 종료 시점과 동일시하면 안 된다.
+
+여기서 확립해야 하는 원리는 다음이다.
+
+함수의 실행 수명(Lifetime)과 함수가 생성한 객체의 수명은 서로 다를 수 있다.
+
+이것은 \zsh{A.1}에서 학습한 함수 객체와 이름 바인딩의 원리가 클로저로 확장된 결과다.
+
+\subsubsection{외부 함수의 모든 지역 변수가 유지되는 것은 아니다}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+    y = 20
+    z = 30
+
+    def inner():
+        return x
+
+    return inner
+
+
+f = outer()
+
+print(outer.__code__.co_cellvars)
+print(f.__code__.co_freevars)
+print(len(f.__closure__))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('x',)
+('x',)
+1
+\end{dhkzsh}
+
+\zsh{outer()}에는 세 개의 지역 이름이 존재한다.
+
+하지만 \zsh{inner}에서 참조하는 것은 \zsh{x}뿐이다.
+
+따라서 이 예제에서 클로저 셀을 통해 유지해야 하는 외부 바인딩은 \zsh{x}다.
+
+\zsh{y}와 \zsh{z}는 \zsh{inner}의 자유 변수가 아니다.
+
+이것은 클로저가 외부 함수의 지역 네임스페이스 전체를 그대로 복사하는 구조가 아니라는 사실을 보여준다.
+
+물론 클로저 셀이 참조하는 객체가 다른 객체들을 다시 참조하고 있다면, 그 참조 관계를 통해 추가적인 객체들이 유지될 수는 있다.
+
+예를 들어 셀이 리스트 객체를 참조하고, 그 리스트가 여러 객체를 포함하고 있다면 해당 객체들도 참조 관계의 영향을 받4는다.
+
+하지만 그것은 클로저가 모든 지역 변수를 자동으로 보관하기 때문이 아니다.
+
+클로저가 유지하는 바인딩과, 그 바인딩을 통해 도달할 수 있는 객체들의 참조 관계를 구별해야 한다.
+
+\subsubsection{서로 다른 클로저는 같은 셀을 공유할까?}
+
+이제 클로저를 여러 번 생성해 보자.
+
+\begin{dhkcode}
+def outer(value):
+
+    def inner():
+        return value
+
+    return inner
+
+
+f1 = outer(10)
+f2 = outer(20)
+
+print(f1())
+print(f2())
+
+print(f1 is f2)
+
+print(
+    f1.__closure__[0]
+    is f2.__closure__[0]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+20
+False
+False
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{outer(10)}과 \zsh{outer(20)}은 서로 다른 함수 호출이다.
+
+각 호출에는 독립적인 지역 바인딩 환경이 형성된다.
+
+첫 번째 호출에서는 \zsh{value}가 10을 참조하고, 두 번재 호출에서는 \zsh{value}가 20을 참조한다.
+
+각 호출에서 \zsh{inner} 함수 객체도 새로 생성된다.
+
+그리고 각 함수 객체는 자신이 생성된 호출의 \zsh{value} 바인딩에 대응하는 셀을 참조한다.
+
+구조를 나타내면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: f1
+node n2 (1,2) :: inner 함수 객체 1
+node n3 (3,2) :: Cell 1
+node n4 (5,2) :: int(10)
+\end{dhkdiagram}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: f2
+node n2 (1,2) :: inner 함수 객체 2
+node n3 (3,2) :: Cell 2
+node n4 (5,2) :: int(20)
+\end{dhkdiagram}
+
+따라서 다음 비교는 \zsh{False}다.
+
+\begin{dhkcode}
+f1.__closure__[0] is f2.__closure__[0]
+\end{dhkcode}
+
+서로 다른 셀 객체이기 때문이다.
+
+여기서 중요한 점은 같은 함수 정의문에서 생성된 함수 객체라고 해서 클로저 환경까지 공유하는 것은 아니라는 사실이다.
+
+각 외부 함수 호출에서 생성된 클로저는 독립적인 바인딩 환경을 가질 수 있다.
+
+이것이 함수 생성기(Function Factory)가 서로 다른 설정을 유지할 수 있는 이유다.
+
+\subsubsection{하나의 외부 함수에서 생성된 여러 클로저는?}
+
+앞에서는 서로 다른 \zsh{outer()} 호출에서 생성된 클로저를 비교했다.
+
+이번에는 하나의 \zsh{outer()} 호출에서 여러 내부 함수를 생성해 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def first():
+        return x
+
+    def second():
+        return x * 2
+
+    return first, second
+
+
+f1, f2 = outer()
+
+print(f1())
+print(f2())
+
+print(
+    f1.__closure__[0]
+    is f2.__closure__[0]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+20
+True
+\end{dhkzsh}
+
+이번에는 셀 객체의 동일성 비교가 \zsh{True}다.
+
+왜 그럴까?
+
+\zsh{first}와 \zsh{second}는 같은 \zsh{outer()} 호출에서 생성되었다.
+
+그리고 두 함수 모두 동일한 외부 지역 변수 \zsh{x}를 참조한다.
+
+따라서 두 함수 객체는 같은 셀 객체를 참조할 수 있다.
+
+구조를 나타내면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: f1
+node n2 (1,2) :: first 함수 객체
+node n3 (3,2) :: Cell x
+node n4 (5,2) :: int(10)
+node n5 (7,2) :: second 함수 객체
+node n6 (7,1) :: f2
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+edge n6 -> n5
+edge n5 -> n4
+\end{dhkdiagram}
+
+여기서 다음 관계가 성립한다.
+
+\begin{dhkcode}
+f1.__closure__[0] is f2.__closure__[0]
+\end{dhkcode}
+
+결과는 \zsh{True}다.
+
+이것은 매우 중요한 차이다.
+
+\begin{dhktable}
+|생성 방식|	셀 공유 여부|
+|:---|:---|
+|서로 다른 outer() 호출에서 생성|	일반적으로 독립적인 셀|
+|같은 outer() 호출에서 동일한 외부 바인딩을 참조|	동일한 셀 공유|
+\end{dhktable}
+
+이 차이는 이후 \zsh{nonlocal}을 사용하여 여러 내부 함수가 하나의 상태를 읽고 변경하는 구조를 만들 때 핵심이 된다.
+
+\subsubsection{클로저와 가변 객체(Mutable Object)}
+
+지금까지는 정수 객체를 사용했다.
+
+이번에는 리스트 객체를 사용해 본다.
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def add(value):
+        values.append(value)
+        return values
+
+    return add
+
+
+f = outer()
+
+print(f(10))
+print(f(20))
+print(f(30))
+\end{dhkcode}
+
+출력 결과:
+
+\begin{dhkzsh}
+[10]
+[10, 20]
+[10, 20, 30]
+\end{dhkzsh}
+
+이 코드는 앞에서 배운 객체 변경과 이름 재바인딩의 차이를 보여준다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. outer() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+values = []
+\end{dhkcode}
+
+새로운 리스트 객체가 생성된다.
+
+\zsh{values}는 그 리스트 객체를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. add 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def add(value):
+    values.append(value)
+    return values
+\end{dhkcode}
+
+\zsh{add}는 외부 함수의 \zsh{values}를 참조한다.
+
+따라서 \zsh{values}는 \zsh{add}의 자유 변수다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. f(10) 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+values.append(10)
+\end{dhkcode}
+
+여기서 \zsh{values}라는 이름을 새로운 객체에 재바인딩하지 않는다.
+
+먼저 자유 변수 \zsh{values}를 통해 리스트 객체를 조회하고, 그 객체의 \zsh{append} 메서드를 호출한다.
+
+따라서 기존 리스트 객체의 내부 상태가 변경된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. f(20) 호출
+\end{dhksmry}
+\end{dhknote}
+
+같은 클로저 셀을 통해 동일한 리스트 객체에 접근한다.
+
+그리고 그 리스트에 20을 추가한다.
+
+따라서 결과는 다음과 같다.
+
+\begin{dhkzsh}
+[10, 20]
+\end{dhkzsh}
+
+이 과정에서 새로운 리스트를 매번 생성하는 것은 아니다.
+
+기존 리스트 객체를 계속 변경하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 동일성 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def add(value):
+        values.append(value)
+        return values
+
+    return add
+
+
+f = outer()
+
+a = f(10)
+b = f(20)
+
+print(a is b)
+print(a)
+print(b)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+[10, 20]
+[10, 20]
+\end{dhkzsh}
+
+\zsh{a}와 \zsh{b}는 같은 리스트 객체를 참조한다.
+
+따라서 \zsh{a is b}는 \zsh{True}다.
+
+또한 첫 번째 호출이 반환한 리스트 객체가 두 번째 호출에서 변경되었으므로, 마지막에 \zsh{a}를 출력해도 변경된 상태가 나타난다.
+
+여기서 중요한 것은 다음 두 연산을 구별하는 것이다.
+
+\begin{dhkcode}
+values.append(10)
+\end{dhkcode}
+
+이것은 리스트 객체의 상태 변경이다.
+
+반면
+
+\begin{dhkcode}
+values = [10]
+\end{dhkcode}
+
+이것은 \zsh{values}라는 이름의 재바인딩이다.
+
+두 연산은 서로 다르다.
+
+그리고 이 차이는 다음 \zsh{A.5}의 \zsh{nonlocal}과 직접 연결된다.
+
+\subsubsection{클로저에서 재바인딩을 시도하면?}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        x = 20
+        return x
+
+    return inner
+
+
+f = outer()
+
+print(f())
+print(f.__closure__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+20
+None
+\end{dhkzsh}
+
+여기서 \zsh{inner} 내부의 \zsh{x}는 자유 변수가 아니다.
+
+왜냐하면 \zsh{inner} 내부에 다음 대입문이 있기 때문이다.
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+\zsh{A.3}에서 배운 이름의 정적 판정 규칙에 따라 \zsh{x}는 \zsh{inner}의 지역 이름으로 분류된다.
+
+따라서 \zsh{inner}는 외부 함수의 \zsh{x}를 참조하지 않는다.
+
+그 결과 \zsh{inner}에는 클로저 셀이 필요하지 않고, \zsh{__closure__}는 \zsh{None}이다.
+
+이제 다음 코드를 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        x = x + 1
+        return x
+
+    return inner
+
+
+f = outer()
+
+f()
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+UnboundLocalError
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{inner} 내부의 대입문 때문에 \zsh{x}는 지역 이름으로 판정된다.
+
+그런데 오른쪽 표현식에서 먼저 \zsh{x}를 읽으려고 한다.
+
+\begin{dhkcode}
+x + 1
+\end{dhkcode}
+
+현재 \zsh{inner} 호출의 지역 \zsh{x}에는 아직 객체가 바인딩되어 있지 않다.
+
+따라서 \zsh{UnboundLocalError}가 발생한다.
+
+이것을 해결하려면 외부 함수의 \zsh{x}를 재바인딩하겠다는 의도를 명시해야 한다.
+
+그때 사용하는 것이 \zsh{nonlocal}이다.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        nonlocal x
+        x = x + 1
+        return x
+
+    return inner
+
+
+f = outer()
+
+print(f())
+print(f())
+print(f())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+11
+12
+13
+\end{dhkzsh}
+
+이제 \zsh{inner}의 \zsh{x}는 외부 함수의 바인딩을 참조한다.
+
+그리고 \zsh{nonlocal x} 선언에 따라 그 바인딩을 재설정할 수 있다.
+
+다만 \zsh{nonlocal}을 통한 상태 변경은 다음 \zsh{A.5}에서 셀 객체와 함께 더 깊이 분석할 것이다.
+
+이번 학습에서는 다음 차이만 확립하면 된다.
+
+가변 객체의 내부 상태를 변경하는 것과 외부 이름의 바인딩을 변경하는 것은 서로 다른 연산이다.
+
+\subsubsection{클로저의 Late Binding}
+
+클로저를 학습할 때 반드시 알아야 하는 대표적인 사례가 있다.
+
+바로 Late Binding이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def make_functions():
+    functions = []
+
+    for i in range(3):
+
+        def func():
+            return i
+
+        functions.append(func)
+
+    return functions
+
+
+f0, f1, f2 = make_functions()
+
+print(f0())
+print(f1())
+print(f2())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+2
+2
+2
+\end{dhkzsh}
+
+처음 보면 다음과 같은 결과를 예상하기 쉽다.
+
+\begin{dhkzsh}
+0
+1
+2
+\end{dhkzsh}
+
+왜냐하면 반복문에서 \zsh{func}가 세 번 생성되기 때문이다.
+
+하지만 실제 결과는 모두 2이다.
+
+왜 이런 결과가 발생할까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 첫 번째 반복
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+i = 0
+\end{dhkcode}
+
+첫 번째 \zsh{func} 함수 객체가 생성된다.
+
+이 함수는 외부 함수의 \zsh{i}를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 두 번째 반복
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+i = 1
+\end{dhkcode}
+
+두 번째 \zsh{func} 함수 객체가 생성된다.
+
+그런데 새로운 \zsh{i} 바인딩 환경이 만들어지는 것이 아니다.
+
+Python의 일반적인 \zsh{for}문은 반복마다 새로운 함수 지역 스코프를 생성하지 않는다.
+
+따라서 같은 \zsh{make_function()} 호출의 \zsh{i} 바인딩이 변경된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 세 번째 반복
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+i = 2
+\end{dhkcode}
+
+세 번째 \zsh{func} 함수 객체가 생성된다.
+
+이 시점에서 \zsh{i}는 2를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+세 함수 객체가 리스트에 저장되어 반환된다.
+
+이후 각 함수를 호출하면 어떻게 될까?
+
+세 함수 모두 동일한 외부 함수 호출의 \zsh{i} 바인딩을 참조한다.
+
+따라서 모두 2를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+셀 동일성 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def make_functions():
+    functions = []
+
+    for i in range(3):
+
+        def func():
+            return i
+
+        functions.append(func)
+
+    return functions
+
+
+f0, f1, f2 = make_functions()
+
+print(
+    f0.__closure__[0]
+    is f1.__closure__[0]
+)
+
+print(
+    f1.__closure__[0]
+    is f2.__closure__[0]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+세 함수 객체는 서로 다른 함수 객체지만 동일한 셀을 참조한다.
+
+구조를 나타내면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: f0
+node n2 (1,2) :: func 객체 1
+node n3 (2,1) :: f1
+node n4 (2,2) :: func 객체 2
+node n5 (3,1) :: f2
+node n6 (3,2) :: func 객체 3
+node n7 (2,3) :: Cell i
+node n8 (2,4) :: int(2)
+
+edge n1 -> n2
+edge n3 -> n4
+edge n5 -> n6
+edge n2 -> n7
+edge n4 -> n7
+edge n6 -> n7
+edge n7 -> n8
+\end{dhkdiagram}
+
+이것이 Late Binding 문제의 핵심이다.
+
+함수가 생성될 때 자유 변수의 값이 복사되는 것이 아니라, 나중에 함수가 실행될 때 해당 바인딩의 현재 객체를 조회하기 때문이다.
+
+\subsubsection{Late Binding을 해결하는 방법}
+
+앞의 문제를 해결하는 대표적인 방법은 두 가지다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+방법 1. 함수 생성기를 사용한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def make_function(value):
+
+    def func():
+        return value
+
+    return func
+
+
+functions = []
+
+for i in range(3):
+    functions.append(make_function(i))
+
+
+for func in functions:
+    print(func())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+0
+1
+2
+\end{dhkzsh}
+
+왜 이번에는 원하는 결과가 나올까?
+
+\zsh{make_function(i)}를 호출할 때마다 별도의 함수 호출 환경이 만들어지기 때문이다.
+
+각 호출에서 매개변수 \zsh{value}는 서로 다른 바인딩 환경을 가진다.
+
+따라서 생성된 \zsh{func} 함수 객체들은 서로 다른 셀을 참조한다.
+
+\begin{dhksmry}
+    func 객체 1 \ra Cell value 1 \ra int(0)
+
+    func 객체 2 \ra Cell value 2 \ra int(1)
+
+    func 객체 3 \ra Cell value 3 \ra int(2)
+\end{dhksmry}
+
+이 방법은 클로저의 원리를 직접 활용하는 방식이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+방법 2. 기본 인수(Default Argument)를 사용한다
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def make_functions():
+    functions = []
+
+    for i in range(3):
+
+        def func(value=i):
+            return value
+
+        functions.append(func)
+
+    return functions
+
+
+f0, f1, f2 = make_functions()
+
+print(f0())
+print(f1())
+print(f2())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+0
+1
+2
+\end{dhkzsh}
+
+이번에는 다음 정의문에 주목해야 한다.
+
+\begin{dhkcode}
+def func(value=i):
+    return value
+\end{dhkcode}
+
+\zsh{A.1}에서 배운 것처럼 기본 인수 표현식은 함수 정의문이 실행될 때 평가된다.
+
+따라서 반복문이 실행되는 각 시점에 \zsh{i}가 참조하는 객체가 기본 인수로 저장된다.
+
+첫 번째 함수 객체의 기본 인수는 0, 두 번째는 1, 세 번째는 2가 되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클로저 방식과 기본 인수 방식의 차이
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def make_functions():
+    functions = []
+
+    for i in range(3):
+
+        def func(value=i):
+            return value
+
+        functions.append(func)
+
+    return functions
+
+
+f0, f1, f2 = make_functions()
+
+print(f0.__defaults__)
+print(f1.__defaults__)
+print(f2.__defaults__)
+
+print(f0.__closure__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(0,)
+(1,)
+(2,)
+None
+\end{dhkzsh}
+
+여기서 중요한 차이가 드러난다.
+
+기본 인수 방식에서는 각 함수 객체의 \zsh{__defaults__}에 해당 객체가 저장된다.
+
+반면 \zsh{func} 본문은 외부 함수의 \zsh{i}를 참조하지 않는다.
+
+따라서 자유 변수가 없고 \zsh{__closure__}도 \zsh{None}이다.
+
+\begin{dhktable}
+|구분|	클로저 방식|	기본 인수 방식|
+|:---|:---|:---|
+|외부 값의 사용|	자유 변수 바인딩을 통해 접근|	기본 인수 객체를 통해 접근|
+|주요 저장 구조|	__closure__|	__defaults__|
+|외부 바인딩의 후속 재바인딩 반영|	가능|	일반적으로 반영되지 않음|
+|함수 정의 시점의 객체 보관|	바인딩 자체에 접근|	기본 인수 객체 참조 저장|
+\end{dhktable}
+
+여기서 기본 인수가 객체를 복사한다는 뜻은 아니다.
+
+기본 인수 역시 객체 참조를 저장한다.
+
+따라서 가변 객체를 기본 인수로 사용하면 그 객체의 상태 변경이 이후 호출에도 영향을 줄 수 있다.
+
+기본 인수의 정의 시점 평가와 클로저의 자유 변수 조회는 서로 다른 메커니즘이라는 사실을 기억해야 한다.
+
+\subsubsection{클로저와 전역 변수 참조의 사이}
+
+이제 클로저와 전역 변수 참조를 비교해 보자.
+
+\begin{dhkcode}
+x = 10
+
+
+def global_func():
+    return x
+
+
+def outer():
+    x = 20
+
+    def closure_func():
+        return x
+
+    return closure_func
+
+
+f = outer()
+
+print(global_func())
+print(f())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+20
+\end{dhkzsh}
+
+이 차이는 \zsh{A.3}의 LEGB와 연결된다.
+
+\zsh{global_func}의 \zsh{x}는 전역 이름이다.
+
+반면 \zsh{closure_func}의 \zsh{x}는 외부 함수의 자유 변수다.
+
+두 함수의 내부 정보를 확인해 보자.
+
+\begin{dhkcode}
+print(global_func.__code__.co_freevars)
+print(global_func.__closure__)
+
+print(f.__code__.co_freevars)
+print(f.__closure__[0].cell_contents)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+()
+None
+('x',)
+20
+\end{dhkzsh}
+
+전역 이름을 참조하는 함수는 그 이름에 대응하는 클로저 셀을 필요로 하지 않는다.
+
+일반적인 Python 함수 객체는 \zsh{__globals__}를 통해 자신의 전역 네임스페이스를 참조할 수 있다.
+
+반면 렉시컬 외부 함수의 바인딩은 클로저 셀을 통해 유지될 수 있다.
+
+따라서 다음 두 구조는 다르다.
+
+\begin{dhkdir}[in=6]
+global_func
+> __globals__
+>> x -> int(10)
+\end{dhkdir}
+
+\begin{dhkdir}[in=6]
+closure_func
+> __closure__
+>> Cell x -> int(20)
+\end{dhkdir}
+
+이 차이를 이해하면 함수 객체의 \zsh{__globals__}와 \zsh{__closure__}가 왜 별도로 존재하는지도 설명할 수 있다.
+
+\subsubsection{클로저 셀의 바인딩이 제거되면}
+
+이번에는 조금 더 깊은 경계 조건을 살펴보자.
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    del x
+
+    return inner
+
+
+f = outer()
+
+print(f.__code__.co_freevars)
+print(f.__closure__)
+\end{dhkcode}
+
+예상 결과는 다음과 같은 형태다.
+
+\begin{dhkzsh}
+('x',)
+(<cell at 0x...: empty>,)
+\end{dhkzsh}
+
+메모리 주소는 실행 환경에 따라 달라진다.
+
+여기서 중요한 것은 셀 객체가 여전히 존재하지만 비어 있다는 사실이다.
+
+왜 이런 상태가 발생할까?
+
+\zsh{inner}는 외부 함수의 \zsh{x}를 참조한다.
+
+따라서 \zsh{x}에 대응하는 셀이 필요하다.
+
+그런데 \zsh{outer()} 내부에서 다음 문장이 실행된다.
+
+\begin{dhkcode}
+del x
+\end{dhkcode}
+
+이 문장은 \zsh{x}의 바인딩을 제거한다.
+
+따라서 셀 객체 자체는 존재하지만 더 이상 참조하는 객체가 없는 상태가 될 수 있다.
+
+이후 다음 호출을 수행하면
+
+\begin{dhkcode}
+f()
+\end{dhkcode}
+
+일반적인 Python에서는 \zsh{NameError}가 발생한다.
+
+왜냐하면 \zsh{inner}가 자유 변수 \zsh{x}의 바인딩을 조회할겨ㅗ 하지만, 해당 셀이 비어 있기 때문이다.
+
+이것은 중요한 사실을 보여준다.
+
+클로저 셀이 존재한다는 사실과 그 셀에 객체가 바인딩되어 있다는 사실은 서로 다르다.
+
+\zsh{A.3}에서 학습한 이름의 분류와 실행 시점의 바인딩 상태 구분이 클로저에도 그대로 적용되는 것이다.
+
+참고로 비어 있는 셀의 \zsh{cell_contents}를 직접 읽으려고 하면 \zsh{ValueError}가 발생할 수 있다.
+
+반면 그 셀을 자유 변수로 사용하는 함수 본문에서 일므을 읽으면 \zsh{NameError}가 발생한다.
+
+같은 바인딩 상태라도 어떤 연산을 수행하는지에 따라 예외가 달라질 수 있다는 점에 주의해야 한다.
+
+\subsubsection{클로저와 객체 상태 - 실전 응용}
+
+이제 클로저가 실제 프로그램에서 어떻게 활용되는지 살펴보자.
+
+다음 예제는 호출 횟수를 기록하는 함수 생성기다.
+
+\begin{dhkcode}
+def make_counter():
+    state = {"count": 0}
+
+    def counter():
+        state["count"] += 1
+        return state["count"]
+
+    return counter
+
+
+counter_a = make_counter()
+counter_b = make_counter()
+
+print(counter_a())
+print(counter_a())
+print(counter_a())
+
+print(counter_b())
+print(counter_b())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1
+2
+3
+1
+2
+\end{dhkzsh}
+
+이 코드를 객체 모델 관점에서 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 첫 번째 make_counter() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+state = {"count": 0}
+\end{dhkcode}
+
+새로운 딕셔너리 객체가 생성된다.
+
+그리고 \zsh{state}가 그 딕셔너리를 참조한다.
+
+\zsh{counter} 함수 객체는 자유 변수 \zsh{state}를 참조한다.
+
+따라서 반환된 함수 객체는 해당 바인딩에 접근할 수 있는 클로저를 가진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. counter_a() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+state["count"] += 1
+\end{dhkcode}
+
+이 연산은 \zsh{state}라는 이름을 새로운 딕셔너리 객체에 재바인딩하는 것이 아니다.
+
+먼저 \zsh{state}가 참조하는 딕셔너리 객체를 조회하고, \zsh{"count"} 키에 대응하는 값을 갱신한다.
+
+따라서 같은 딕셔너리 객체의 상태가 변경된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 두 번째 make_counter() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+counter_b = make_counter()
+\end{dhkcode}
+
+이번에는 새로운 딕셔너리 객체가 생성된다.
+
+그리고 별도의 클로저 셀을 참조하는 새로운 \zsh{counter} 함수 객체가 생성된다.
+
+따라서 \zsh{counter_a}와 \zsh{counter_b}는 독립적인 상태를 유지할 수 있다.
+
+구조를 나타내면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: counter_a
+node n2 (1,2) :: counter 함수 객체 1
+node n3 (3,2) :: Cell 1
+node n4 (5,2) :: {"count": 3}
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+\end{dhkdiagram}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: counter_b
+node n2 (1,2) :: counter 함수 객체 2
+node n3 (3,2) :: Cell 2
+node n4 (5,2) :: {"count": 2}
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+\end{dhkdiagram}
+
+여기서 \zsh{state["count"] += 1}은 딕셔너리 내부 상태를 변경하는 연산이므로 \zsh{nonlocal state}가 필요하지 않다.
+
+반면 다음처럼 \zsh{state}라는 이름 자체를 재바인딩하려 한다면 이야기가 달라진다.
+
+\begin{dhkcode}
+state = {"count": 10}
+\end{dhkcode}
+
+이 경우에는 외부 함수의 \zsh{state}를 재바인딩하려는 의도를 \zsh{nonlocal}로 명시해야 한다.
+
+이 차이는 다음 \zsh{A.5}에서 더 깊이 다룰 것이다.
+
+\subsubsection{클래스 인스턴스와 클로저의 상태 관리 비교}
+
+지금까지 학습한 클래스 객체 모델과 클로저를 연결해 보자.
+
+앞의 카운터는 클래스로도 구현할 수 있다.
+
+\begin{dhkcode}
+class Counter:
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self):
+        self.count += 1
+        return self.count
+
+
+counter = Counter()
+
+print(counter())
+print(counter())
+print(counter())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1
+2
+3
+\end{dhkzsh}
+
+이 코드와 앞의 클로저 구현은 외부에서 호출 가능한 객체를 토앻 상태를 유지한다는 공통점이 있다.
+
+하지만 내부 구조는 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클로저 방식
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def make_counter():
+    state = {"count": 0}
+
+    def counter():
+        state["count"] += 1
+        return state["count"]
+
+    return counter
+\end{dhkcode}
+
+상태는 외부 함수의 바인딩을 통해 접근한다.
+
+\begin{dhksmry}[centered]
+함수 객체
+\da
+클로저 셀
+\da
+딕셔너리 객체
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 방식
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Counter:
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self):
+        self.count += 1
+        return self.count
+\end{dhkcode}
+
+상태는 인스턴스의 속성으로 관리된다.
+
+\begin{dhksmry}[centered]
+Counter 인스턴스
+\da
+인스턴스 속성 count
+\da
+정수 객체
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|구분|	클로저|	클래스 인스턴스|
+|:---|:---|:---|
+|호출 대상|	함수 객체|	__call__을 구현한 인스턴스|
+|상태 접근|	자유 변수와 클로저 셀|	인스턴스 속성|
+|상태 저장 구조|	셀과 참조 객체|	인스턴스 네임스페이스 등|
+|상태 변경|	객체 변경 또는 nonlocal 재바인딩|	속성 대입 및 객체 변경|
+|상태 확인|	__closure__ 등|	__dict__, 속성 접근 등|
+|주요 활용|	함수 생성기, 데코레이터, 간단한 상태 유지|	복잡한 상태·행동의 캡슐화|
+\end{dhktable}
+
+dㅕ기서 어느 방식이 무조건 우수하다고 할 수는 없다.
+
+상태가 단순하고 함수 자체를 반환하는 구조가 자연스럽다면 클로저가 유용할 수 있다.
+
+반면 상태가 많고 여러 메서드가 필요하거나 명시적인 객체 인터페이스가 중요하다면 클래스가 더 적합할 수 있다.
+
+이 차이는 데코레이터를 함수 기반으로 궇녀할지 클래스 기반으로 궇녀할지 판단할 때도 연결된다.
+
+\subsubsection{클로저와 데코레이터의 연결}
+
+이제 이번 학습 주제의 최종 목표인 데코레이터와 연결해 보자.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def make_wrapper(func):
+
+    def wrapper():
+        print("호출 전")
+
+        result = func()
+
+        print("호출 후")
+
+        return result
+
+    return wrapper
+
+
+def greet():
+    print("Hello")
+    return 10
+
+
+wrapped = make_wrapper(greet)
+
+print(wrapped())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+호출 전
+Hello
+호출 후
+10
+\end{dhkzsh}
+
+여기서 \zsh{make_wrapper}는 함수 객체를 인수로 전달받아 새로운 함수 객체를 반환한다.
+
+이 구조를 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. greet 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def greet():
+    print("Hello")
+    return 10
+\end{dhkcode}
+
+\zsh{greet} ㅎ마수 객체가 생성되고 모듈 이름 \zsh{greet}에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. make_wrapper(greet) 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+wrapped = make_wrapper(greet)
+\end{dhkcode}
+
+\zsh{greet}가 참조하는 함수 객체가 \zsh{make_wrapper}의 매개변수 \zsh{func}에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. wrapper 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def wrapper():
+    print("호출 전")
+
+    result = func()
+
+    print("호출 후")
+
+    return result
+\end{dhkcode}
+
+\zsh{wrapper} 함수 객체가 생성된다.
+
+이 함수는 외부 함수의 매개변수 \zsh{func}를 참조한다.
+
+따라서 \zsh{func}는 \zsh{wrapper}의 자유 변수다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. wrapper 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+return wrapper
+\end{dhkcode}
+
+\zsh{wrapper} 함수 객체가 반환되고 \zsh{wrapped}에 바인딩된다.
+
+이후 \zsh{make_wrapper()} 호출은 종료된다.
+
+하지만 반환된 \zsh{wrapper} 함수 객체는 \zsh{func}에 대응하는 클로저 셀을 참조하고 있다.
+
+그 셀은 원본 \zsh{greet} 함수 객체를 참조한다.
+
+구조를 나타내면 다음과 같다.
+
+\begin{dhksmry}[centered]
+wrapped
+\da
+wrapper 함수 객체
+\da
+__closure__
+\da
+Cell func
+\da
+greet 함수 객체
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. wrapped() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{wrapper} 함수 본문이 실행된다.
+
+먼저 \zsh{"호출 전"}이 출력된다.
+
+이후 다음 문장이 실행된다.
+
+\begin{dhkcode}
+result = func()
+\end{dhkcode}
+
+자유 변수 \zsh{func}를 통해 원본 \zsh{greet} 함수 객체를 조회하고 호출한다.
+
+그 결과 10이 반환된다.
+
+이후 \zsh{"호출 후"}가 출력되고 \zsh{wrapper}는 10을 반환한다.
+
+이것이 함수 기반 데코레이터의 핵심 구조다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+내부 구조 확인
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(wrapped.__code__.co_freevars)
+
+print(
+    wrapped.__closure__[0].cell_contents
+    is greet
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('func',)
+True
+\end{dhkzsh}
+
+이 결과는 매우 중요하다.
+
+데코레이터가 원본 함수 객체를 감싸는 구조는 클로저를 통해 구현할 수 있다.
+
+\zsh{wrapper}가 원본 함수의 이름을 기억하는 것이 아니라, 외부 매개변수 \zsh{func}의 바인딩에 접근할 수 있는 클로저를 유지하는 것이다.
+
+이 원리를 이해하면 다음과 같은 데코레이터 변환식도 자연스럽게 설명할 수 있다.
+
+\begin{dhkcode}
+@make_wrapper
+def greet():
+    print("Hello")
+    return 10
+\end{dhkcode}
+
+이는 개념적으로 다음 변환과 대응한다.
+
+\begin{dhkcode}
+def greet():
+    print("Hello")
+    return 10
+
+
+greet = make_wrapper(greet)
+\end{dhkcode}
+
+여기서 오른쪽의 \zsh{greet}은 원본 함수 객체를 참조한다.
+
+\zsh{make_wrapper(greet)}은 원본 함수를 인수로 전달받아 \zsh{wrapper} 함수 객체를 반환한다.
+
+그리고 왼쪽의 \zsh{greet}은 반환된 \zsh{wrapper} 함수 객체에 재바인딩된다.
+
+이때 원본 함수 객체는 사라지는 것이 아니라 \zsh{wrapper}의 클로저를 토앻 계속 참조될 수 있다.
+
+이 구조를 \zsh{A.6}에서 정식으로 분석할 것이다.
+
+\subsubsection{자주 발생하는 오해와 경계 조건}
+
+이번 학습에서 특히 주의해야 할 개념을 정리해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오해 1. 중첩 함수는 모두 클로저 셀을 가진다
+\end{dhksmry}
+\end{dhknote}
+
+그렇지 않다.
+
+\begin{dhkcode}
+def outer():
+
+    def inner():
+        return 10
+
+    return inner
+
+
+f = outer()
+
+print(f.__closure__)
+\end{dhkcode}
+
+출력:
+
+\begin{dhkzsh}
+None
+\end{dhkzsh}
+
+\zsh{inner}는 중첩 함수이지만 외부 함수의 바인딩을 참조하지 않는다.
+
+따라서 클로저 셀이 필요하지 않다.
+
+중첩 함수라는 사실과 실제로 클로저 환경을 가진다는 사실은 구별해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오해 2. 클로저는 외부 변수의 값을 복사한다
+\end{dhksmry}
+\end{dhknote}
+
+그렇지 않다.
+
+클로저는 외부 바인딩에 접근하는 구조를 유지한다.
+
+따라서 외부 바인딩이 변경되면 이후 호출에서 변경된 객체를 조회할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오해 3. 외부 함수가 종료되면 지역 변수에 접근할 수 없다
+\end{dhksmry}
+\end{dhknote}
+
+일반적인 지역 변수는 호출 종료 후 직접 접근할 수 없지만, 중첩 함수가 필요한 바인딩을 클로저로 유지할 수 있다.
+
+따라서 함수 호출 종료와 바인딩의 수명을 동일시하면 안 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오해 4. 클로저는 외부 함수의 모든 지역 변수를 저장한다
+\end{dhksmry}
+\end{dhknote}
+
+그렇지 않다.
+
+중첩 함수가 사용하는 자유 변수에 대응하는 바인딩이 클로저 환경에 포함된다.
+
+외부 함수의 모든 지역 변수가 자동으로 저장되는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오해 5. 서로 다른 함수 객체는 반드시
+서로 다른 클로저 상태를 가진다
+\end{dhksmry}
+\end{dhknote}
+
+그렇지 않다.
+
+같은 외부 함수 호출에서 생성된 여러 내부 함수는 동일한 셀을 공유할 수 있다.
+
+따라서 함수 객체의 동일성과 클로저 셀의 동일성은 별도로 판단해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+오해 6. 클로저를 사용하면 항상 nonlocal이 필요하다
+\end{dhksmry}
+\end{dhknote}
+
+그렇지 않다.
+
+자유 변수로 참조하는 가변 객체의 내부 상태를 변경하는 경우에는 \zsh{nonlocal}이 필요하지 않을 수 있다.
+
+반면 외부 함수의 이름 자체를 재바인딩하려면 \zsh{nonlocal}이 필요하다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습의 내용을 하나의 실행 흐름으로 정리해 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        return x
+
+    return inner
+
+
+f = outer()
+
+print(f())
+\end{dhkcode}
+
+이 코드가 실행되는 과정을 정확하게 설명하면 다음과 같다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 컴파일 단계
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{inner}에서 사용한 \zsh{x}는 외부 함수의 바인딩을 참조한느 자유 변수로 분류된다.
+
+\zsh{outer}의 \zsh{x}는 중첩 함수에서 접근해야 하는 셀 변수로 분류된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. outer() 호출
+\end{dhksmry}
+\end{dhknote}
+
+현재 호출을 위한 실행 환경이 마련된다.
+
+\zsh{x}에 정수 객체 10이 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. inner 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{def inner}가 실행되면서 새로운 함수 객체가 생성된다.
+
+이 함수 객체는 \zsh{x}에 대응하는 클로저 셀을 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. inner 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{return inner}가 실행되면서 함수 객체가 반환된다.
+
+모듈 이름 \zsh{f}가 반환된 함수 객체를 참조하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. outer() 실행 종료
+\end{dhksmry}
+\end{dhknote}
+
+외부 함수의 실행은 종료된다.
+
+그러나 \zsh{f}가 참조하는 함수 객체는 계속 존재하며, 그 함수 객체를 통해 클로저 셀에 접근할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+6. f() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{inner} 함수 본문이 실행된다.
+
+자유 변수 \zsh{x}에 대응하는 셀을 통해 정수 객체 10을 조회한다.
+
+그 객체를 반환한다.
+
+이 흐름을 이해했다면 클로저의 핵심 원리르 설명할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+최종 판단 기준
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|질문|	판단 기준|
+|:---|:---|
+|어떤 이름이 자유 변수인가?|	현재 함수에서 지역 바인딩되지 않고 렉시컬 외부 함수의 바인딩을 사용하는가?|
+|어떤 이름이 셀 변수인가?|	현재 함수의 지역 바인딩을 중첩 함수에서 접근해야 하는가?|
+|클로저 셀이 존재하는가?|	함수 객체의 __closure__를 확인한다.|
+|셀에 어떤 객체가 바인딩되어 있는가?|	셀의 cell_contents를 확인한다.|
+|서로 다른 함수가 상태를 공유하는가?|	대응하는 셀 객체 또는 셀이 참조하는 객체의 동일성을 확인한다.|
+|함수 정의 시점의 값이 고정되는가?|	자유 변수 바인딩을 사용하는지, 기본 인수 객체를 저장하는지 구별한다.|
+|외부 함수 종료 후에도 접근 가능한가?|	반환된 함수 객체와 클로저 셀의 참조 관계를 확인한다.|
+|외부 객체의 상태 변경인가, 이름 재바인딩인가?|	메서드 호출·항목 변경과 이름 대입을 구별한다.|
+\end{dhktable}
