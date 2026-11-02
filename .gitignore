@@ -5,10 +5,11 @@
 !/.gitignore
 !/.vscode/
 !/chapters/
+!/latex-config/
+!/unprocessed/
 
 # 하위 폴더에서도 불필요한 파일 제외
 .DS_Store
 __pycache__/
 *.pyc
 
-!/latex-config/
