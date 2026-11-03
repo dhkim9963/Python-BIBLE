@@ -113,7 +113,7 @@ LEGB는 Python에서 일반적인 이름 탐색을 설명하는 모델이다.
 |:---|:---|:---|
 |L|Local|현재 함수 호출의 지역 스코프|
 |E|Enclosing|렉시컬 구조상 현재 함수를 감싸는 외부 함수 스코프|
-|G|Global|해당 함수가 속산 모듈의 전역 스코프|
+|G|Global|해당 함수가 속한 모듈의 전역 스코프|
 |B|Builtins|Python의 내장 이름 스코프|
 \end{dhktable}
 
@@ -276,9 +276,11 @@ Python은 함수 본문을 실행하기 전에 해당 함수 블록의 이름 �
 
 따라서 다음 두 문장은 서로 다른 의미를 가진다.
 
+\begin{dhksmry}[centered]
 이름의 스코프가 결정되었다.
 
 그 이름에 객체가 바인딩되었다.
+\end{dhksmry}
 
 이름이 지역 변수로 분류되었다고 해서 그 지역 변수에 반드시 객체가 바인딩되어 있는 것은 아니다.
 
@@ -305,7 +307,7 @@ UnboundLocalError: cannot access local variable 'x'
 where it is not associated with a value
 \end{dhkzsh}
 
-dㅖ외 메시지의 구체적인 표현은 Python의 버전에 따라 달라질 수 있다.
+예외 메시지의 구체적인 표현은 Python의 버전에 따라 달라질 수 있다.
 
 \begin{dhknote}
 \begin{dhksmry}[centered]
@@ -570,7 +572,7 @@ print(x)
 20
 \end{dhkzsh}
 
-dㅕ기서 \zsh{global x}는 무엇을 하는 걸까?
+여기서 \zsh{global x}는 무엇을 하는 걸까?
 
 많이 하는 오해는 다음과 같다.
 
@@ -1242,7 +1244,7 @@ return self.x
 
 이 구분은 PyTorch의 \zsh{nn.Module}을 이해할 때도 중요하다.
 
-\subsubsection{실전 응용 - PyTorch에서의 이름 탐새고가 속성 탐색}
+\subsubsection{실전 응용 - PyTorch에서의 이름 탐색과 속성 탐색}
 
 다음 예제를 살펴보자.
 
@@ -1391,7 +1393,7 @@ def func():
 
 \zsh{exec()}이 문자열을 실행한다고 해서 컴파일된 \zsh{func}의 지역 이름 분류가 그 문자열에 맞춰 다시 결정되는 것은 아니다.
 
-특히 최적화된 ㅎ마수 지역 스코프에서 \zsh{exec()}로 생성한 이름을 일반적인 지역 변수처럼 접근할 수 있다고 가정하면 안 된다.
+특히 최적화된 함수 지역 스코프에서 \zsh{exec()}로 생성한 이름을 일반적인 지역 변수처럼 접근할 수 있다고 가정하면 안 된다.
 
 \begin{dhknote}
 \begin{dhksmry}[centered]

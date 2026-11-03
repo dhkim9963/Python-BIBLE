@@ -1,0 +1,2376 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.5. nonlocal과 클로저의 상태 변경
+% ==================================================
+
+\subsection{\zsh{nonlocal}과 클로저의 상태 변경}
+
+Nonlocal Binding · Shared Closure Cells · Rebinding · Mutation · State Management
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{A.4}에서는 클로저(Closure)가 단순히 외부 변수의 값을 복사하는 구조가 아니라, 
+
+렉시컬 외부 함수의 바인딩에 접근할 수 있는 환경을 유지하는 구조라는 사실을 학습했다.
+
+특히 다음 객체 관계를 확인했다.
+
+\begin{dhkbranch}[in=8]
+node main :: 함수 객체
+branchline main -> c :: __code__
+handoff c -> c1 :: co_freevars
+stop c1
+handoff main -> d :: __closure__
+arrow d
+node d :: Cell 객체
+arrow d
+node d :: 참조하는 객체
+\end{dhkbranch}
+
+그리고 하나의 외부 함수 호출에서 생성된 여러 내부 함수가 동일한 자유 변수를 참조한다면, 같은 셀 객체를 공유할 수 있다는 사실도 확인했다.
+
+그런데 아직 중요한 문제가 남아 있다.
+
+외부 함수의 바인딩을 읽는 것과 그 바인딩을 변경하는 것은 어떻게 다를까?
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def get():
+        return x
+
+    def set_value(value):
+        nonlocal x
+        x = value
+
+    return get, set_value
+
+
+get, set_value = outer()
+
+print(get())
+
+set_value(100)
+
+print(get())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+100
+\end{dhkzsh}
+
+여기서 \zsh{get}과 \zsh{set_value}는 서로 다른 함수 객체다.
+
+그런데 \zsh{set_value()}를 호출하면 \zsh{get()}의 반환값까지 변경된다.
+
+왜 이런 결과가 발생할까?
+
+두 함수가 같은 셀 객체를 공유하고, \zsh{set_value()}의 \zsh{nonlocal x} 선언이 그 셀에 연결된 바인딩을 변경하기 때문이다.
+
+이번 학습에서는 이 과정을 Python의 객체 모델에 따라 분석할 것이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서 해결할 질문은 다음과 같다.
+
+\begin{dhksmry}
+1. nonlocal은 정확히 어떤 이름을 대상으로 하는가?
+
+2. nonlocal 선언은 셀 객체를 생성하거나 값을 변경하는가?
+
+3. 여러 클로저가 동일한 셀을 공유하면 어떤 일이 발생하는가?
+
+4. 셀 객체의 동일성과 셀이 참조하는 객체의 동일성은 어떻게 다른가?
+
+5. 이름 재바인딩과 가변 객체의 상태 변경은 어떻게 구별하는가?
+
+6. nonlocal 없이도 클로저의 상태를 변경할 수 있는가?
+
+7. nonlocal은 왜 특정 상황에서 SyntaxError 또는
+   UnboundLocalError와 연결되는가?
+
+8. 클로저를 이용한 상태 관리는 클래스 인스턴스의 상태 관리와 어떻게 다른가?
+\end{dhksmry}
+
+이번 학습 전체를 관통하는 핵심 원리는 다음과 같다.
+
+\begin{dhksmry}[centered]
+nonlocal은 외부 객체를 변경하는 명령이 아니라, 현재 함수 블록의 
+
+이름 바인딩 대상을 렉시컬 외부 함수 스코프로 지정하는 선언이다.
+\end{dhksmry}
+
+이 차이를 정확하게 이해해야 한다.
+
+\subsubsection{\zsh{nonlocal}의 정확한 정의}
+
+\zsh{nonlocal}은 현재 함수 블록에서 사용하는 이름이 현재 함수의 지역 이름이 아니라, 렉시컬 구조상 바깥에 있는 함수 스코프의 기존 바인딩을 사용하도록 지정하는 선언문이다.
+
+가장 기본적인 형태는 다음과 같다.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        nonlocal x
+        x = 20
+
+    inner()
+
+    return x
+
+
+print(outer())
+\end{dhkcode}
+
+예상 출력 결과:
+
+\begin{dhkzsh}
+20
+\end{dhkzsh}
+
+여기서 \zsh{nonlocal x}가 수행하는 역할을 정확하게 구분해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+nonlocal x 자체가 수행하지 않는 일
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{nonlocal x}는 다음 작업을 직접 수행하지 않는다.
+
+\begin{dhksmry}
+    - 새로운 정수 객체를 생성하지 않는다.
+
+    - 새로운 셀 객체를 매번 생성하지 않는다.
+
+    - 외부 함수의 x를 즉시 변경하지 않는다.
+
+    - 외부 함수의 지역 변수를 현재 함수로 복사하지 않는다.
+\end{dhksmry}
+
+대신 현재 함수에서 \zsh{x}라는 이름을 어떻게 해석하고 바인딩할지 지정한다.
+
+실제 바인딩 변경은 다음 문장이 실행될 때 발생한다.
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+이때 \zsh{x}가 현재 함수의 지역 이름이 아니라 외부 함수의 바인딩을 대상으로 한다는 점이 중요하다.
+
+\subsubsection{\zsh{nonlocal}이 없는 경우와 있는 경우}
+
+먼저 두 코드를 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+사례 1. nonlocal이 없는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        x = 20
+        return x
+
+    result = inner()
+
+    print("inner:", result)
+    print("outer:", x)
+
+
+outer()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+inner: 20
+outer: 10
+\end{dhkzsh}
+
+왜 외부 함수의 \zsh{x}는 변경되지 않았을까?
+
+\zsh{A.3}에서 학습한 이름의 정적 판정 규칙 때문이다.
+
+\zsh{inner} 내부에는 다음 대입문이 있다.
+
+\begin{dhkcode}
+x = 20
+\end{dhkcode}
+
+별도의 \zsh{global} 또는 \zsh{nonlocal} 선언이 없으므로 \zsh{x}는 \zsh{inner}의 지역 이름으로 판정된다.
+
+따라서 두 함수에는 서로 다른 바인딩이 존재한다.
+
+\begin{dhkdir}[in=6]
+outer() 실행 환경
+> x -> int(10)
+\end{dhkdir}
+
+\begin{dhkdir}[in=6]
+inner() 실행 환경
+> x -> int(20)
+\end{dhkdir}
+
+두 이름의 철자가 같더라도 동일한 바인딩을 의미하지 않는다.
+
+따라서 \zsh{inner()}가 종료된 뒤에도 \zsh{outer}의 \zsh{x}는 10을 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+사례 2. nonlocal이 있는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        nonlocal x
+        x = 20
+        return x
+
+    result = inner()
+
+    print("inner:", result)
+    print("outer:", x)
+
+
+outer()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+inner: 20
+outer: 20
+\end{dhkzsh}
+
+이번에는 \zsh{inner}의 \zsh{x}가 외부 함수의 바인딩을 대상으로 한다.
+
+따라서 \zsh{x = 20}은 \zsh{inner}에 새로운 지역 바인딩을 만드는 것이 아니라 \zsh{outer}의 \zsh{x} 바인딩을 변경한다.
+
+개념적으로 다음과 같은 구조다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: outer() 실행 환경
+node n2 (2,2) :: Cell x
+node n3 (2,3) :: int(10)
+node n4 (3,3) :: inner의 nonlocal x
+
+edge n1 -- n2 :: VH
+edge n2 -> n3
+edge n4 -> n2 :: HV
+\end{dhkdiagram}
+
+\zsh{inner()}에서 대입이 실행되면 다음과 같이 바뀐다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: outer() 실행 환경
+node n2 (2,2) :: Cell x
+node n3 (2,3) :: int(20)
+node n4 (3,3) :: inner의 nonlocal x
+
+edge n1 -- n2 :: VH
+edge n2 -> n3
+edge n4 -> n2 :: HV
+\end{dhkdiagram}
+
+여기서 셀 객체 자체가 교체되는 것은 아니다.
+
+기존 셀이 참조하는 객체가 변경되는 것이다.
+
+이 차이를 다음 절에서 직접 확인해 보자.
+
+\subsubsection{셀 객체의 동일성과 바인딩 변경}
+
+이번 학습에서 가장 중요한 실험이다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def get():
+        return x
+
+    def set_value(value):
+        nonlocal x
+        x = value
+
+    return get, set_value
+
+
+get, set_value = outer()
+
+get_cell = get.__closure__[0]
+set_cell = set_value.__closure__[0]
+
+print(get_cell is set_cell)
+
+print(get_cell.cell_contents)
+
+set_value(100)
+
+print(get_cell.cell_contents)
+
+print(get_cell is set_cell)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+10
+100
+True
+\end{dhkzsh}
+
+이 결과에는 서로 다른 두 종류의 동일성 관계가 포함되어 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 동일성 - 셀 객체의 동일성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+get_cell is set_cell
+\end{dhkcode}
+
+결과는 \zsh{True}다.
+
+\zsh{get}과 \zsh{set_value}는 같은 \zsh{outer()} 호출에서 생성되었고, 동일한 외부 변수 \zsh{x}를 참조하기 때문이다.
+
+두 함수는 하나의 셀 객체를 공유한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 관계 - 셀이 참조하는 객체
+\end{dhksmry}
+\end{dhknote}
+
+처음에는 다음과 같다.
+
+\begin{dhkcode}
+get_cell.cell_contents
+\end{dhkcode}
+
+결과:
+
+\begin{dhkzsh}
+10
+\end{dhkzsh}
+
+그런데 다음 호출을 실행하면
+
+\begin{dhkcode}
+set_value(100)
+\end{dhkcode}
+
+\zsh{set_value} 내부에서 다음 문장이 실행된다.
+
+\begin{dhkcode}
+x = value
+\end{dhkcode}
+
+\zsh{nonlocal x}가 선언되어 있으므로 외부 함수의 \zsh{x} 바인딩이 변경된다.
+
+따라서 셀이 참조하는 객체가 정수 객체 10에서 정수 객체 100으로 바뀐다.
+
+하지만 셀 객체는 그대로다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 전
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: get
+node n2 (1,2) :: 함수 객체 1
+node n3 (3,2) :: Cell x
+node n4 (5,1) :: set_value
+node n5 (5,2) :: 함수 객체 2
+node n6 (3,3) :: int(10)
+
+edge n1 -> n2
+edge n2 -> n3
+edge n4 -> n5
+edge n5 -> n3
+edge n3 -> n6
+\end{dhkdiagram}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 후
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: get
+node n2 (1,2) :: 함수 객체 1
+node n3 (3,2) :: Cell x
+node n4 (5,1) :: set_value
+node n5 (5,2) :: 함수 객체 2
+node n6 (3,3) :: int(100)
+
+edge n1 -> n2
+edge n2 -> n3
+edge n4 -> n5
+edge n5 -> n3
+edge n3 -> n6
+\end{dhkdiagram}
+
+두 그림에서 바뀐 것은 \zsh{Cell x}가 참조하는 객체다.
+
+\zsh{get} 함수 객체도 그대로이고, \zsh{set_value} 함수 객체도 그대로이며, 셀 객체 역시 동일하다.
+
+이를 다음처럼 정리할 수 있다.
+
+\begin{dhktable}
+|비교 대상|	set_value(100) 실행 전후|
+|:---|:---|
+|get 함수 객체|	동일|
+|set_value 함수 객체|	동일|
+|공유하는 셀 객체|	동일|
+|셀이 참조하는 정수 객체|	변경|
+|get() 반환값|	10 → 100|
+\end{dhktable}
+
+\zsh{nonlocal}에 의한 재바인딩은 셀 객체를 교체하는 것이 아니라, 기존 셀의 바인딩 대상을 변경하는 연산이다.
+
+\subsubsection{\zsh{co_freevars}, \zsh{co_cellvars}, \zsh{__closure__}로 검증하기}
+
+앞의 예제를 조금 확장해 보자.
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def get():
+        return x
+
+    def set_value(value):
+        nonlocal x
+        x = value
+
+    return get, set_value
+
+
+get, set_value = outer()
+
+print("outer cellvars:", outer.__code__.co_cellvars)
+
+print("get freevars:", get.__code__.co_freevars)
+
+print("set freevars:", set_value.__code__.co_freevars)
+
+print(
+    "same cell:",
+    get.__closure__[0] is set_value.__closure__[0]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+outer cellvars: ('x',)
+get freevars: ('x',)
+set freevars: ('x',)
+same cell: True
+\end{dhkzsh}
+
+이 결과를 순서대로 해석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. outer.__code__.co_cellvars
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkzsh}
+('x',)
+\end{dhkzsh}
+
+\zsh{outer}의 지역 변수 \zsh{x}는 중첩 함수에서 접근해야 하는 바인딩이다.
+
+따라서 셀 변수로 분류된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. get.__code__.co_freevars
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkzsh}
+('x',)
+\end{dhkzsh}
+
+\zsh{get}은 외부 함수의 \zsh{x}를 읽어야 한다.
+
+따라서 \zsh{x}는 \zsh{get}의 자유 변수다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. __closure__ 비교
+\end{dhksmry}
+\end{dhknote}
+
+두 함수의 \zsh{__closure__}에 포함된 셀 객체를 비교하면 동일한 객체라는 사실을 확인할 수 있다.
+
+여기서 중요한 결론은 다음과 같다.
+
+\zsh{nonlocal}이 선언되었다고 해서 해당 이름이 현재 함수의 지역 변수가 되는 것이 아니다.
+
+오히려 \zsh{nonlocal}은 그 이름을 현재 함수의 지역 바인딩 대상으로 취급하지 않도록 지정한다.
+
+따라서 \zsh{set_value}의 \zsh{x}는 외부 함수의 바인딩을 사용하는 자유 변수로 분류된다.
+
+\subsubsection{객체 변경(Mutation)과 이름 재바인딩(Rebinding)}
+
+이제 \zsh{nonlocal}을 사용할 때 가장 자주 혼동하는 문제를 살펴보자.
+
+다음 두 표현식은 서로 다른 연산이다.
+
+\begin{dhkcode}
+values.append(10)
+
+values = [10]
+\end{dhkcode}
+
+첫 번째는 \zsh{values}가 참조하는 리스트 객체의 내부 상태를 변경한다.
+
+두 번째는 \zsh{values}라는 이름을 새로운 리스트 객체에 바인딩한다.
+
+이 차이를 클로저에 적용해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+사례 1. 리스트 객체의 상태 변경
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def add(value):
+        values.append(value)
+        return values
+
+    return add
+
+
+add = outer()
+
+print(add(10))
+print(add(20))
+print(add(30))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[10]
+[10, 20]
+[10, 20, 30]
+\end{dhkzsh}
+
+여기에는 \zsh{nonlocal} 선언이 없다.
+
+그런데도 외부 함수에서 생성한 리스트의 상태가 변경되고 있다.
+
+왜 가능할까?
+
+\zsh{add()} 내부에서는 \zsh{values}라는 이름에 새로운 객체를 대입하지 않기 때문이다.
+
+다음 표현식을 분석해 보자.
+
+\begin{dhkcode}
+values.append(value)
+\end{dhkcode}
+
+실행 과정은 다음과 같다.
+
+\begin{dhksmry}
+1. 자유 변수 values를 통해 리스트 객체를 조회한다.
+
+2. 그 리스트 객체에서 append 메서드를 조회한다.
+
+3. 현재 호출의 매개변수 value가 참조하는 객체를 인수로 전달한다.
+
+4. append 메서드가 기존 리스트 객체를 변경한다.
+\end{dhksmry}
+
+이 과정에서 외부 이름 \zsh{values}의 바인딩 자체는 변경되지 않는다.
+
+따라서 \zsh{nonlocal values}가 필요하지 않은 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 구조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: add 함수 객체
+node n2 (3,1) :: Cell values
+node n3 (5,1) :: List 객체
+node n4 (5,2) :: [10, 20, 30]
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+\end{dhkdiagram}
+
+리스트 객체는 계속 동일하다.
+
+그 내부 원소 구성이 변경되는 것이다.
+
+\subsubsection{리스트를 재바인딩하려면?}
+
+이번에는 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def reset():
+        values = []
+        return values
+
+    def get():
+        return values
+
+    return reset, get
+
+
+reset, get = outer()
+
+print(get())
+print(reset())
+print(get())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[]
+[]
+[]
+\end{dhkzsh}
+
+세 출력이 모두 빈 리스트이므로 얼핏 보면 \zsh{reset()}이 외부 리스트를 초기화한 것처럼 보일 수 있다.
+
+하지만 실제로는 그렇지 않다.
+
+\zsh{reset()} 내부의 다음 문장에 주목해 보자.
+
+\begin{dhkcode}
+values = []
+\end{dhkcode}
+
+\zsh{nonlocal} 선언이 없으므로 \zsh{values}는 \zsh{reset}의 지역 이름이다.
+
+따라서 \zsh{reset()}은 새로운 리스트 객체를 생성하고 자신의 지역 이름에 바인딩할 뿐이다.
+
+외부 함수의 \zsh{values}에는 영향을 주지 않는다.
+
+이를 명확하게 확인해 보자.
+
+\begin{dhkcode}
+def outer():
+    values = [10, 20]
+
+    def reset():
+        values = []
+        return values
+
+    def get():
+        return values
+
+    return reset, get
+
+
+reset, get = outer()
+
+print("before:", get())
+print("reset result:", reset())
+print("after:", get())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+before: [10, 20]
+reset result: []
+after: [10, 20]
+\end{dhkzsh}
+
+이제 차이가 분명해졌다.
+
+\zsh{reset()}에서 새로운 리스트 객체를 생성했지만, 외부 함수의 \zsh{values}는 변경되지 않았다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+nonlocal을 사용한 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    values = [10, 20]
+
+    def reset():
+        nonlocal values
+        values = []
+        return values
+
+    def get():
+        return values
+
+    return reset, get
+
+
+reset, get = outer()
+
+print("before:", get())
+print("reset result:", reset())
+print("after:", get())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+before: [10, 20]
+reset result: []
+after: []
+\end{dhkzsh}
+
+이번에는 \zsh{reset()}이 외부 함수의 \zsh{values} 바인딩을 새로운 리스트 객체로 변경한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 전
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}[centered]
+공유 Cell values
+\da
+List 객체 A
+[10, 20]
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 후
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}[centered]
+공유 Cell values
+\da
+List 객체 B
+[]
+\end{dhksmry}
+
+여기서 기존 리스트 객체 A가 반드시 즉시 소멸한다는 뜻은 아니다.
+
+다른 이름이나 객체가 리스트 A를 참조하고 있다면 계속 존재할 수 있다.
+
+핵심은 셀의 참조 대상이 리스트 A에서 리스트 B로 변경되었다는 사실이다.
+
+\subsubsection{같은 결과처럼 보여도 객체 관계는 다를 수 있다}
+
+이번에는 \zsh{clear()}와 재바인딩을 비교해 보자.
+
+\begin{dhkcode}
+def make_state():
+    values = [10, 20]
+
+    def get():
+        return values
+
+    def clear_in_place():
+        values.clear()
+
+    def replace():
+        nonlocal values
+        values = []
+
+    return get, clear_in_place, replace
+
+
+get, clear_in_place, replace = make_state()
+
+original = get()
+
+print("initial:", original)
+
+clear_in_place()
+
+print("after clear:", original)
+
+replace()
+
+print("after replace:", original)
+print("current:", get())
+
+print(original is get())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+initial: [10, 20]
+after clear: []
+after replace: []
+current: []
+False
+\end{dhkzsh}
+
+이 결과는 특히 중요하다.
+
+\zsh{clear_in_place()}와 \zsh{replace()}를 실행한 뒤 모두 빈 리스트가 나타나지만, 두 함수가 수행한 연산은 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+clear_in_place()
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+values.clear()
+\end{dhkcode}
+
+기존 리스트 객체의 내부 상태를 변경한다.
+
+따라서 \zsh{original}이 참조하는 리스트 객체도 비워진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+replace()
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+nonlocal values
+values = []
+\end{dhkcode}
+
+새로운 리스트 객체를 생성하고 외부 바인딩을 변경한다.
+
+따라서 \zsh{original}은 여전히 기존 리스트 객체를 참조하지만, \zsh{get()}은 새로운 리스트 객체를 반환한다.
+
+마지막 비교가 이를 보여준다.
+
+\begin{dhkcode}
+original is get()
+\end{dhkcode}
+
+결과는 \zsh{False}다.
+
+이 차이는 클래스 인스턴스에서도 동일하게 나타난다.
+
+\begin{dhkcode}
+self.values.clear()
+\end{dhkcode}
+
+와
+
+\begin{dhkcode}
+self.values = []
+\end{dhkcode}
+
+는 서로 다른 연산이다.
+
+전자는 기존 리스트 객체를 변경하고, 후자는 일반적인 속성 대입 규칙에 따라 \zsh{values} 속성의 참조 대상을 변경한다.
+
+따라서 클로저의 상태 변경 원리는 기존에 학습한 객체 모델과 분리된 특별한 규칙이 아니다.
+
+Python의 일반적인 객체 변경과 바인딩 변경 원리가 클로저 환경에서도 적용되는 것이다.
+
+\subsubsection{\zsh{+=} 연산은 왜 주의해야 할까?}
+
+이번에는 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def outer():
+    count = 0
+
+    def increment():
+        count += 1
+        return count
+
+    return increment
+
+
+increment = outer()
+
+print(increment())
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+UnboundLocalError
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{count += 1}은 단순히 외부 정수 객체의 상태를 변경하는 연산이 아니다.
+
+정수 객체는 불변 객체(Immutable Object)다.
+
+또한 \zsh{count += 1}은 이름 \zsh{count}에 대한 대입을 포함하는 증강 대입문(Augmented Assignment)이다.
+
+따라서 별도의 \zsh{nonlocal} 선언이 없으면 \zsh{count}는 \zsh{increment}의 지역 이름으로 분류된다.
+
+그런데 증강 대입에서는 기존 값을 먼저 읽어야 한다.
+
+현재 지역 \zsh{count}에는 아직 객체가 바인딩되지 않았으므로 
+
+\zsh{UnboundLocalError}가 발생하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+해결 방법
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    count = 0
+
+    def increment():
+        nonlocal count
+        count += 1
+        return count
+
+    return increment
+
+
+increment = outer()
+
+print(increment())
+print(increment())
+print(increment())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1
+2
+3
+\end{dhkzsh}
+
+이번에는 \zsh{count}가 외부 함수의 바인딩을 대상으로 한다.
+
+따라서 기존 정수 객체를 읽고, 덧셈 결과를 다시 외부 이름에 바인딩할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 과정
+\end{dhksmry}
+\end{dhknote}
+
+첫 번째 호출:
+
+\begin{dhksmry}
+    Cell count \ra int(0)
+\end{dhksmry}
+
+\zsh{count += 1} 실행 후:
+
+\begin{dhksmry}
+    Cell count \ra int(1)
+\end{dhksmry}
+
+두 번째 호출 후:
+
+\begin{dhksmry}
+    Cell count \ra int(2)
+\end{dhksmry}
+
+세 번째 호출 후:
+
+\begin{dhksmry}
+    Cell count \ra int(3)
+\end{dhksmry}
+
+여기서 정수 객체 자체가 변경되는 것은 아니다.
+
+매번 새로운 계산 결과에 바인딩되는 것이다.
+
+\subsubsection{가변 객체의 \zsh{+=}는 어떻게 다를까?}
+
+이제 정수 대신 리스트를 사용해 보자.
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def add(value):
+        values += [value]
+        return values
+
+    return add
+
+
+add = outer()
+
+print(add(10))
+\end{dhkcode}
+
+이 코드는 어떻게 될까?
+
+리스트는 가변 객체이므로 정상적으로 동작할 것 같지만,
+
+실제로는 \zsh{UnboundLocalError}가 발생한다.
+
+왜 그럴까?
+
+여기서 중요한 것은 객체가 가변인지 여부와 이름의 스코프 판정은 별개의 문제라는 사실이다.
+
+\zsh{values += [value]}는 증강 대입문이므로 \zsh{values}를 바인딩 대상으로 사용한다.
+
+따라서 \zsh{nonlocal} 선언이 없다면 \zsh{values}는 현재 함수의 지역 이름으로 판정된다.
+
+그런데 기존 지역 \zsh{values}가 아직 바인딩되지 않았으므로 읽는 과정에서 오류가 발생하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+nonlocal을 추가하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def add(value):
+        nonlocal values
+        values += [value]
+        return values
+
+    return add
+
+
+add = outer()
+
+print(add(10))
+print(add(20))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[10]
+[10, 20]
+\end{dhkzsh}
+
+이제 정상적으로 동작한다.
+
+그런데 여기서 한 단계 더 생각해야 한다.
+
+리스트의 \zsh{+=}는 일반적으로 기존 리스트 객체를 직접 변경하는 
+
+\zsh{__iadd__} 동작을 사용할 수 있다.
+
+따라서 \zsh{nonlocal values}가 있다고 해서 반드시 새로운 리스트 객체가 생성되는 것은 아니다.
+
+다음 코드로 확인해 보자.
+
+\begin{dhkcode}
+def outer():
+    values = []
+
+    def add(value):
+        nonlocal values
+
+        before = values
+
+        values += [value]
+
+        return before is values
+
+    return add
+
+
+add = outer()
+
+print(add(10))
+print(add(20))
+\end{dhkcode}
+
+일반적인 Python 리스트에서 예상 출력:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+이 결과는 다음 두 가지를 동시에 보여준다.
+
+\begin{dhksmry}
+    1. nonlocal은 이름의 바인딩 대상을 지정한다.
+
+    2. 시제 증강 대입이 기존 객체를 변경할지 새로운 객체를 반환할지는
+       피연산자의 타입과 연산 구현에 따라 달라질 수 있다.
+\end{dhksmry}
+
+따라서 다음 세 연산을 동일하게 취급하면 안 된다.
+
+\begin{dhkcode}
+values.append(10)
+
+values += [10]
+
+values = values + [10]
+\end{dhkcode}
+
+일반적인 리스트에서는 첫 번째와 두 번째가 기존 리스트 객체를 변경하지만, 세 번째는 새로운 리스트 객체를 만들어 이름을 재바인딩한다.
+
+또한 두 번째와 세 번째는 이름 대입을 포함하므로 외부 함수의 \zsh{values}를 대상으로 하려면 \zsh{nonlocal}이 필요하다.
+
+객체 변경 여부와 이름의 스코프 판정 여부는 서로 다른 기준으로 판단해야 한다.
+
+\subsubsection{\zsh{nonlocal}은 가장 가까운 외부 함수의 바인딩을 찾는다}
+
+지금까지는 외부 함수가 한 단계만 존재했다.
+
+이번에는 세 단계의 중첩 함수를 살펴보자.
+
+\begin{dhkcode}
+def level1():
+    x = 10
+
+    def level2():
+        x = 20
+
+        def level3():
+            nonlocal x
+            x = 30
+
+        level3()
+
+        print("level2:", x)
+
+    level2()
+
+    print("level1:", x)
+
+
+level1()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+level2: 30
+level1: 10
+\end{dhkzsh}
+
+왜 \zsh{level1}의 \zsh{x}는 변경되지 않았을까?
+
+\zsh{level3}의 렉시컬 외부 함수 스코프를 살펴보자.
+
+\begin{dhkdir}[in=6]
+level1
+> x = 10
+> level2
+>> x = 20
+>> level3
+>>> nonlocal x
+\end{dhkdir}
+
+\zsh{level3}에서 \zsh{nonlocal x}를 선언하면 현재 함수의 지역 스코프를 제외하고, 렉시컬 외부 함수 스코프에서 \zsh{x}의 기존 바인딩을 찾는다.
+
+가장 가까운 외부 함수인 \zsh{level2}에 \zsh{x}가 존재하므로 그 바인딩을 사용한다.
+
+따라서 \zsh{level2}의 \zsh{x}가 30으로 변경된다.
+
+반면 \zsh{level1}의 \zsh{x}는 그대로 10이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+주의할 점
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{nonlocal}은 특정 외부 함수를 이름으로 지정하는 문법을 제공하지 않는다.
+
+따라서 다음처럼 작성할 수는 없다.
+
+\begin{dhkcode}
+nonlocal level1.x
+\end{dhkcode}
+
+이는 유효한 Python 문법이 아니다.
+
+\zsh{nonlocal}은 점 표기법을 통한 속성 탐색이 아니라 렉시컬 외부 함수 스코프의 이름 바인딩을 선택하는 선언이기 때문이다.
+
+\subsubsection{중간 함수에서 이름을 바인딩하지 않는 경우}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def level1():
+    x = 10
+
+    def level2():
+
+        def level3():
+            nonlocal x
+            x = 30
+
+        level3()
+
+    level2()
+
+    return x
+
+
+print(level1())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+30
+\end{dhkzsh}
+
+이번에는 \zsh{level2}에 \zsh{x} 바인딩이 없다.
+
+따라서 \zsh{level3}의 \zsh{nonlocal x}는 더 바깥쪽 함수인 \zsh{level1}의 바인딩을 대상으로 한다.
+
+여기서 중요한 사실이 있다.
+
+\zsh{nonlocal}은 반드시 바로 바깥 함수에만 접근하는 선언이 아니다.
+
+렉시컬 외부 함수 스코프들을 탐색하여 가장 가까운 적절한 기존 바인딩을 사용한다.
+
+이 원리는 \zsh{A.3}에서 학습한 Enclosing Scope와 연결된다.
+
+\subsubsection{\zsh{nonlocal}의 제약과 예외}
+
+\zsh{nonlocal}은 아무 이름에나 사용할 수 있는 선언이 아니다.
+
+대표적인 제약을 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 외부 함수 스코프에 바인딩이 존재해야 한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+
+    def inner():
+        nonlocal x
+        x = 10
+
+    return inner
+\end{dhkcode}
+
+이 코드는 \zsh{SyntaxError}를 발생시킨다.
+
+왜냐하면 \zsh{inner}를 감싸는 외부 함수 스코프에 \zsh{x}라는 바인딩이 존재하지 않기 때문이다.
+
+\zsh{nonlocal}은 새로운 외부 바인딩을 생성하기 위한 선언이 아니다.
+
+기존 렉시컬 외부 함수 바인딩을 대상으로 하는 선언이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 모듈 전역 이름만으로는 충분하지 않다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    nonlocal x
+    x = 20
+\end{dhkcode}
+
+이 코드 역시 \zsh{SyntaxError}를 발생시킨다.
+
+모듈 전역의 \zsh{x}는 \zsh{nonlocal}의 대상이 아니기 때문이다.
+
+전역 이름을 재바인딩하려면 \zsh{global}을 사용해야 한다.
+
+\begin{dhkcode}
+x = 10
+
+def func():
+    global x
+    x = 20
+
+
+func()
+
+print(x)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+20
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 함수 내부에서 사용한 뒤 선언할 수 없다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def outer():
+    x = 10
+
+    def inner():
+        print(x)
+        nonlocal x
+\end{dhkcode}
+
+이 코드는 \zsh{SyntaxError}를 발생시킨다.
+
+같은 코드 블록에서 \zsh{nonlocal x} 선언보다 앞서 \zsh{x}를 사용했기 때문이다.
+
+\zsh{nonlocal}은 일반적인 실행 명령이 아니라 해당 코드 블록의 이름 분류에 영향을 주는 선언이므로, 이러한 제약이 존재한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 외부 바인딩이 아직 객체를 참조하지 않을 수도 있다
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def outer():
+
+    def inner():
+        nonlocal x
+        return x
+
+    result = inner()
+
+    x = 10
+
+    return result
+
+
+outer()
+\end{dhkcode}
+
+이 코드는 컴파일 자체는 가능하다.
+
+왜냐하면 \zsh{outer} 내부에 \zsh{x = 10}이라는 바인딩 구문이 존재하기 때문이다.
+
+하지만 실제 실행에서는 \zsh{NameError}가 발생한다.
+
+\zsh{inner()}를 호출하는 시점에 \zsh{outer}의 \zsh{x = 10}이 아직 실행되지 않았기 때문이다.
+
+이 차이는 \zsh{A.3}에서 배운 내용과 동일하다.
+
+이름의 정적 분류가 가능하다는 사실과 실행 시점에 객체가 바인딩되어 있다는 사실은 서로 다르다.
+
+\subsubsection{\zsh{global}과 \zsh{nonlocal}의 객체 모델 비교}
+
+이번에는 두 선언을 같은 코드에서 비교해 보자.
+
+\begin{dhkcode}
+x = 10
+
+
+def outer():
+    x = 20
+
+    def change_global():
+        global x
+        x = 100
+
+    def change_nonlocal():
+        nonlocal x
+        x = 200
+
+    change_global()
+    change_nonlocal()
+
+    return x
+
+
+result = outer()
+
+print("global:", x)
+print("outer:", result)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+global: 100
+outer: 200
+\end{dhkzsh}
+
+두 선언은 서로 다른 바인딩을 대상으로 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+global x
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdir}[in=6]
+모듈 전역 네임스페이스
+> x -> int(100)
+\end{dhkdir}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+nonlocal x
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdir}[in=6]
+outer() 실행 환경
+> Cell x -> int(200)
+\end{dhkdir}
+
+여기서 다음 구분이 중요하다.
+
+\begin{dhktable}
+|비교 기준|	global|	nonlocal|
+|:---|:---|:---|
+|대상|	모듈 전역 바인딩|	렉시컬 외부 함수 바인딩|
+|기존 바인딩 필요|	선언 시 불필요|	외부 함수 스코프에 바인딩 구문 필요|
+|대표적인 접근 구조|	전역 네임스페이스|	클로저 셀|
+|선언의 목적|	전역 이름의 바인딩 지정|	외부 함수 이름의 바인딩 지정|
+|객체 자체를 변경하는가?|	선언 자체는 변경하지 않음|	선언 자체는 변경하지 않음|
+\end{dhktable}
+
+또한 \zsh{global}과 \zsh{nonlocal}은 서로 대체 가능한 문법이 아니다.
+
+어떤 스코프의 이름을 변경하려는지에 따라 선택해야 한다.
+
+\subsubsection{클로저를 이용한 상태 관리 - Counter}
+
+이제 지금까지 학습한 개념을 하나의 함수 생성기에 적용해 보자.
+
+\begin{dhkcode}
+def make_counter(initial=0):
+    count = initial
+
+    def increment(step=1):
+        nonlocal count
+
+        count += step
+
+        return count
+
+    def get():
+        return count
+
+    def reset():
+        nonlocal count
+
+        count = initial
+
+    return increment, get, reset
+
+
+increment, get, reset = make_counter(10)
+
+print(get())
+
+print(increment())
+print(increment(5))
+
+reset()
+
+print(get())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+10
+11
+16
+10
+\end{dhkzsh}
+
+이 코드를 객체 관계로 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. make_counter(10) 호출
+\end{dhksmry}
+\end{dhknote}
+
+매개변수 \zsh{initial}에 정수 객체 10이 바인딩된다.
+
+다음 문장이 실행된다.
+
+\begin{dhkcode}
+count = initial
+\end{dhkcode}
+
+\zsh{count} 역시 정수 객체 10을 참조한다.
+
+여기서 \zsh{initial}과 \zsh{count}는 서로 다른 이름이지만 처음에는 동일한 정수 객체를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 내부 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+세 개의 함수 객체가 생성된다.
+
+\begin{dhkcode}
+increment
+get
+reset
+\end{dhkcode}
+
+각 함수는 필요한 외부 바인딩에 접근하기 위한 클로저 환경을 가진다.
+
+여기서 중요한 점이 있다.
+
+\zsh{increment}와 \zsh{get}은 \zsh{count}를 참조한다.
+
+\zsh{reset}은 \zsh{count}와 \zsh{initial}을 참조한다.
+
+따라서 \zsh{count}에 대응하는 셀은 세 함수가 공유한다.
+
+반면 \zsh{initial}에 대응하는 셀은 \zsh{reset}에서만 필요하다.
+
+이를 구조적으로 나타내면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: increment 함수 객체
+node n2 (2,1) :: get 함수 객체
+node n3 (3,1) :: reset 함수 객체
+node n4 (2,2) :: Cell count
+node n5 (2,3) :: int(10)
+node n6 (4,2) :: Cell initial
+node n7 (4,3) :: int(10)
+
+edge n1 -> n4 :: HV
+edge n2 -> n4
+edge n3 -> n4 :: HV
+edge n4 -> n5
+edge n3 -> n6 :: VH
+edge n6 -> n7
+\end{dhkdiagram}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. increment() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+count += step
+\end{dhkcode}
+
+\zsh{count}는 외부 함수의 바인딩이다.
+
+\zsh{nonlocal count} 선언에 따라 기존 값을 읽고 새로운 계산 결과를 다시 그 바인딩에 연결한다.
+
+따라서 \zsh{count}는 11을 참조하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. increment(5) 호출
+\end{dhksmry}
+\end{dhknote}
+
+이번에는 \zsh{step}이 5를 참조한다.
+
+기존 \zsh{count}는 11이므로 계산 결과는 16이다.
+
+이후 \zsh{count}가 16에 재바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. reset() 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+count = initial
+\end{dhkcode}
+
+\zsh{count}는 \zsh{nonlocal} 선언에 의해 외부 바인딩을 대상으로 한다.
+
+\zsh{initial}은 외부 함수의 자유 변수로 읽힌다.
+
+따라서 \zsh{count}가 다시 정수 객체 10을 참조하게 된다.
+
+여기서 새로운 \zsh{make_counter()} 호출이 발생하는 것은 아니다.
+
+기존 클로저 환경의 바인딩을 변경하는 것이다.
+
+\subsubsection{\zsh{__closure__}를 이용한 상태 공유 검증}
+
+앞의 예제에서 실제로 같은 셀을 공유하는지 확인해 보자.
+
+\begin{dhkcode}
+def make_counter(initial=0):
+    count = initial
+
+    def increment(step=1):
+        nonlocal count
+        count += step
+        return count
+
+    def get():
+        return count
+
+    def reset():
+        nonlocal count
+        count = initial
+
+    return increment, get, reset
+
+
+increment, get, reset = make_counter(10)
+
+
+def closure_map(func):
+    if func.__closure__ is None:
+        return {}
+
+    return dict(
+        zip(
+            func.__code__.co_freevars,
+            func.__closure__
+        )
+    )
+
+
+increment_cells = closure_map(increment)
+get_cells = closure_map(get)
+reset_cells = closure_map(reset)
+
+print(increment_cells.keys())
+print(get_cells.keys())
+print(reset_cells.keys())
+
+print(
+    increment_cells["count"]
+    is get_cells["count"]
+)
+
+print(
+    get_cells["count"]
+    is reset_cells["count"]
+)
+
+print(
+    reset_cells["initial"].cell_contents
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+dict_keys(['count'])
+dict_keys(['count'])
+dict_keys(['count', 'initial'])
+True
+True
+10
+\end{dhkzsh}
+
+이 예제에서 \zsh{closure_map()}은 함수 객체의 자유 변수 이름과 셀 객체를 대응시키는 보조 함수다.
+
+여기서 다음 사실을 직접 확인할 수 있다.
+
+\begin{dhksmry}
+    - increment, get, reset은 모두 count 셀을 공유한다.
+
+    - reset은 추가로 initial 셀을 참조한다.
+
+    - initial과 count는 처음에 같은 정수 객체를 참조하더라도
+      서로 다른 바인딩이다.
+\end{dhksmry}
+
+이제 다음 비교를 생각해 보자.
+
+\begin{dhkcode}
+reset_cells["initial"] is reset_cells["count"]
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+왜냐하면 두 이름은 서로 다른 바인딩이기 때문이다.
+
+처음에 동일한 정수 객체를 참조한다는 사실만으로 같은 셀 객체를 사용해야 하는 것은 아니다.
+
+이것은 \zsh{A.1}에서 배운 객체의 동일성과 이름 바인딩의 동일성을 구분해야한다는 원리가 클로저에도 적용된 사례다.
+
+\subsubsection{서로 다른 Counter 인스턴스의 상태 독립성}
+
+이번에는 함수 생성기를 두 번 호출해 보자.
+
+\begin{dhkcode}
+def make_counter():
+    count = 0
+
+    def increment():
+        nonlocal count
+        count += 1
+        return count
+
+    return increment
+
+
+counter_a = make_counter()
+counter_b = make_counter()
+
+print(counter_a())
+print(counter_a())
+
+print(counter_b())
+
+print(
+    counter_a.__closure__[0]
+    is counter_b.__closure__[0]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1
+2
+1
+False
+\end{dhkzsh}
+
+여기서 \zsh{counter_a}와 \zsh{counter_b}는 서로 다른 함수 객체다.
+
+그리고 각각 다른 \zsh{make_counter()} 호출에서 생성되었다.
+
+따라서 서로 독립적인 \zsh{count} 바인딩을 가진다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: counter_a
+node n2 (3,1) :: 함수 객체 A
+node n3 (5,1) :: Cell count A
+node n4 (5,2) :: int(2)
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+\end{dhkdiagram}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: counter_b
+node n2 (3,1) :: 함수 객체 B
+node n3 (5,1) :: Cell count B
+node n4 (5,2) :: int(1)
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+\end{dhkdiagram}
+
+이 구조는 클래스의 서로 다른 인스턴스가 독립적인 상태를 가지는 것과 유사하다.
+
+다만 상태가 저장되는 위치는 다르다.
+
+클래스에서는 일반적으로 인스턴스 속성을 통해 상태를 관리하지만, 여기서는 함수 객체가 참조하는 클로저 셀을 통해 상태를 관리하는 것이다.
+
+\subsubsection{클래스 인스턴스와 클로저의 상태 관리 비교}
+
+다음 두 구현을 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클로저 기반 구현
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def make_counter():
+    count = 0
+
+    def increment():
+        nonlocal count
+        count += 1
+        return count
+
+    return increment
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 기반 구현
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Counter:
+    def __init__(self):
+        self.count = 0
+
+    def increment(self):
+        self.count += 1
+        return self.count
+\end{dhkcode}
+
+두 구현 모두 호출 사이에 상태를 유지할 수 있다.
+
+하지만 상태에 접근하는 메커니즘은 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클로저 기반
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}[centered]
+increment 함수 객체
+\da
+__closure__
+\da
+Cell count
+\da
+int(0)
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 기반
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: Counter 인스턴스
+node n2 (3,1) :: __dict__
+node n3 (5,2) :: "count"
+node n4 (5,3) :: int(0)
+
+edge n1 -> n2
+edge n2 -- n3 ::VH
+edge n3 -> n4
+\end{dhkdiagram}
+
+일반적인 사용자 정의 클래스에서 \zsh{self.count}는 인스턴스 속성 탐색과 대입을 통해 관리된다.
+
+반면 클로저의 \zsh{count}는 자유 변수 바인딩을 통해 접근한다.
+
+\begin{dhktable}
+|비교 기준|	클로저|	클래스|
+|:---|:---|:---|
+|상태 접근|	자유 변수|	인스턴스 속성|
+|상태 저장|	셀과 참조 객체|	인스턴스 네임스페이스 등|
+|상태 재바인딩|	nonlocal|	self.attribute = ...|
+|여러 동작의 상태 공유|	같은 셀을 공유하는 함수들|	같은 인스턴스를 참조하는 메서드들|
+|독립적인 상태 생성|	외부 함수 재호출|	인스턴스 생성|
+|대표적인 활용|	함수 생성기, 데코레이터|	명시적인 상태 객체, 복잡한 인터페이스|
+\end{dhktable}
+
+여기서 중요한 것은 클로저가 클래스를 대체하는 문법이라는 뜻이 아니다.
+
+둘은 서로 다른 객체 구조를 통해 상태를 관리하는 방법이다.
+
+문제의 규모와 필요한 인터페이스에 따라 적합한 방식이 달라진다.
+
+\subsubsection{실전 응용 - 데코레이터의 호출 횟수 관리}
+
+이제 클로저 상태 변경을 데코레이터와 연결해 보자.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def count_calls(func):
+    count = 0
+
+    def wrapper(*args, **kwargs):
+        nonlocal count
+
+        count += 1
+
+        print(f"호출 횟수: {count}")
+
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def add(a, b):
+    return a + b
+
+
+add = count_calls(add)
+
+print(add(10, 20))
+print(add(30, 40))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+호출 횟수: 1
+30
+호출 횟수: 2
+70
+\end{dhkzsh}
+
+이 코드는 이후 \zsh{A.6}과 \zsh{A.7}에서 자세히 학습할 함수 기반 데코레이터의 기본 구조다.
+
+이번에는 클로저 상태에 집중해서 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 원본 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+원본 \zsh{add} 함수 객체가 생성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. count_calls(add) 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+add = count_calls(add)
+\end{dhkcode}
+
+원본 함수 객체가 \zsh{count_calls}의 매개변수 \zsh{func}에 바인딩된다.
+
+그리고 다음 문장이 실행된다.
+
+\begin{dhkcode}
+count = 0
+\end{dhkcode}
+
+호출 횟수를 나타내는 지역 바인딩이 생성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. wrapper 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def wrapper(*args, **kwargs):
+    nonlocal count
+
+    count += 1
+
+    print(f"호출 횟수: {count}")
+
+    return func(*args, **kwargs)
+\end{dhkcode}
+
+\zsh{wrapper}는 외부 함수의 두 이름을 사용한다.
+
+\begin{dhksmry}
+    - count
+
+    - func
+\end{dhksmry}
+
+따라서 이 두 이름은 \zsh{wrapper}의 자유 변수다.
+
+\zsh{count}는 \zsh{nonlocal} 선언을 통해 재바인딩 대상이 되고,
+
+\zsh{func}는 원본 함수 객체를 호출하기 위해 읽는 이름이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. wrapper 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{count_calls()}는 \zsh{wrapper} 함수 객체를 반환한다.
+
+그리고 모듈 이름 \zsh{add}가 반환된 함수 객체에 재바인딩된다.
+
+이후 \zsh{count_calls()} 호출은 종료된다.
+
+하지만 반환된 \zsh{wrapper} 함수 객체는 클로저를 통해 \zsh{count}와 \zsh{func}의 바인딩에 접근할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 구조
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkbranch}[in=8]
+node main :: 모듈 이름 add
+arrow main
+node main :: wrapper 함수 객체
+arrow main
+node main :: __closure__
+branchline main -> b1 :: Cell count -> int(0)
+handoff main -> b2 :: Cell func -> 원본 add 함수 객체
+stop b2
+\end{dhkbranch}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. 첫 번째 add(10, 20) 호출
+\end{dhksmry}
+\end{dhknote}
+
+현재 모듈 이름 \zsh{add}는 \zsh{wrapper} 함수 객체를 참조한다.
+
+따라서 \zsh{wrapper}가 실행된다.
+
+\begin{dhkcode}
+count += 1
+\end{dhkcode}
+
+\zsh{count}가 1로 재바인딩된다.
+
+이후 원본 함수 객체를 호출한다.
+
+\begin{dhkcode}
+func(*args, **kwargs)
+\end{dhkcode}
+
+원본 \zsh{add}는 30을 반환한다.
+
+그 결과 \zsh{wrapper}도 30을 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+6. 두 번째 add(30, 40) 호출
+\end{dhksmry}
+\end{dhknote}
+
+이번에도 같은 \zsh{wrapper} 함수 객체가 호출된다.
+
+따라서 같은 클로저 셀을 사용한다.
+
+기존 \zsh{count}가 1이므로 \zsh{count += 1} 실행 후 2가 된다.
+
+이후 원본 함수 객체를 호출하고 70을 반환한다.
+
+여기서 핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+데코레이터가 호출 횟수를 유지하는 이유는 함수 객체가
+
+호출 사이에 동일한 클로저 셀을 계속 참조하기 때문이다.
+\end{dhksmry}
+
+\subsubsection{\zsh{nonlocal} 상태 관리에서 주의할 점}
+
+클로저를 사용하면 상태를 간단하게 캡슐화할 수 있다.
+
+하지만 몇 가지 경계 조건을 이해해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 클로저 상태는 자동으로 불변이 되지 않는다
+\end{dhksmry}
+\end{dhknote}
+
+함수 객체의 \zsh{__closure__}에 포함된 셀은 외부 바인딩에 접근하기 위한 구조다.
+
+그 셀이 참조하는 객체가 가변 객체라면 내부 상태를 변경할 수 있다.
+
+또한 \zsh{nonlocal}을 사용하면 바인딩 자체를 변경할 수도 있다.
+
+따라서 클로저를 사용한다는 사실만으로 상태가 불변이거나 변경으로부터 보호된다고 볼 수는 없다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 상태 변경은 자동으로 스레드 안전하지 않다
+\end{dhksmry}
+\end{dhknote}
+
+다음 연산을 생각해 보자.
+
+\begin{dhkcode}
+count += 1
+\end{dhkcode}
+
+이 연산은 기존 값을 읽고, 계산하고, 결과를 다시 바인딩하는 과정을 포함한다.
+
+여러 실행 흐름이 동일한 클로저 상태를 동시에 변경한다면 경쟁 상태(Race Condition)가 발생할 수 있다.
+
+따라서 클로저를 사용한다는 이유만으로 동시성 안전성이 보장되는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 외부 바인딩을 유지하면 객체의 수명도 영향을 받을 수 있다
+\end{dhksmry}
+\end{dhknote}
+
+클로저 셀이 큰 객체를 참조하고 있다면, 함수 객체가 유지되는 동안 그 객체도 계속 참조될 수 있다.
+
+따라서 클로저에 불필요하게 큰 데이터를 캡처하면 메모리 사용에 영향을 줄 수 있다.
+
+이 문제는 장기간 유지되는 콜백 함수나 데코레이터를 설계할 때 고려해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+nonlocal은 객체의 속성 탐색과 무관하다
+\end{dhksmry}
+\end{dhknote}
+
+다음 표현식을 비교해 보자.
+
+\begin{dhkcode}
+nonlocal state
+state = new_state
+
+
+state.value = 10
+\end{dhkcode}
+
+첫 번째는 외부 이름 \zsh{state}의 바인딩을 변경한다.
+
+두 번째는 \zsh{state}가 참조하는 객체의 속성에 대입한다.
+
+따라서 두 연산은 서로 다른 메커니즘이다.
+
+객체의 속성 변경에는 일반적으로 \zsh{nonlocal}이 필요하지 않다.
+
+\subsubsection{종합 예제 - 여러 클로저가 하나의 상태를 관리하는 구조}
+
+이번 학습의 내용을 하나의 프로그램으로 통합해 보자.
+
+\begin{dhkcode}
+def make_account(initial_balance):
+    balance = initial_balance
+
+    def deposit(amount):
+        nonlocal balance
+
+        balance += amount
+
+        return balance
+
+    def withdraw(amount):
+        nonlocal balance
+
+        if amount > balance:
+            raise ValueError("잔액이 부족합니다.")
+
+        balance -= amount
+
+        return balance
+
+    def get_balance():
+        return balance
+
+    return deposit, withdraw, get_balance
+
+
+deposit, withdraw, get_balance = make_account(1000)
+
+print(get_balance())
+
+print(deposit(500))
+
+print(withdraw(300))
+
+print(get_balance())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1000
+1500
+1200
+1200
+\end{dhkzsh}
+
+이 코드는 세 개의 내부 함수가 하나의 상태를 공유하는 구조다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 관계
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: deposit 함수 객체
+node n2 (3,1) :: withdraw 함수 객체
+node n3 (5,1) :: get_balance 함수 객체
+node n4 (3,2) :: Cell balance
+node n5 (3,3) :: int(1200)
+
+edge n1 -> n4 :: HV
+edge n2 -> n4
+edge n3 -> n4 :: HV
+edge n4 -> n5
+\end{dhkdiagram}
+
+여기서 \zsh{balance}는 세 함수의 자유 변수다.
+
+\zsh{deposit}과 \zsh{withdraw}는 \zsh{nonlocal balance}를 선언했으므로 외부 바인딩을 변경할 수 있다.
+
+반면 \zsh{get_balance}는 값을 읽기만 하므로 \zsh{nonlocal}이 필요하지 않다.
+
+이 구조를 보면 다음 사실을 알 수 있다.
+
+여러 함수 객체가 동일한 셀을 공유하면, 하나의 함수가 변경한 바인딩을 다른 함수도 관찰할 수 있다.
+
+이는 클래스 인스턴스에서 여러 메서드가 동일한 인스턴스 상태를 읽고 변경하는 구조와 대응된다.
+
+다만 이 예제는 클로저 상태 관리의 원리를 보여주기 위한 것이며, 실제 금융 거래 시스템에 필요한 동시성 제어와 영속성 등을 구현한 것은 아니다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습에서 확립해야 할 핵심 개념을 정리해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. nonlocal은 이름의 바인딩 대상을 지정한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+nonlocal x
+\end{dhkcode}
+
+는 현재 함수에서 \zsh{x}를 지역 이름으로 취급하지 않고 렉시컬 외부 함수의 기존 바인딩을 사용하도록 지정한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 셀 객체와 셀이 참조하는 객체는 구별해야 한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+cell is other_cell
+\end{dhkcode}
+
+은 셀 객체의 동일성을 비교한다.
+
+반면
+
+\begin{dhkcode}
+cell.cell_contents
+\end{dhkcode}
+
+는 셀에 현재 바인딩된 객체를 조회한다.
+
+따라서 같은 셀 객체가 시간에 따라 서로 다른 객체를 참조할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 객체 변경과 이름 재바인딩은 다르다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+values.append(10)
+\end{dhkcode}
+
+은 리스트 객체의 상태를 변경한다.
+
+반면
+
+\begin{dhkcode}
+values = [10]
+\end{dhkcode}
+
+은 이름의 바인딩을 변경한다.
+
+외부 함수의 바인딩을 변경하려면 \zsh{nonlocal}이 필요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 증강 대입은 이름의 스코프 판정에 영향을 준다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+count += 1
+\end{dhkcode}
+
+은 이름에 대한 대입을 포함한다.
+
+따라서 외부 함수의 \zsh{count}를 대상으로 하려면 \zsh{nonlocal count}가 필요하다.
+
+가변 객체에 대한 \zsh{+=}도 이 이름 분류 규칙에서 예외가 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. 여러 클로저는 동일한 셀을 공유할 수 있다
+\end{dhksmry}
+\end{dhknote}
+
+같은 외부 함수 호출에서 생성된 여러 내부 함수가 동일한 외부 바인딩을 참조한다면 같은 셀을 공유할 수 있다.
+
+따라서 한 함수의 재바인딩이 다른 함수의 반환값에 영향을 줄 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+6. 서로 다른 외부 함수 호출은 독립적인 상태를 만들 수 있다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+counter_a = make_counter()
+counter_b = make_counter()
+\end{dhkcode}
+
+두 호출에서 생성된 클로저는 서로 다른 바인딩 환경을 가질 수 있다.
+
+따라서 독립적인 상태 관리가 가능하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+최종 판단 기준
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|질문|	판단 기준|
+|:---|:---|
+|nonlocal이 필요한가?|	외부 함수의 이름 자체를 재바인딩하는가?|
+|가변 객체 변경에 nonlocal이 필요한가?|	객체 내부만 변경한다면 일반적으로 필요하지 않음|
+|+=에 nonlocal이 필요한가?|	외부 이름을 대상으로 하는 증강 대입이라면 필요|
+|여러 함수가 상태를 공유하는가?|	동일한 셀 또는 동일한 가변 객체를 참조하는지 확인|
+|상태 변경 후 셀 객체도 바뀌는가?|	일반적인 nonlocal 재바인딩에서는 기존 셀을 유지|
+|global과 nonlocal 중 무엇을 사용하는가?|	모듈 전역 바인딩인지 렉시컬 외부 함수 바인딩인지 구분|
+|UnboundLocalError가 발생하는가?|	지역 이름으로 판정되었지만 읽는 시점에 바인딩되지 않았는지 확인|
+|SyntaxError가 발생하는가?|	nonlocal의 대상 바인딩이 외부 함수 스코프에 존재하는지 확인|
+\end{dhktable}

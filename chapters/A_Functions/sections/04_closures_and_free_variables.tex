@@ -389,7 +389,7 @@ f.__code__.co_cellvars
 ()
 \end{dhkzsh}
 
-\zsh{inner} 내부의 지역 변수 \zsh{z}는 더 기핑 중첩된 함수에서 참조되지 않는다.
+\zsh{inner} 내부의 지역 변수 \zsh{z}는 더 깊이 중첩된 함수에서 참조되지 않는다.
 
 따라서 \zsh{inner}에는 셀 변수로 관리할 지역 이름이 없는 것이다.
 
@@ -920,7 +920,7 @@ print(len(f.__closure__))
 
 물론 클로저 셀이 참조하는 객체가 다른 객체들을 다시 참조하고 있다면, 그 참조 관계를 통해 추가적인 객체들이 유지될 수는 있다.
 
-예를 들어 셀이 리스트 객체를 참조하고, 그 리스트가 여러 객체를 포함하고 있다면 해당 객체들도 참조 관계의 영향을 받4는다.
+예를 들어 셀이 리스트 객체를 참조하고, 그 리스트가 여러 객체를 포함하고 있다면 해당 객체들도 참조 관계의 영향을 받는다.
 
 하지만 그것은 클로저가 모든 지역 변수를 자동으로 보관하기 때문이 아니다.
 
@@ -981,6 +981,10 @@ node n1 (1,1) :: f1
 node n2 (1,2) :: inner 함수 객체 1
 node n3 (3,2) :: Cell 1
 node n4 (5,2) :: int(10)
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
 \end{dhkdiagram}
 
 \begin{dhkdiagram}[in=6]
@@ -988,6 +992,10 @@ node n1 (1,1) :: f2
 node n2 (1,2) :: inner 함수 객체 2
 node n3 (3,2) :: Cell 2
 node n4 (5,2) :: int(20)
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
 \end{dhkdiagram}
 
 따라서 다음 비교는 \zsh{False}다.
@@ -1058,15 +1066,15 @@ True
 node n1 (1,1) :: f1
 node n2 (1,2) :: first 함수 객체
 node n3 (3,2) :: Cell x
-node n4 (5,2) :: int(10)
-node n5 (7,2) :: second 함수 객체
-node n6 (7,1) :: f2
+node n4 (3,3) :: int(10)
+node n5 (5,2) :: second 함수 객체
+node n6 (5,1) :: f2
 
 edge n1 -> n2
 edge n2 -> n3
 edge n3 -> n4
 edge n6 -> n5
-edge n5 -> n4
+edge n5 -> n3
 \end{dhkdiagram}
 
 여기서 다음 관계가 성립한다.
@@ -1368,7 +1376,11 @@ print(f())
 
 이번 학습에서는 다음 차이만 확립하면 된다.
 
-가변 객체의 내부 상태를 변경하는 것과 외부 이름의 바인딩을 변경하는 것은 서로 다른 연산이다.
+\begin{dhksmry}[centered]
+가변 객체의 내부 상태를 변경하는 것과 
+
+외부 이름의 바인딩을 변경하는 것은 서로 다른 연산이다.
+\end{dhksmry}
 
 \subsubsection{클로저의 Late Binding}
 
@@ -1856,7 +1868,7 @@ f()
 
 일반적인 Python에서는 \zsh{NameError}가 발생한다.
 
-왜냐하면 \zsh{inner}가 자유 변수 \zsh{x}의 바인딩을 조회할겨ㅗ 하지만, 해당 셀이 비어 있기 때문이다.
+왜냐하면 \zsh{inner}가 자유 변수 \zsh{x}의 바인딩을 조회하려고 하지만, 해당 셀이 비어 있기 때문이다.
 
 이것은 중요한 사실을 보여준다.
 
@@ -1866,7 +1878,7 @@ f()
 
 참고로 비어 있는 셀의 \zsh{cell_contents}를 직접 읽으려고 하면 \zsh{ValueError}가 발생할 수 있다.
 
-반면 그 셀을 자유 변수로 사용하는 함수 본문에서 일므을 읽으면 \zsh{NameError}가 발생한다.
+반면 그 셀을 자유 변수로 사용하는 함수 본문에서 이름을 읽으면 \zsh{NameError}가 발생한다.
 
 같은 바인딩 상태라도 어떤 연산을 수행하는지에 따라 예외가 달라질 수 있다는 점에 주의해야 한다.
 
@@ -2027,7 +2039,7 @@ print(counter())
 3
 \end{dhkzsh}
 
-이 코드와 앞의 클로저 구현은 외부에서 호출 가능한 객체를 토앻 상태를 유지한다는 공통점이 있다.
+이 코드와 앞의 클로저 구현은 외부에서 호출 가능한 객체를 통해 상태를 유지한다는 공통점이 있다.
 
 하지만 내부 구조는 다르다.
 
@@ -2101,13 +2113,13 @@ Counter 인스턴스
 |주요 활용|	함수 생성기, 데코레이터, 간단한 상태 유지|	복잡한 상태·행동의 캡슐화|
 \end{dhktable}
 
-dㅕ기서 어느 방식이 무조건 우수하다고 할 수는 없다.
+여기서 어느 방식이 무조건 우수하다고 할 수는 없다.
 
 상태가 단순하고 함수 자체를 반환하는 구조가 자연스럽다면 클로저가 유용할 수 있다.
 
 반면 상태가 많고 여러 메서드가 필요하거나 명시적인 객체 인터페이스가 중요하다면 클래스가 더 적합할 수 있다.
 
-이 차이는 데코레이터를 함수 기반으로 궇녀할지 클래스 기반으로 궇녀할지 판단할 때도 연결된다.
+이 차이는 데코레이터를 함수 기반으로 궇녀할지 클래스 기반으로 구현할지 판단할 때도 연결된다.
 
 \subsubsection{클로저와 데코레이터의 연결}
 
@@ -2165,7 +2177,7 @@ def greet():
     return 10
 \end{dhkcode}
 
-\zsh{greet} ㅎ마수 객체가 생성되고 모듈 이름 \zsh{greet}에 바인딩된다.
+\zsh{greet} 함수 객체가 생성되고 모듈 이름 \zsh{greet}에 바인딩된다.
 
 \begin{dhknote}
 \begin{dhksmry}[centered]
@@ -2177,7 +2189,7 @@ def greet():
 wrapped = make_wrapper(greet)
 \end{dhkcode}
 
-\zsh{greet}가 참조하는 함수 객체가 \zsh{make_wrapper}의 매개변수 \zsh{func}에 바인딩된다.
+\zsh{greet}이 참조하는 함수 객체가 \zsh{make_wrapper}의 매개변수 \zsh{func}에 바인딩된다.
 
 \begin{dhknote}
 \begin{dhksmry}[centered]
@@ -2312,7 +2324,7 @@ greet = make_wrapper(greet)
 
 그리고 왼쪽의 \zsh{greet}은 반환된 \zsh{wrapper} 함수 객체에 재바인딩된다.
 
-이때 원본 함수 객체는 사라지는 것이 아니라 \zsh{wrapper}의 클로저를 토앻 계속 참조될 수 있다.
+이때 원본 함수 객체는 사라지는 것이 아니라 \zsh{wrapper}의 클로저를 통해 계속 참조될 수 있다.
 
 이 구조를 \zsh{A.6}에서 정식으로 분석할 것이다.
 
@@ -2440,7 +2452,7 @@ print(f())
 \end{dhksmry}
 \end{dhknote}
 
-\zsh{inner}에서 사용한 \zsh{x}는 외부 함수의 바인딩을 참조한느 자유 변수로 분류된다.
+\zsh{inner}에서 사용한 \zsh{x}는 외부 함수의 바인딩을 참조하는 자유 변수로 분류된다.
 
 \zsh{outer}의 \zsh{x}는 중첩 함수에서 접근해야 하는 셀 변수로 분류된다.
 
