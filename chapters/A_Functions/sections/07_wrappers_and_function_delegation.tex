@@ -370,3 +370,212 @@ handoff main -> a4 :: b -> int(20)
 
 각 함수 호출에서 새로운 매개변수 바인딩이 형성되는 것이다.
 
+\subsubsection{원본 함수의 매개변수 규칙은 그대로 적용된다}
+
+\zsh{*args}와 \zsh{**kwargs}를 사용하면 \zsh{wrapper}가 다양한 형태의 호출을 받아들일 수 있다.
+
+그렇다고 원본 함수의 매개변수 규칙까지 사라지는 것은 아니다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def relay(func):
+
+    def wrapper(*args, **kwargs):
+        print("wrapper:", args, kwargs)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@relay
+def formula(a, /, b, *, c=0):
+    return a + b + c
+
+
+print(formula(1, b=2, c=3))
+
+try:
+    formula(a=1, b=2, c=3)
+except TypeError as error:
+    print(type(error).__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper: (1,) {'b': 2, 'c': 3}
+6
+wrapper: () {'a': 1, 'b': 2, 'c': 3}
+TypeError
+\end{dhkzsh}
+
+왜 첫 번째 호출은 성공하고 두 번째 호출은 실패할까?
+
+원본 함수의 정의를 다시 보자.
+
+\begin{dhkcode}
+def formula(a, /, b, *, c=0):
+    return a + b + c
+\end{dhkcode}
+
+\zsh{a}는 위치 전용 매개변수(Positional-only Parameter)다.
+
+\zsh{b}는 위치 또는 키워드로 전달할 수 있는 매개변수이고, \zsh{c}는 키워드 전용 매개변수(Keyword-only Parameter)다.
+
+첫 번째 호출은 원본 함수의 규칙을 만족한다.
+
+\begin{dhkcode}
+formula(1, b=2, c=3)
+\end{dhkcode}
+
+반면 두 번째 호출은 다음과 같다.
+
+\begin{dhkcode}
+formula(a=1, b=2, c=3)
+\end{dhkcode}
+
+\zsh{wrapper}는 이 호출을 받아들일 수 있다.
+
+모든 키워드 인수를 \zsh{kwargs}에 수집하면 되기 때문이다.
+
+하지만 원본 함수에 전달하는 순간 문제가 발생한다.
+
+\begin{dhkcode}
+func(*args, **kwargs)
+\end{dhkcode}
+
+원본 \zsh{formula}는 \zsh{a}를 키워드 인수로 받는 것을 허용하지 않는다.
+
+따라서 원본 함수의 인수 바인딩 단계에서 \zsh{TypeError}가 발생한다.
+
+이 결과로 다음 원리를 확립할 수 있다.
+
+\begin{dhksmry}[centered]
+Wrapper가 호출을 수용할 수 있다는 사실과
+
+원본 함수가 그 호출을 수용할 수 있다는 사실은 서로 다르다.
+\end{dhksmry}
+
+\zsh{*args}, \zsh{**kwargs}는 인수를 유연하게 전달하는 수단이지, 원본 함수의 매개변수 규칙을 무효화하는 장치가 아니다.
+
+\subsubsection{기본 인수(Default Argument)}는 어디에서 적용될까?
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def relay(func):
+
+    def wrapper(*args, **kwargs):
+        print("wrapper:", args, kwargs)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@relay
+def greet(name="Kim"):
+    return f"Hello, {name}"
+
+
+print(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper: () {}
+Hello, Kim
+\end{dhkzsh}
+
+여기서 흥미로운 점이 있다.
+
+\zsh{wrapper}의 \zsh{args}와 \zsh{kwargs}는 모두 비어 있다.
+
+그런데 원본 함수에서는 \zsh{name}이 \zsh{"Kim"}에 바인딩된다.
+
+왜 이런 결과가 발생할까?
+
+기본 인수는 원본 함수 객체의 매개변수 정의에 속하기 때문이다.
+
+원본 \zsh{greet} 함수 객체는 정의될 때 기본 인수 객체를 보관한다.
+
+\zsh{wrapper}가 다음 호출을 수행하면
+
+\begin{dhkcode}
+func()
+\end{dhkcode}
+
+원본 함수의 인수 바인딩 과정에서 생략된 \zsh{name}에 기본 인수 객체가 사용된다.
+
+따라서 기본 인수를 \zsh{wrapper}가 미리 채워서 전달할 필요는 없다.
+
+다만 \zsh{wrapper}가 인수를 수정하거나 기본값을 별도로 적용하는 구현이라면 실제 동작은 달라질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인수 객체의 동일성
+\end{dhksmry}
+\end{dhknote}
+
+또 하나 중요한 점이 있다.
+
+\zsh{wrapper}가 인수를 수집하고 다시 펼친다고 해서 인수 객체가 자동으로 복사되는 것은 아니다.
+
+\begin{dhkcode}
+def relay(func):
+
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@relay
+def modify(values):
+    values.append(10)
+    return values
+
+
+data = []
+
+result = modify(data)
+
+print(data)
+print(result is data)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[10]
+True
+\end{dhkzsh}
+
+호출자, \zsh{wrapper}, 원본 함수는 서로 다른 지역 이름을 사용할 수 있지만, 이 예제에서 모두 같은 리스트 객체를 참조한다.
+
+따라서 원본 함수가 리스트를 변경하면 호출자의 \zsh{data}에서도 변경된 상태를 관찰할 수 있다.
+
+이것은 데코레이터의 특별한 규칙이 아니라 \zsh{A.1}에서 학습한 Python의 일반적인 객체 전달 원리다.
+
+\subsubsection{\zsh{Wrapper}의 시그니처(Signature)와 실제 호출 계약}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper():
+        return func()
+
+    return wrapper
+
+
+@decorator
+def add(a, b):
+    return a + b
+
+
+add(10, 20)
+\end{dhkcode}
+
