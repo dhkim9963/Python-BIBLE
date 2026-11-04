@@ -5,3 +5,1554 @@
 % ==================================================
 
 \subsection{데코레이터의 정의와 \zsh{@decorator} 변환식}
+
+Decorator · Function Object · Name Rebinding · Closure · Definition Time · Call Time
+
+\subsubsection{이전 단원과의 연결}
+
+\zsh{A.1}부터 \zsh{A.5}까지 학습한 내용은 데코레이터(Decorator)를 이해하기 위한 기반이었다.
+
+\begin{dhktable}
+|단원|	학습한 원리|	데코레이터와의 연결|
+|:---|:---|:---|
+|A.1|	함수도 객체이며 이름에 바인딩된다.|	함수 객체를 인수로 전달하고 다른 함수 객체를 반환할 수 있다.|
+|A.2|	중첩 함수는 정의 위치에 따른 렉시컬 스코프를 가진다.|	데코레이터 내부에서 새로운 함수를 정의할 수 있다.|
+|A.3|	이름의 스코프는 정적으로 판정된다.|	내부 함수는 외부 매개변수를 자유 변수로 참조할 수 있다.|
+|A.4|	클로저는 외부 바인딩에 접근하는 환경을 유지한다.|	반환된 함수가 원본 함수 객체를 계속 참조할 수 있다.|
+|A.5|	nonlocal은 외부 바인딩의 재바인딩을 허용한다.|	데코레이터가 호출 횟수 등의 상태를 유지할 수 있다.|
+\end{dhktable}
+
+이제 이 개념들을 하나의 실행 구조로 통합할 것이다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper():
+        print("Before")
+        result = func()
+        print("After")
+        return result
+
+    return wrapper
+
+
+@decorator
+def greet():
+    print("Hello")
+    return 10
+
+
+print(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Before
+Hello
+After
+10
+\end{dhkzsh}
+
+표면적으로는 \zsh{@decorator}라는 문법이 \zsh{greet()}의 실행 전후에 기능을 추가한 것처럼 보인다.
+
+하지만 Python의 객체 모델에서는 훨씬 구체적인 과정이 발생한다.
+
+\begin{dhksmry}
+    1. 원본 greet 함수 객체가 생성된다.
+
+    2. 그 함수 객체가 decorator에 전달된다.
+
+    3. decorator가 새로운 wrapper 함수를 생성한다.
+
+    4. wrapper는 클로저를 통해 원본 함수 객체를 참조한다.
+
+    5. decorator가 반환한 wrapper 함수 객체가 
+       greet 이라는 이름에 바인딩된다.
+
+    6. 이후 greet()을 호출하면 원본 함수가 아니라 
+       wrapper가 먼저 실행된다.
+\end{dhksmry}
+
+이번 학습에서 가장 중요한 질문은 다음과 같다.
+
+\begin{dhksmry}[centered]
+@decorator는 기존 함수 객체를 수정하는 문법일까, 아니면
+
+함수 객체를 전달하고 반환값으로 이름을 다시 바인딩하는 문법일까?
+\end{dhksmry}
+
+정답은 일반적으로 두 번째다.
+
+다만 데코레이터가 반드시 새로운 함수를 반환해야 하는 것은 아니라는 점까지 정확하게 이해해야 한다.
+
+\subsubsection{데코레이터의 정확한 정의}
+
+Python에서 데코레이터는 함수나 클래스를 정의할 때 적용하는 호출 가능한 객체(Callable)다.
+
+함수 데코레이터의 기본 구조는 다음과 같다.
+
+\begin{dhkcode}
+def decorator(func):
+    # func를 이용한 처리
+    return replacement
+\end{dhkcode}
+
+여기서 \zsh{func}는 데코레이션 대상인 함수 객체를 참조하고,
+
+\zsh{replacement}는 그 이름에 최종적으로 바인딩될 객체다.
+
+일반적인 함수 기반 데코레이터에서는 \zsh{replacement}가 새로운 함수 객체인 경우가 많다.
+
+하지만 Python 문법이 반드시 새로운 함수 객체를 반환하도록 강제하지는 않는다.
+
+핵심은 다음 변환식이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+데코레이터의 의미론적 변환 - 데코레이터 문법
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@decorator
+def greet():
+    return 10
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+데코레이터의 의미론적 변환 - 대응하는 일반 함수 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def greet():
+    return 10
+
+greet = decorator(greet)
+\end{dhkcode}
+
+두 코드는 일반적인 단일 데코레이터 상황에서 같은 의미를 가진다.
+
+여기서 다음 표현식을 정확하게 분석해야 한다.
+
+\begin{dhkcode}
+greet = decorator(greet)
+\end{dhkcode}
+
+오른쪽의 \zsh{greet}은 함수 객체를 참조하는 이름이다.
+
+\zsh{decorator(greet)}은 그 함수 객체를 인수로 전달하는 호출 표현식이다.
+
+그리고 호출 결과가 왼쪽 이름 \zsh{greet}에 다시 바인딩된다.
+
+따라서 데코레이터의 본질은 다음과 같이 정리할 수 있다.
+
+\begin{dhksmry}[centered]
+데코레이터는 대상 함수 객체를 받아 어떤 객체를 반환하며,
+
+데코레이터 문법은 그 반환 객체를 
+
+원래 정의 대상의 이름에 바인딩하는 구조다.
+\end{dhksmry}
+
+여기서 데코레이터의 기능과 \zsh{@} 문법의 역할을 구분해야 한다.
+
+\begin{dhksmry}
+    - 데코레이터가 무엇을 반환할지는 데코레이터 구현에 따라 결정된다.
+
+    - @ 문법은 데코레이터를 적용하고 그 결과를 정의 대상의 이름에
+      바인딩하는 역할을 한다.
+\end{dhksmry}
+
+\subsubsection{데코레이터를 사용하지 않고 먼저 구현해 보자}
+
+\zsh{@} 문법을 잠시 제외하고, 일반적인 함수 객체 전달과 반환만으로 동일한 구조를 만들어 보자.
+
+\begin{dhkcode}
+def decorator(func):
+    print("decorator 실행")
+
+    def wrapper():
+        print("Before")
+
+        result = func()
+
+        print("After")
+
+        return result
+
+    return wrapper
+
+
+def greet():
+    print("Hello")
+    return 10
+
+
+original = greet
+
+greet = decorator(greet)
+
+print("정의 및 데코레이션 완료")
+
+result = greet()
+
+print("반환값:", result)
+print("같은 함수 객체인가?", original is greet)
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+decorator 실행
+정의 및 데코레이션 완료
+Before
+Hello
+After
+반환값: 10
+같은 함수 객체인가? False
+\end{dhkzsh}
+
+여기서 \zsh{original}이라는 이름을 추가한 이유는 원본 함수 객체와 데코레이션 후 함수 객체를 비교하기 위해서다.
+
+이 코드를 단계별로 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. decorator 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def decorator(func):
+    ...
+\end{dhkcode}
+
+모듈 코드에서 \zsh{def decorator} 문장이 실행되면 함수 객체가 생성되고
+
+\zsh{decorator}라는 이름에 바인딩된다.
+
+이 시점에는 \zsh{decorator}의 본문이 실행되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 원본 greet 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def greet():
+    print("Hello")
+    return 10
+\end{dhkcode}
+
+새로운 함수 객체가 생성되고 \zsh{greet}에 바인딩된다.
+
+아직 \zsh{greet()}을 호출하지 않았으므로 \zsh{"Hello"}는 출력되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 원본 함수 객체의 참조 보존
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+original = greet
+\end{dhkcode}
+
+\zsh{original}이라는 이름이 원본 함수 객체를 참조하게 된다.
+
+새로운 함수 객체가 생성되는 것은 아니다.
+
+이 시점에는 다음 관계가 성립한다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: original
+node n2 (3,1) :: greet
+node n3 (2,3) :: 원본 greet 함수 객체
+
+merge n1, n2 -> n3
+\end{dhkdiagram}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. decorator(greet) 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+greet = decorator(greet)
+\end{dhkcode}
+
+먼저 오른쪽 표현식을 평가한다.
+
+\zsh{decorator}가 참조하는 함수 객체를 호출하고, 원본 \zsh{greet} 함수 객체를 인수로 전달한다.
+
+따라서 \zsh{decorator} 호출의 지역 매개변수 \zsh{func}는 원본 함수 객체를 참조한다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: 모듈 이름 greet
+node n2 (2,1) :: 모듈 이름 original
+node n3 (3,1) :: 매개변수 func
+node n4 (2,3) :: 원본 greet 함수 객체
+
+merge n1,n2,n3 ->  n4
+\end{dhkdiagram}
+
+이제 \zsh{decorator} 본문이 실행되므로 다음 문장이 출력된다.
+
+\begin{dhkzsh}
+decorator 실행
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. wrapper 함수 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+다음 중첩 함수 정의문이 실행된다.
+
+\begin{dhkcode}
+def wrapper():
+    print("Before")
+
+    result = func()
+
+    print("After")
+
+    return result
+\end{dhkcode}
+
+새로운 \zsh{wrapper} 함수 객체가 생성된다.
+
+여기서 \zsh{wrapper}는 외부 함수 \zsh{decorator}의 매개변수 \zsh{func}를 참조한다.
+
+따라서 \zsh{func}는 \zsh{wrapper}의 자유 변수(Free Variable)다.
+
+이것이 \zsh{A.4}에서 학습한 클로저의 형성 조건과 연결된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+6. wrapper 함수 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+return wrapper
+\end{dhkcode}
+
+\zsh{decorator}는 \zsh{wrapper} 함수 객체를 반환한다.
+
+여기서 \zsh{wrapper()}를 호출한 것이 아니라, 함수 객체 자체를 반환했다는 점이 중요하다.
+
+따라서 아직 \zsh{"Before"}와 \zsh{"After"}는 출력되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+7. greet 이름 재바인딩
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{decorator(greet)} 호출 결과로 반환된 \zsh{wrapper} 함수 객체가 왼쪽의 \zsh{greet}에 바인딩된다.
+
+이제 객체 관계는 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: original
+node n2 (1,2) [accent] :: 원본 함수 객체 // 실제 Hello 실행 코드
+node n3 (2,2) :: Cell func // 클로저 셀
+node n4 (3,1) :: greet
+node n5 (3,2) [accent] :: wrapper 함수 객체 // Before / func() / After
+
+explain :: 데코레이션 이후 객체 관계
+caption :: greet은 wrapper를 참조하지만, 원본 함수 객체는 original과 wrapper의 클로저를 통해 계속 참조된다.
+
+edge n1 -> n2
+edge n3 -> n2
+edge n4 -> n5
+edge n5 -> n3 :: 참조
+\end{dhkgraph}
+
+따라서 다음 비교는 \zsh{False}다.
+
+\begin{dhkcode}
+original is greet
+\end{dhkcode}
+
+두 이름이 서로 다른 함수 객체를 참조하기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+8. greet() 호출
+\end{dhksmry}
+\end{dhknote}
+
+마지막으로 다음 문장이 실행된다.
+
+\begin{dhkcode}
+result = greet()
+\end{dhkcode}
+
+현재 \zsh{greet}은 \zsh{wrapper} 함수 객체를 참조하고 있다.
+
+따라서 \zsh{wrapper}가 먼저 실행된다.
+
+\zsh{wrapper} 내부에서 \zsh{func()}를 호출할 때 비로소 원본 함수 객체가 실행되는 것이다.
+
+이것이 데코레이터의 기본 호출 구조다.
+
+\subsubsection{\zsh{@decorator}는 언제 실행될까?}
+
+이제 일반 함수 호출을 \zsh{@} 문법으로 변경해 보자.
+
+\begin{dhkcode}
+def decorator(func):
+    print("decorating:", func.__name__)
+
+    def wrapper():
+        print("Before")
+        result = func()
+        print("After")
+        return result
+
+    return wrapper
+
+
+@decorator
+def greet():
+    print("Hello")
+    return 10
+
+
+print("정의문 실행 완료")
+
+print(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+decorating: greet
+정의문 실행 완료
+Before
+Hello
+After
+10
+\end{dhkzsh}
+
+이 출력 순서는 데코레이터의 실행 시점을 설명한다.
+
+여기에는 세 가지 시점이 존재한다.
+
+\begin{dhksmry}
+    1. 함수 정의문 실행 시점
+       원본 함수 객체가 생성되고 데코레이터가 적용된다.
+
+    2. 이름 재바인딩 시점
+       데코레이터 반환값이 greet에 바인딩된다.
+
+    3. greet() 호출 시점
+       현재 greet에 바인딩된 wrapper가 실행되고 원본 함수를 호출한다.
+\end{dhksmry}
+
+여기서 다음 두 문장을 구별해야 한다.
+
+\zsh{@decorator}가 적용되는 시점은 함수 정의문이 실행되는 시점이다.
+
+\zsh{wrapper} 함수 본문이 실행되는 시점은 일반적으로 데코레이션 이후 해당 함수 객체가 호출되는 시점이다.
+
+두 시점은 다르다.
+
+또한 여기서 말하는 함수 정의 시점은 반드시 모듈을 처음 불러오는 시점만 의미하지 않는다.
+
+예를 들어 중첩 함수에 데코레이터가 붙어 있다면, 그 중첩 함수의 \zsh{def} 문장이 실행될 때마다 데코레이터가 적용될 수 있다.
+
+\begin{dhkcode}
+def decorator(func):
+    print("decorating")
+
+    def wrapper():
+        return func()
+
+    return wrapper
+
+
+def outer():
+
+    @decorator
+    def inner():
+        return 10
+
+    return inner
+
+
+f1 = outer()
+f2 = outer()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+decorating
+decorating
+\end{dhkzsh}
+
+\zsh{outer()}를 두 번 호출했기 때문에 내부의 \zsh{def inner} 문장도 두 번 실행된다.
+
+따라서 서로 다른 \zsh{inner} 함수 객체가 생성되고, 데코레이터도 각각 적용되는 것이다.
+
+여기서 정확한 기준은 소스 코드가 어디에 적혀 있는가가 아니라 해당 정의문이 언제 실행되는가라는 사실이다.
+
+\subsubsection{함수 정의, 데코레이션, 함수 호출을 구별하기}
+
+세 시점을 더 명확하게 확인해 보자.
+
+\begin{dhkcode}
+events = []
+
+
+def decorator(func):
+    events.append("2. decorator 호출")
+
+    def wrapper():
+        events.append("4. wrapper 호출")
+
+        result = func()
+
+        events.append("6. wrapper 반환")
+
+        return result
+
+    return wrapper
+
+
+events.append("1. 정의문 실행 전")
+
+
+@decorator
+def greet():
+    events.append("5. 원본 greet 호출")
+    return "Hello"
+
+
+events.append("3. 정의문 실행 후")
+
+print(events)
+
+result = greet()
+
+print(result)
+print(events)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+['1. 정의문 실행 전', '2. decorator 호출', '3. 정의문 실행 후']
+Hello
+['1. 정의문 실행 전', '2. decorator 호출', '3. 정의문 실행 후', 
+'4. wrapper 호출', '5. 원본 greet 호출', '6. wrapper 반환']
+\end{dhkzsh}
+
+이 코드는 다음 사실을 확인해 준다.
+
+\zsh{greet()}을 호출하기 전에도 \zsh{decorator}는 이미 실행되었다.
+
+하지만 \zsh{wrapper} 본문과 원본 \zsh{greet} 본문은 아직 실행되지 않았다.
+
+이것은 다음 세 호출을 혼동하면 안 된다는 의미다.
+
+\begin{dhktable}
+|표현식|	실제 의미|
+|:---|:---|
+|decorator(greet)|	원본 함수 객체를 인수로 전달하여 데코레이터 호출|
+|greet()|	현재 greet에 바인딩된 객체 호출|
+|func()|	wrapper 내부에서 자유 변수 func가 참조하는 원본 함수 호출|
+\end{dhktable}
+
+데코레이터가 함수 객체를 인수로 받는 것과 그 함수 객체를 호출하는 것은 전혀 다른 연산이다.
+
+한 가지 경계 조건도 기억해야 한다.
+
+데코레이터가 원본 함수를 자동으로 호출하는 것은 아니지만, 데코레이터 구현 안에 명시적으로 \zsh{func()}가 있다면 데코레이션 도중 원본 함수가 실행될 수도 있다.
+
+따라서 원본 함수가 언제 실행되는지는 실제 데코레이터 구현을 확인해야 한다.
+
+\subsubsection{\zsh{func}와 \zsh{func()} - 가장 중요한 구분}
+
+다음 두 코드는 같은 의미가 아니다.
+
+\begin{dhkcode}
+greet = decorator(greet)
+
+greet = decorator(greet())
+\end{dhkcode}
+
+첫 번째 코드에서는 오른쪽의 \zsh{greet}이 함수 객체를 참조한다.
+
+따라서 데코레이터의 매개변수 \zsh{func}에는 함수 객체가 전달된다.
+
+반면 두 번째 코드에서는 먼저 \zsh{greet()}이 실행된다.
+
+그다음 그 반환값이 \zsh{decorator}에 전달된다.
+
+실제 차이를 확인해 보자.
+
+\begin{dhkcode}
+def decorator(func):
+    print("전달받은 타입:", type(func).__name__)
+
+    def wrapper():
+        return func()
+
+    return wrapper
+
+
+def greet():
+    return 10
+
+
+greet = decorator(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+전달받은 타입: int
+\end{dhkzsh}
+
+여기서 중요한 점이 있다.
+
+이 코드가 반드시 \zsh{decorator(greet())} 호출 시점에 오류를 발생시키는 것은 아니다.
+
+위 예제의 \zsh{decorator}는 전달받은 객체가 호출 가능한지 즉시 검사하지 않는다.
+
+단순히 그 객체를 클로저에 보관하는 \zsh{wrapper}를 생성해서 반환한다.
+
+따라서 이후 다음 문장을 실행할 때
+
+\begin{dhkcode}
+greet()
+\end{dhkcode}
+
+\zsh{wrapper} 내부의 \zsh{func()}에서 오류가 발생한다.
+
+\begin{dhkzsh}
+TypeError: 'int' object is not callable
+\end{dhkzsh}
+
+왜냐하면 \zsh{func}가 함수 객체가 아니라 정수 객체 10을 참조하고 있기 때문이다.
+
+이를 표로 정리하면 다음과 같다.
+
+\begin{dhktable}
+|표현식|	데코레이터에 전달되는 객체|
+|:---|:---|
+|decorator(greet)|	greet가 참조하는 함수 객체|
+|decorator(greet())|	greet() 호출의 반환 객체|
+|decorator(lambda: 10)|	새로 생성된 함수 객체|
+|decorator(10)|	정수 객체 10|
+\end{dhktable}
+
+데코레이터의 매개변수 이름이 \zsh{func}라고 해서 Python이 자동으로 함수 타입을 보장하는 것은 아니다.
+
+전달받은 객체를 어떻게 사용할지는 데코레이터 구현에 달려 있다.
+
+\subsubsection{원본 함수 객체는 어디에 보관될까?}
+
+이제 \zsh{A.4}와 \zsh{A.5}에서 학습한 클로저 구조를 직접 연결해 보자.
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper():
+        return func()
+
+    return wrapper
+
+
+@decorator
+def greet():
+    return 10
+
+
+print(greet.__name__)
+print(greet.__code__.co_freevars)
+print(greet.__closure__[0].cell_contents.__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper
+('func',)
+greet
+\end{dhkzsh}
+
+이 출력은 세 가지 사실을 보여준다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 현재 greet은 wrapper 함수 객체를 참조한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(greet.__name__)
+\end{dhkcode}
+
+결과는 \zsh{"wrapper"}다.
+
+왜냐하면 \zsh{greet}이라는 이름이 데코레이터의 반환값인 \zsh{wrapper} 함수 객체에 재바인딩되었기 때문이다.
+
+\zsh{greet}이라는 이름이 붙어 있다고 해서 그 이름이 원본 함수 객체를 참조한다는 뜻은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. wrapper는 func를 자유 변수로 사용한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(greet.__code__.co_freevars)
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('func',)
+\end{dhkzsh}
+
+\zsh{wrapper} 본문은 외부 함수 \zsh{decorator}의 매개변수 \zsh{func}를 참조한다.
+
+따라서 \zsh{func}는 자유 변수다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 클로저 셀은 원본 함수 객체를 참조한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+greet.__closure__[0].cell_contents
+\end{dhkcode}
+
+이 표현식은 \zsh{wrapper}의 클로저 셀에 바인딩된 객체를 반환한다.
+
+이 예제에서는 그 객체가 원본 \zsh{greet} 함수 객체다.
+
+따라서 다음 코드는 \zsh{False}를 출력한다.
+
+\begin{dhkcode}
+original = greet.__closure__[0].cell_contents
+
+print(original is greet)
+print(original.__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+greet
+\end{dhkzsh}
+
+현재 \zsh{greet}이 참조하는 함수 객체와 \zsh{original}이 참조하는 함수 객체가 서로 다르기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 관계 정리
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkbranch}[in=8]
+node main :: 모듈 네임 스페이스
+handoff main -> a :: greet
+arrow a
+node a :: wrapper 함수 객체
+branchline a -> a1 :: __code__
+handoff a1 -> a2 :: co_freevars = ('func',)
+stop a2
+handoff a -> b :: __closure__
+arrow b
+node b :: Cell func
+arrow b
+node b :: 원본 greet 함수 객체
+handoff b -> c :: __code__
+arrow c
+node c :: 원본 함수 코드
+\end{dhkbranch}
+
+여기서 \zsh{A.4}에서 학습한 원리가 그대로 적용된다.
+
+\zsh{decorator()} 호출은 종료되었지만, 반환된 \zsh{wrapper} 함수 객체가 클로저 셀을 참조하고 있기 때문에 원본 함수 객체에 계속 접근할 수 있는 것이다.
+
+단, 모든 데코레이터가 원본 함수를 클로저에 보관하는 것은 아니다.
+
+이것은 지금 작성한 wrapper 기반 데코레이터의 구조다.
+
+\subsubsection{데코레이터는 반드시 \zsh{wrapper}를 만들어야 할까?}
+
+그렇지 않다.
+
+데코레이터는 대상 함수 객체를 전달받아 다른 객체를 반환하는 구조이지, 반드시 중첩 함수를 생성해야 하는 것은 아니다.
+
+다음 예제를 살펴보자.
+
+\begin{dhkcode}
+def identity(func):
+    print("데코레이터 적용")
+    return func
+
+
+@identity
+def greet():
+    return "Hello"
+
+
+print(greet())
+print(greet.__name__)
+print(greet.__closure__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+데코레이터 적용
+Hello
+greet
+None
+\end{dhkzsh}
+
+이 데코레이터는 새로운 \zsh{wrapper}를 생성하지 않는다.
+
+전달받은 원본 함수 객체를 그대로 반환한다.
+
+따라서 데코레이션 후에도 \zsh{greet}은 원본 함수 객체를 참조한다.
+
+이 예제에서는 외부 함수의 바인딩을 캡처하지 않으므로 \zsh{__closure__}도 \zsh{None}이다.
+
+즉, 데코레이터 적용과 클로저 생성은 반드시 함께 발생하는 것이 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+반환값이 함수가 아닌 경우
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드도 문법적으로 가능하다.
+
+\begin{dhkcode}
+def replace(func):
+    return 100
+
+
+@replace
+def greet():
+    return "Hello"
+
+
+print(greet)
+print(type(greet))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+100
+<class 'int'>
+\end{dhkzsh}
+
+여기서는 \zsh{greet}이 정수 객체 100에 바인딩된다.
+
+따라서 이후 \zsh{greet()}을 호출하면 \zsh{TypeError}가 발생한다.
+
+이 예제가 보여주는 원리는 중요하다.
+
+데코레이터의 반환값이 반드시 함수 객체여야 한다는 언어 차원의 제약은 없다.
+
+다만 데코레이션 이후에도 함수처럼 호출하려면 반환 객체가 호출 가능해야 한다.
+
+실무에서 일반적인 함수 데코레이터가 \zsh{wrapper} 함수 객체를 반환하는 이유도 기존 함수의 호출 인터페이스를 유지하면서 동작을 확장하기 위해서다.
+
+\subsubsection{이름 재바인딩은 언제 완료될까?}
+
+앞에서는 데코레이터의 반환값이 원래 이름에 다시 바인딩된다고 설명했다.
+
+그런데 그 바인딩은 데코레이터가 호출되기 전에 완료될까, 아니면 호출이 끝난 뒤 완료될까?
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def greet():
+    return "Old"
+
+
+def decorator(func):
+    print("데코레이션 중:", greet())
+    return func
+
+
+@decorator
+def greet():
+    return "New"
+
+
+print("데코레이션 후:", greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+데코레이션 중: Old
+데코레이션 후: New
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+처음에는 \zsh{greet}이라는 이름은 \zsh{"Old"}를 반환하는 함수 객체를 참조한다.
+
+그 다음 새로운 \zsh{greet} 정의문이 실행된다.
+
+이때 새로운 함수 객체가 생성되고 \zsh{decorator}에 전달된다.
+
+하지만 아직 새로운 함수 객체가 모듈 이름 \zsh{greet}에 최종 바인딩되기 전이다.
+
+따라서 \zsh{decorator} 내부에서 전역 이름 \zsh{greet}을 조회하면 기존 함수 객체를 찾게 된다.
+
+이후 \zsh{decorator}가 새로운 함수 객체를 반환하고, 그 반환값이 \zsh{greet}에 바인딩된다.
+
+그래서 마지막 호출에서는 \zsh{"New"}가 반환되는 것이다.
+
+이 과정을 나타내면 다음과 같다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: 초기 상태
+node n2 (2,2) :: greet
+node n3 (2,3) :: 기존 함수 객체
+
+edge n1 -- n2 :: VH
+edge n2 -> n3
+\end{dhkdiagram}
+
+\begin{dhkdiagram}[in=2]
+node n3 (3,1) :: 새로운 def greet 실행
+node n4 (4,2) :: 새로운 함수 객체 생성
+node n5 (5,2) :: decorator(새 함수 객체)
+node n6 (6,2) :: 반환 객체 획득
+node n7 (7,2) :: greet 이름 재바인딩
+node n8 (8,2) :: greet
+node n9 (8,3) :: 반환 객체
+
+edge n3 -- n4 :: VH
+edge n4 -> n5
+edge n5 -> n6
+edge n6 -> n7
+edge n7 -> n8
+edge n8 -> n9
+\end{dhkdiagram}
+
+여기서 중요한 판단 기준은 다음이다.
+
+데코레이터가 적용되는 동안 새로 정의한 함수 객체가 반드시 기존 이름에 먼저 바인딩되어 있는 것은 아니다.
+
+최종 이름 바인딩은 데코레이터 적용 결과가 결정된 뒤 이루어진다.
+
+\subsubsection{데코레이터 적용과 원본 함수의 내부 이름 탐색}
+
+여기서 조금 더 깊이 생각해 보자.
+
+데코레이션 후 원본 함수 객체는 클로저를 통해 유지될 수 있다.
+
+그런데 원본 함수 본문에서 자기 자신의 이름을 참조한다면 어떤 일이 발생할까?
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper(n):
+        print("wrapper:", n)
+        return func(n)
+
+    return wrapper
+
+
+@decorator
+def countdown(n):
+    if n == 0:
+        return 0
+
+    return countdown(n - 1)
+
+
+print(countdown(2))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper: 2
+wrapper: 1
+wrapper: 0
+0
+\end{dhkzsh}
+
+왜 \zsh{wrapper}가 세 번 실행될까?
+
+원본 \zsh{countdown} 함수 본문에 다음 표현식이 있다.
+
+\begin{dhkcode}
+countdown(n - 1)
+\end{dhkcode}
+
+이 \zsh{countdown}은 함수 객체 자체를 직접 가리키는 특별한 자기 참조가 아니다.
+
+일반적인 Python 이름 탐색 규칙에 따라 조회되는 전역 이름이다.
+
+그런데 데코레이션 이후 모듈의 \zsh{countdown}은 원본 함수가 아니라 \zsh{wrapper}를 참조하고 있다.
+
+따라서 원본 함수가 재귀 호출을 수행할 때도 \zsh{wrapper}를 다시 호출하게 되는 것이다.
+
+실행 흐름을 살펴보자.
+
+\begin{dhkbranch}[in=8]
+node main :: countdown(2)
+arrow main
+node main :: wrapper(2)
+arrow main
+node main :: 원본 countdown(2)
+handoff main -> a :: countdown(1)
+arrow a
+node a :: wrapper(1)
+arrow a
+node a :: 원본 countdown(1)
+handoff a -> b :: countdown(0)
+arrow b
+node b :: wrapper(0)
+arrow b
+node b :: 원본 countdown(0)
+arrow b
+node b :: 0
+\end{dhkbranch}
+
+이 예제는 두 가지 원리를 연결한다.
+
+첫째, 원본 함수 객체는 클로저에 의해 유지될 수 있다.
+
+둘째, 원본 함수 본문에 작성된 전역 이름은 함수 정의 당시의 객체를 영구적으로 가리키는 것이 아니라, 실행 시점의 전역 바인딩을 조회한다.
+
+따라서 데코레이터에 의한 이름 재바인딩은 원본 함수 내부의 재귀 호출 경로에도 영향을 줄 수 있다.
+
+이것은 \zsh{A.3}의 이름 탐색 원리가 데코레이터와 결합된 사례다.
+
+\subsubsection{\zsh{@decorator}와 \zsh{@decorator()}는 다르다}
+
+다음 두 문법을 비교해 보자.
+
+\begin{dhkcode}
+@decorator
+def greet():
+    return 10
+\end{dhkcode}
+
+\begin{dhkcode}
+@decorator()
+def greet():
+    return 10
+\end{dhkcode}
+
+두 표현식은 같은 의미가 아니다.
+
+첫 번째는 \zsh{decorator}가 참조하는 호출 가능한 객체를 데코레이터로 사용한다.
+
+따라서 개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+greet = decorator(greet)
+\end{dhkcode}
+
+반면 두 번째는 먼저 \zsh{decorator()}를 호출한다.
+
+그리고 그 호출 결과로 얻은 객체를 실제 데코레이터로 사용한다.
+
+개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+greet = decorator()(greet)
+\end{dhkcode}
+
+따라서 \zsh{decorator()}가 반환하는 객체도 호출 가능해야 한다.
+
+이러한 구조는 인수를 받는 데코레이터에서 자주 사용된다.
+
+예를 들어 다음과 같은 형태다.
+
+\begin{dhkcode}
+@repeat(3)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+이때 \zsh{repeat(3)}은 실제 데코레이터를 반환하는 데코레이터 생성기(Decorator Factory) 역할을 할 수 있다.
+
+이 구조는 \zsh{A.9}에서 상세하게 학습할 것이다.
+
+지금은 다음 구분만 정확하게 확립하면 된다.
+
+\begin{dhktable}
+|문법|	적용 방식|
+|:---|:---|
+|@decorator|	decorator 자체를 데코레이터로 사용|
+|@decorator()|	decorator() 호출 결과를 데코레이터로 사용|
+|@decorator(arg)|	decorator(arg) 호출 결과를 데코레이터로 사용|
+\end{dhktable}
+
+특히 \zsh{@decorator}를 \zsh{@decorator()}로 임의로 변경하면
+
+함수 정의 시점에 \zsh{TypeError}가 발생하거나 전혀 다른 동작이 나타날 수 있다.
+
+\subsubsection{wrapper의 인수 전달 문제}
+
+지금까지 사용한 wrapper는 다음과 같았다.
+
+\begin{dhkcode}
+def wrapper():
+    return func()
+\end{dhkcode}
+
+이 구조에는 한 가지 제한이 있다.
+
+원본 함수가 인수를 받는다면 \zsh{wrapper}도 그 호출을 처리할 수 있어야 한다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper():
+        return func()
+
+    return wrapper
+
+
+@decorator
+def add(a, b):
+    return a + b
+
+
+print(add(10, 20))
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+TypeError: ... wrapper() takes 0 positional arguments 
+but 2 were given
+\end{dhkzsh}
+
+왜 오류가 발생할까?
+
+데코레이션 후 \zsh{add}는 원본 함수가 아니라 \zsh{wrapper}를 참조한다.
+
+따라서 다음 호출은
+
+\begin{dhkcode}
+add(10, 20)
+\end{dhkcode}
+
+실제로는 \zsh{wrapper(10, 20)} 호출에 해당한다.
+
+그런데 \zsh{wrapper}에는 매개변수가 없다.
+
+따라서 원본 \zsh{add}에 도달하기 전에 \zsh{wrapper} 호출 단계에서 오류가 발생한다.
+
+이 문제를 해결하는 대표적인 방법은 다음과 같다.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+\end{dhkcode}
+
+여기서 \zsh{*args}와 \zsh{**kwargs}를 통해 \zsh{wrapper}가 받은 인수를 원본 함수에 전달할 수 있다.
+
+하지만 단순히 인수를 전달하는 것만으로 모든 함수 호출 계약이 자동으로 보존되는 것은 아니다.
+
+원본 함수의 반환값, 예외, 시그니처(Signature), 동기·비동기 동작 등을 어떻게 처리할지도 고려해야 한다.
+
+이 부분은 다음 \zsh{A.7}에서 자세히 분석할 것이다.
+
+\subsubsection{데코레이터 적용 후 함수 메타데이터는 어떻게 될까?}
+
+앞에서 다음 결과를 확인했다.
+
+\begin{dhkcode}
+print(greet.__name__)
+\end{dhkcode}
+
+데코레이션 후 \zsh{greet}이 \zsh{wrapper} 함수 객체를 참조한다면 결과는 일반적으로 다음과 같다.
+
+\begin{dhkzsh}
+wrapper
+\end{dhkzsh}
+
+왜 그럴까?
+
+함수 객체의 \zsh{__name__}은 그 함수 객체에 관한 메타데이터다.
+
+모듈 이름 \zsh{greet}이 \zsh{wrapper}를 참조하도록 바뀌었다고 해서 \zsh{wrapper}함수 객체의 \zsh{__name__}이 자동으로 \zsh{"greet"}으로 변경되는 것은 아니다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper():
+        return func()
+
+    return wrapper
+
+
+@decorator
+def greet():
+    """인사말을 반환한다."""
+    return "Hello"
+
+
+print(greet.__name__)
+print(greet.__doc__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper
+None
+\end{dhkzsh}
+
+원본 함수의 \zsh{__name__}은 \zsh{"greet"}이고, \zsh{__doc__}에는 독스트링이 존재한다.
+
+하지만 데코레이션 후 \zsh{greet}은 새로운 \zsh{wrapper} 함수 객체를 참조하고 있다.
+
+따라서 \zsh{wrapper}의 메타데이터가 나타나는 것이다.
+
+이 문제를 해결하기 위해 일반적으로 \zsh{functools.wraps}를 사용한다.
+
+\begin{dhkcode}
+from functools import wraps
+
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper():
+        return func()
+
+    return wrapper
+\end{dhkcode}
+
+다만 \zsh{functools.wraps}가 어떤 속성을 복사하고, \zsh{__wrapped__}를 어떻게 설정하며, \zsh{inspect.signature()}가 이를 어떻게 활용하는지는 \zsh{A.8}에서 다룰 것이다.
+
+이번 학습에서는 이름 재바인딩이 원본 함수의 메타데이터를 자동으로 새 함수 객체에 복사하지 않는다는 점을 이해하면 충분하다.
+
+\subsubsection{데코레이터의 내부 구조를 종합적으로 검증하기}
+
+이제 지금까지의 내용을 하나의 독립적인 코드로 통합해 보자.
+
+\begin{dhkcode}
+def decorator(func):
+    print("[1] decorator 호출")
+
+    def wrapper():
+        print("[3] wrapper 호출")
+
+        result = func()
+
+        print("[5] wrapper 종료")
+
+        return result
+
+    return wrapper
+
+
+@decorator
+def greet():
+    print("[4] 원본 greet 호출")
+    return 10
+
+
+print("[2] 데코레이션 완료")
+
+wrapped = greet
+
+freevars = wrapped.__code__.co_freevars
+cells = wrapped.__closure__
+
+closure_map = dict(zip(freevars, cells))
+
+original = closure_map["func"].cell_contents
+
+print("현재 이름의 함수:", wrapped.__name__)
+print("원본 함수:", original.__name__)
+print("함수 객체 동일성:", wrapped is original)
+
+print("반환값:", greet())
+\end{dhkcode}
+
+예상 실행 결과:
+
+\begin{dhkzsh}
+[1] decorator 호출
+[2] 데코레이션 완료
+현재 이름의 함수: wrapper
+원본 함수: greet
+함수 객체 동일성: False
+[3] wrapper 호출
+[4] 원본 greet 호출
+[5] wrapper 종료
+반환값: 10
+\end{dhkzsh}
+
+이 코드는 다음 다섯 가지 관계를 직접 확인한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫째, 데코레이터 호출은 함수 정의문 실행 중 발생한다
+\end{dhksmry}
+\end{dhknote}
+
+따라서 [1]이 [2]보다 먼저 출력된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+둘째, 데코레이션 이후 greet은 wrapper를 참조한다
+\end{dhksmry}
+\end{dhknote}
+
+따라서 \zsh{wrapped.__name__}은 \zsh{"wrapper"}다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+셋째, 원본 함수 객체는 wrapper의 클로저를 통해 접근할 수 있다
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{closure_map["func"].cell_contents}는 원본 함수 객체를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+넷째, wrapper와 원본 함수는 서로 다른 객체다
+\end{dhksmry}
+\end{dhknote}
+
+따라서 \zsh{wrapped is original}은 \zsh{False}다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+다섯째, wrapper가 원본 함수를 호출하고 반환값을 전달한다
+\end{dhksmry}
+\end{dhknote}
+
+따라서 [3], [4], [5] 순서로 출력되고 최종적으로 10이 반환된다.
+
+여기서 \zsh{closure_map}을 사용한 이유도 중요하다.
+
+\zsh{__closure__[0]}이 항상 원본 함수 객체를 참조한다고 일반화하면 안 된다.
+
+\zsh{wrapper}가 여러 자유 변수를 사용한다면 셀이 여러 개 존재할 수 있다.
+
+따라서 내부 구조를 분석할 때는 \zsh{co_freevars}의 이름과 \zsh{__closure__}의 셀을 대응시키는 것이 더 정확하다.
+
+\subsubsection{기존 Python 개념과의 연결}
+
+이번 학습에서 등장한 데코레이터는 Python의 별도 객체 모델을 새로 도입한 것이 아니다.
+
+일반적인 객체 모델을 결합한 구조다.
+
+\begin{dhktable}
+|기존 개념|	데코레이터에서의 역할|
+|:---|:---|
+|First-class Function|	원본 함수 객체를 다른 함수의 인수로 전달|
+|함수 객체 생성|	wrapper 함수 객체 생성|
+|이름 바인딩|	데코레이터 반환 객체를 원래 이름에 바인딩|
+|Lexical Scope|	wrapper가 외부 함수의 매개변수를 참조|
+|Free Variable|	wrapper의 func|
+|Closure Cell|	원본 함수 객체에 접근하는 바인딩 유지|
+|Callable|	wrapper를 함수처럼 호출|
+|반환|	wrapper가 원본 함수 호출 결과를 반환|
+|Identity|	원본 함수와 wrapper가 서로 다른 객체인지 비교|
+\end{dhktable}
+
+특히 클래스의 메서드 바인딩과도 구별해야 한다.
+
+\begin{dhkcode}
+obj.method
+\end{dhkcode}
+
+에서 발생하는 메서드 바인딩은 디스크립터(Descriptor)와 속성 탐색 규칙에 연결된다.
+
+반면
+
+\begin{dhkcode}
+@decorator
+def method(self):
+    ...
+\end{dhkcode}
+
+에서의 데코레이터 적용은 클래스 본문에서 함수 정의문이 실행될 때 발생하는 객체 변환 과정이다.
+
+이후 그 객체가 인스턴스 속성으로 접근될 때는 다시 디스크립터와 메서드 바인딩 규칙이 관여할 수 있다.
+
+두 메커니즘은 서로 다른 단계에서 작동한다.
+
+이 관계는 \zsh{A.11}에서 자세히 분석할 것이다.
+
+\subsubsection{실전 응용 - 함수 실행 기록}
+
+데코레이터의 가장 대표적인 활용 중 하나는 원본 함수의 핵심 로직을 변경하지 않고 부가 기능을 추가하는 것이다.
+
+예를 들어 다음과 같은 실행 기록 기능을 생각해 볼 수 있다.
+
+\begin{dhkcode}
+def log_call(func):
+
+    def wrapper(*args, **kwargs):
+        print(f"{func.__name__} 호출 시작")
+
+        result = func(*args, **kwargs)
+
+        print(f"{func.__name__} 호출 종료")
+
+        return result
+
+    return wrapper
+
+
+@log_call
+def multiply(a, b):
+    return a * b
+
+
+print(multiply(3, 4))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+multiply 호출 시작
+multiply 호출 종료
+12
+\end{dhkzsh}
+
+여기서 원본 \zsh{multiply} 함수는 곱셈 연산만 담당한다.
+
+실행 기록 기능은 \zsh{wrapper}가 담당한다.
+
+이 구조가 유용한 이유는 기능의 책임을 분리할 수 있기 때문이다.
+
+원본 함수는 자신의 계산을 수행하고, 데코레이터는 호출 전후의 공통 처리를 수행한다.
+
+실제 프로그램에서는 이러한 구조를 이용해 로깅(Logging), 권한 검사, 호출 횟수 기록, 실행 시간 측정, 캐싱(Caching) 등을 구현할 수 있다.
+
+하지만 각각의 기능은 단순히 \zsh{@}를 붙이는 것만으로 자동 궇녀되는 것이 아니다.
+
+데코레이터가 반환하는 객체가 실제로 어떤 동작을 수행하도록 작성되어 있는지가 핵심이다.
+
+\subsubsection{자주 발생하는 오해와 경계 조건}
+
+\begin{dhktable}
+|오해|	정확한 설명|
+|:---|:---|
+|@decorator는 원본 함수 객체를 직접 수정한다.|	일반적으로 원본 객체를 전달하고 반환 객체를 이름에 다시 바인딩해.|
+|@decorator는 decorator()와 같다.|	전자는 데코레이터 객체를 사용하고, 후자는 먼저 호출 결과를 얻어 사용해.|
+|데코레이터에는 함수 호출 결과가 전달된다.|	일반적인 함수 데코레이터에는 함수 객체 자체가 전달돼.|
+|wrapper는 데코레이션 시점에 실행된다.|	wrapper 함수 객체는 생성되지만 본문은 별도 호출이 있어야 실행돼.|
+|데코레이터는 반드시 새로운 함수를 반환한다.|	원본 함수를 그대로 반환하거나 다른 종류의 객체를 반환할 수도 있어.|
+|원본 함수 객체는 데코레이션 후 사라진다.|	wrapper의 클로저 등 다른 참조가 있다면 계속 유지될 수 있어.|
+|데코레이션 후 함수 이름은 원본 함수 객체를 가리킨다.|	그 이름은 데코레이터가 반환한 객체를 가리켜.|
+|wrapper가 원본 함수의 인수와 메타데이터를 자동으로 보존한다.|	인수 전달과 메타데이터 보존은 별도로 구현해야 해.|
+\end{dhktable}
+
+여기서 특히 강조할 점은 데코레이터 문법 자체와 특정 데코레이터의 구현을 구분해야 한다는 것이다.
+
+\zsh{@decorator}가 적용되었다는 사실만으로 원본 함수의 호출 횟수, 반환값, 예외 처리 방식, 메타데이터가 어떻게 달라지는지 단정할 수 없다.
+
+실제 동작은 데코레이터가 반환하는 객체와 그 객체의 구현에 따라 결정된다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습에서 가장 중요한 변환식은 다음과 같다.
+
+\[
+\texttt{@decorator}
+\quad\Longleftrightarrow\quad
+\texttt{func = decorator(func)}
+\]
+
+이 표현은 단일 함수 데코레이터의 일반적인 의미를 나타낸 것이다.
+
+실제 소스 코드가 내부적으로 반드시 이 대입문으로 문자 그대로 치환한다는 의미는 아니다.
+
+이를 객체 관계로 해석하면 다음과 같다.
+
+\begin{dhksmry}[centered]
+원본 함수 정의
+\da
+원본 함수 객체 생성
+\da
+decorator(원본 함수 객체)
+\da
+데코레이터 반환 객체
+\da
+원래 함수 이름에 재바인딩
+\da
+이후 이름을 통한 호출
+\end{dhksmry}
+
+wrapper 기반 데코레이터라면 다음 구조가 추가된다.
+
+\begin{dhkbranch}[in=8]
+node main :: 함수 이름
+arrow main
+node main :: wrapper 함수 객체
+branchline main -> a :: 호출 시 부가 기능 실행
+stop a
+handoff main -> c :: 클로저 셀
+arrow c
+node c :: 원본 함수 객체
+arrow c
+node c :: 원본 함수 호출
+\end{dhkbranch}
+
+이제 다음 질문에 스스로 답할 수 있다면 \zsh{A.6}의 핵심 구조를 이해한 것이다.
+
+\begin{dhksmry}
+    - @decorator는 언제 적용되는가?
+
+    - 데코레이터에는 어떤 객체가 인수로 전달되는가?
+
+    - 데코레이터가 반환한 객체는 어디에 바인딩되는가?
+
+    - 원본 함수 객체와 wrapper 함수 객체는 동일한가?
+
+    - wrapper가 원본 함수를 참조한다면 그 바인딩은 어디에 유지되는가?
+
+    - 데코레이션 이후 func()를 호출하면 실제로 어떤 객체가 호출되는가?
+\end{dhksmry}
+
+가장 중요한 판단 기준은 하나다.
+
+\begin{dhksmry}[centered]
+데코레이터를 분석할 때는 함수 이름만 따라가지 말고,
+
+각 시점에 그 이름이 어떤 객체를 참조하는지 추적해야 한다.
+\end{dhksmry}

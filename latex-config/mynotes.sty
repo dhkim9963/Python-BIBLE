@@ -1772,10 +1772,10 @@
   \dhkbranchrender%
 }
 
-
 % ================================================================
-% 9. dhkdiagram v3: split/merge + line annotations + v2 compatibility
+% 9. dhkdiagram v4.1: arbitrary-direction split/merge + v3 compatibility
 % Add this entire block AFTER the current section 8 in mynotes.sty.
+% v4.1 change: fixed row/column gap; disables automatic spacing reservations.
 % Nothing in dhkbranch, dhkdir, or dhksmry needs to change.
 %
 % Syntax (one instruction per physical line):
@@ -1790,7 +1790,8 @@
 %   edge A -> B :: VH // explanation (route and annotation)
 %   split parent -> a, b, c :: branch explanation
 %   merge a, b, c -> dest :: merge explanation
-% Notes: split and merge connect adjacent rows, with a shared horizontal rail.
+% v4: Split/merge accept arbitrary rows, columns and member counts.
+% Legacy adjacent-row diagrams keep their original v3 rail geometry.
 % Existing v2 edge/node syntax is supported without modifications.
 % Default edge shape: straight.  Row/column indexing starts at 1.
 % Use \dhkdiagramspacing{8mm}{3mm} to set global H/V gaps.
@@ -2072,11 +2073,10 @@
      {-\l_dhkdiagram_cursor_dim - 0.5\l_dhkdiagram_size_dim}
     \prop_put:Nnx \l_dhkdiagram_y_prop {##1}
      {\dim_use:N \l_dhkdiagram_coord_dim}
-    \prop_get:NnNTF \l_dhkdiagram_gapafter_prop {##1} \l_tmpb_tl
-     {\dim_add:Nn \l_dhkdiagram_cursor_dim
-       {\l_dhkdiagram_size_dim + \dim_max:nn {\g_dhkdiagram_vgap_dim}{\l_tmpb_tl}}}
-     {\dim_add:Nn \l_dhkdiagram_cursor_dim
-       {\l_dhkdiagram_size_dim + \g_dhkdiagram_vgap_dim}}
+    % v4.1: fixed inter-row spacing, never enlarged by an edge/split/merge.
+    % User-configured \dhkdiagramspacing still controls the default gap.
+    \dim_add:Nn \l_dhkdiagram_cursor_dim
+     {\l_dhkdiagram_size_dim + \g_dhkdiagram_vgap_dim}
    }
  }
 \cs_new_protected:Npn \dhkdiagram_draw_nodes:
@@ -2265,7 +2265,9 @@
   \bool_if:NTF \l_dhkdiagram_group_valid_bool
    {\dhkdiagram_draw_group_valid:}
    {\regex_match:nVTF {\A (split|merge) \s+} \l_dhkdiagram_left_tl
-      {\PackageWarning{mynotes}{Invalid~split/merge:~requires~defined~nodes~on~adjacent~rows}}
+      {\bool_if:NTF \l_dhkdiagram_flex_foreground_bool
+        {\dhkdiagram_draw_group_flexible_checked:}
+        {\seq_gput_right:Nn \g_dhkdiagram_flex_deferred_seq {#1}}}
       {}}
  }
 \cs_new_protected:Npn \dhkdiagram_draw_group_valid:
@@ -2344,6 +2346,334 @@
         {\tl_use:N \l_dhkdiagram_annotation_tl};}
    }
  }
+% ================================================================
+% v4 extension: arbitrary geometry for split/merge.
+% The v3 method above is deliberately untouched: an old-valid layout
+% still uses precisely the same original paths and annotation placement.
+% This fallback runs only for layouts that v3 declined to draw.
+% Rows/columns describe the centers; their values do not limit routing.
+% ================================================================
+\seq_new:N \g_dhkdiagram_flex_deferred_seq
+\bool_new:N \l_dhkdiagram_flex_foreground_bool
+\bool_new:N \l_dhkdiagram_flex_exists_bool
+\bool_new:N \l_dhkdiagram_flex_horizontal_bool
+\bool_new:N \l_dhkdiagram_flex_positive_bool
+\dim_new:N \l_dhkdiagram_flex_group_x_dim
+\dim_new:N \l_dhkdiagram_flex_group_y_dim
+\dim_new:N \l_dhkdiagram_flex_group_minx_dim
+\dim_new:N \l_dhkdiagram_flex_group_maxx_dim
+\dim_new:N \l_dhkdiagram_flex_group_miny_dim
+\dim_new:N \l_dhkdiagram_flex_group_maxy_dim
+\dim_new:N \l_dhkdiagram_flex_group_west_dim
+\dim_new:N \l_dhkdiagram_flex_group_east_dim
+\dim_new:N \l_dhkdiagram_flex_group_south_dim
+\dim_new:N \l_dhkdiagram_flex_group_north_dim
+\dim_new:N \l_dhkdiagram_flex_solo_x_dim
+\dim_new:N \l_dhkdiagram_flex_solo_y_dim
+\dim_new:N \l_dhkdiagram_flex_solo_side_dim
+\dim_new:N \l_dhkdiagram_flex_rail_dim
+\dim_new:N \l_dhkdiagram_flex_left_dim
+\dim_new:N \l_dhkdiagram_flex_right_dim
+\dim_new:N \l_dhkdiagram_flex_low_dim
+\dim_new:N \l_dhkdiagram_flex_high_dim
+\dim_new:N \l_dhkdiagram_flex_x_dim
+\dim_new:N \l_dhkdiagram_flex_y_dim
+\tl_new:N \l_dhkdiagram_flex_solo_tl
+\tl_new:N \l_dhkdiagram_flex_solo_anchor_tl
+\tl_new:N \l_dhkdiagram_flex_group_anchor_tl
+
+% Unknown IDs are the only unsupported references.  Unlike v3,
+% non-adjacent row placement and a single member are not errors.
+\cs_new_protected:Npn \dhkdiagram_draw_group_flexible_checked:
+ {
+  \bool_set_true:N \l_dhkdiagram_flex_exists_bool
+  \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+   {\tl_set_eq:NN \l_dhkdiagram_flex_solo_tl \l_dhkdiagram_group_src_tl}
+   {\tl_set_eq:NN \l_dhkdiagram_flex_solo_tl \l_dhkdiagram_group_dst_tl}
+  \prop_if_in:NVTF \l_dhkdiagram_label_prop \l_dhkdiagram_flex_solo_tl
+   {}
+   {\bool_set_false:N \l_dhkdiagram_flex_exists_bool
+    \PackageWarning{mynotes}{Unknown~dhkdiagram~split/merge~node~\tl_use:N\l_dhkdiagram_flex_solo_tl}}
+  \seq_if_empty:NT \l_dhkdiagram_group_seq
+   {\bool_set_false:N \l_dhkdiagram_flex_exists_bool
+    \PackageWarning{mynotes}{Empty~dhkdiagram~split/merge~list}}
+  \seq_map_inline:Nn \l_dhkdiagram_group_seq
+   {
+    \tl_set:Nn \l_dhkdiagram_group_item_tl {##1}
+    \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+    \prop_if_in:NVTF \l_dhkdiagram_label_prop \l_dhkdiagram_group_item_tl
+     {}
+     {\bool_set_false:N \l_dhkdiagram_flex_exists_bool
+      \PackageWarning{mynotes}{Unknown~dhkdiagram~split/merge~node~\tl_use:N\l_dhkdiagram_group_item_tl}}
+   }
+  \bool_if:NT \l_dhkdiagram_flex_exists_bool
+   {\dhkdiagram_draw_group_flexible:}
+ }
+
+% Choose a route from the source/target positions; tie uses group spread.
+% This applies only to new/non-legacy geometry.
+\cs_new_protected:Npn \dhkdiagram_flex_measure:
+ {
+  \pgfextractx{\l_dhkdiagram_flex_solo_x_dim}
+    {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{center}}
+  \pgfextracty{\l_dhkdiagram_flex_solo_y_dim}
+    {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{center}}
+  \dim_zero:N \l_dhkdiagram_flex_group_x_dim
+  \dim_zero:N \l_dhkdiagram_flex_group_y_dim
+  \seq_map_indexed_inline:Nn \l_dhkdiagram_group_seq
+   {
+    \tl_set:Nn \l_dhkdiagram_group_item_tl {##2}
+    \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+    \pgfextractx{\l_dhkdiagram_flex_x_dim}
+      {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{center}}
+    \pgfextracty{\l_dhkdiagram_flex_y_dim}
+      {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{center}}
+    \dim_add:Nn \l_dhkdiagram_flex_group_x_dim {\l_dhkdiagram_flex_x_dim}
+    \dim_add:Nn \l_dhkdiagram_flex_group_y_dim {\l_dhkdiagram_flex_y_dim}
+    \int_compare:nNnTF {##1} = {1}
+     {
+      \dim_set_eq:NN \l_dhkdiagram_flex_group_minx_dim \l_dhkdiagram_flex_x_dim
+      \dim_set_eq:NN \l_dhkdiagram_flex_group_maxx_dim \l_dhkdiagram_flex_x_dim
+      \dim_set_eq:NN \l_dhkdiagram_flex_group_miny_dim \l_dhkdiagram_flex_y_dim
+      \dim_set_eq:NN \l_dhkdiagram_flex_group_maxy_dim \l_dhkdiagram_flex_y_dim
+      \pgfextractx{\l_dhkdiagram_flex_group_west_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{west}}
+      \pgfextractx{\l_dhkdiagram_flex_group_east_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{east}}
+      \pgfextracty{\l_dhkdiagram_flex_group_south_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{south}}
+      \pgfextracty{\l_dhkdiagram_flex_group_north_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{north}}
+     }
+     {
+      \dim_set:Nn \l_dhkdiagram_flex_group_minx_dim
+       {\dim_min:nn {\l_dhkdiagram_flex_group_minx_dim}{\l_dhkdiagram_flex_x_dim}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_maxx_dim
+       {\dim_max:nn {\l_dhkdiagram_flex_group_maxx_dim}{\l_dhkdiagram_flex_x_dim}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_miny_dim
+       {\dim_min:nn {\l_dhkdiagram_flex_group_miny_dim}{\l_dhkdiagram_flex_y_dim}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_maxy_dim
+       {\dim_max:nn {\l_dhkdiagram_flex_group_maxy_dim}{\l_dhkdiagram_flex_y_dim}}
+      \pgfextractx{\l_tmpa_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{west}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_west_dim
+       {\dim_min:nn {\l_dhkdiagram_flex_group_west_dim}{\l_tmpa_dim}}
+      \pgfextractx{\l_tmpa_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{east}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_east_dim
+       {\dim_max:nn {\l_dhkdiagram_flex_group_east_dim}{\l_tmpa_dim}}
+      \pgfextracty{\l_tmpa_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{south}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_south_dim
+       {\dim_min:nn {\l_dhkdiagram_flex_group_south_dim}{\l_tmpa_dim}}
+      \pgfextracty{\l_tmpa_dim}
+       {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{north}}
+      \dim_set:Nn \l_dhkdiagram_flex_group_north_dim
+       {\dim_max:nn {\l_dhkdiagram_flex_group_north_dim}{\l_tmpa_dim}}
+     }
+   }
+  \dim_set:Nn \l_dhkdiagram_flex_group_x_dim
+   {\l_dhkdiagram_flex_group_x_dim / \seq_count:N \l_dhkdiagram_group_seq}
+  \dim_set:Nn \l_dhkdiagram_flex_group_y_dim
+   {\l_dhkdiagram_flex_group_y_dim / \seq_count:N \l_dhkdiagram_group_seq}
+  % Orient primarily by actual source-to-target displacement.
+  % Ties use the spread of members: a vertical list calls for a
+  % vertical rail (horizontal flow), and a horizontal list vice versa.
+  \bool_set_false:N \l_dhkdiagram_flex_horizontal_bool
+  \dim_compare:nNnTF
+   {\dim_abs:n {\l_dhkdiagram_flex_group_x_dim-\l_dhkdiagram_flex_solo_x_dim}}
+   >
+   {\dim_abs:n {\l_dhkdiagram_flex_group_y_dim-\l_dhkdiagram_flex_solo_y_dim}}
+   {\bool_set_true:N \l_dhkdiagram_flex_horizontal_bool}
+   {
+    \dim_compare:nNnT
+     {\dim_abs:n {\l_dhkdiagram_flex_group_x_dim-\l_dhkdiagram_flex_solo_x_dim}}
+     =
+     {\dim_abs:n {\l_dhkdiagram_flex_group_y_dim-\l_dhkdiagram_flex_solo_y_dim}}
+     {
+       \dim_compare:nNnT
+        {\l_dhkdiagram_flex_group_maxy_dim-\l_dhkdiagram_flex_group_miny_dim}
+        >
+        {\l_dhkdiagram_flex_group_maxx_dim-\l_dhkdiagram_flex_group_minx_dim}
+        {\bool_set_true:N \l_dhkdiagram_flex_horizontal_bool}
+     }
+   }
+  \bool_set_false:N \l_dhkdiagram_flex_positive_bool
+  \bool_if:NTF \l_dhkdiagram_flex_horizontal_bool
+   {
+    \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+     {\dim_compare:nNnT {\l_dhkdiagram_flex_group_x_dim} > {\l_dhkdiagram_flex_solo_x_dim}
+        {\bool_set_true:N \l_dhkdiagram_flex_positive_bool}}
+     {\dim_compare:nNnT {\l_dhkdiagram_flex_solo_x_dim} > {\l_dhkdiagram_flex_group_x_dim}
+        {\bool_set_true:N \l_dhkdiagram_flex_positive_bool}}
+   }
+   {
+    \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+     {\dim_compare:nNnT {\l_dhkdiagram_flex_group_y_dim} < {\l_dhkdiagram_flex_solo_y_dim}
+        {\bool_set_true:N \l_dhkdiagram_flex_positive_bool}}
+     {\dim_compare:nNnT {\l_dhkdiagram_flex_solo_y_dim} < {\l_dhkdiagram_flex_group_y_dim}
+        {\bool_set_true:N \l_dhkdiagram_flex_positive_bool}}
+   }
+ }
+
+% Compute a rail between the nearest-facing bounding-box edges, rather
+% than between centers (which could put it inside a wide label).
+\cs_new_protected:Npn \dhkdiagram_flex_rail:
+ {
+  \dim_set:Nn \l_dhkdiagram_flex_left_dim
+   {\dim_min:nn {\l_dhkdiagram_flex_group_minx_dim}{\l_dhkdiagram_flex_solo_x_dim}}
+  \dim_set:Nn \l_dhkdiagram_flex_right_dim
+   {\dim_max:nn {\l_dhkdiagram_flex_group_maxx_dim}{\l_dhkdiagram_flex_solo_x_dim}}
+  \dim_set:Nn \l_dhkdiagram_flex_low_dim
+   {\dim_min:nn {\l_dhkdiagram_flex_group_miny_dim}{\l_dhkdiagram_flex_solo_y_dim}}
+  \dim_set:Nn \l_dhkdiagram_flex_high_dim
+   {\dim_max:nn {\l_dhkdiagram_flex_group_maxy_dim}{\l_dhkdiagram_flex_solo_y_dim}}
+  \bool_if:NTF \l_dhkdiagram_flex_horizontal_bool
+   {
+    \bool_if:NTF \l_dhkdiagram_flex_positive_bool
+     {
+      \tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {west}
+      \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {east}
+      \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+       {\pgfextractx{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{east}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_west_dim)/2}}
+       {\tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {east}
+        \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {west}
+        \pgfextractx{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{west}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_east_dim)/2}}
+     }
+     {
+      \tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {east}
+      \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {west}
+      \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+       {\pgfextractx{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{west}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_east_dim)/2}}
+       {\tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {west}
+        \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {east}
+        \pgfextractx{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{east}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_west_dim)/2}}
+     }
+   }
+   {
+    \bool_if:NTF \l_dhkdiagram_flex_positive_bool
+     {
+      \tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {north}
+      \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {south}
+      \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+       {\pgfextracty{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{south}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_north_dim)/2}}
+       {\tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {south}
+        \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {north}
+        \pgfextracty{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{north}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_south_dim)/2}}
+     }
+     {
+      \tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {south}
+      \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {north}
+      \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+       {\pgfextracty{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{north}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_south_dim)/2}}
+       {\tl_set:Nn \l_dhkdiagram_flex_group_anchor_tl {north}
+        \tl_set:Nn \l_dhkdiagram_flex_solo_anchor_tl {south}
+        \pgfextracty{\l_dhkdiagram_flex_solo_side_dim}
+          {\pgfpointanchor{dhkdiag-\l_dhkdiagram_flex_solo_tl}{south}}
+        \dim_set:Nn \l_dhkdiagram_flex_rail_dim
+         {(\l_dhkdiagram_flex_solo_side_dim+\l_dhkdiagram_flex_group_north_dim)/2}}
+     }
+   }
+ }
+
+% Draw fallback connector rails and visible arrows in the foreground.
+% The foreground layer is intentional for nonlegacy layouts: if a line
+% crosses a node, the author can see it and alter the explicit grid.
+\cs_new_protected:Npn \dhkdiagram_draw_group_flexible:
+ {
+  \dhkdiagram_flex_measure:
+  \dhkdiagram_flex_rail:
+  \bool_if:NTF \l_dhkdiagram_flex_horizontal_bool
+    {
+     % Common vertical rail, regardless of the row numbers.
+     \draw[thin]
+      (\dim_use:N\l_dhkdiagram_flex_rail_dim,\dim_use:N\l_dhkdiagram_flex_low_dim)
+      --
+      (\dim_use:N\l_dhkdiagram_flex_rail_dim,\dim_use:N\l_dhkdiagram_flex_high_dim);
+     \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+      {\draw[thin]
+        (dhkdiag-\l_dhkdiagram_flex_solo_tl.\l_dhkdiagram_flex_solo_anchor_tl)
+        --(\dim_use:N\l_dhkdiagram_flex_rail_dim,\dim_use:N\l_dhkdiagram_flex_solo_y_dim)
+        \dhkdiagram_flex_note:n {above};}
+      {\draw[thin,-{Stealth[length=1.6mm]}]
+        (\dim_use:N\l_dhkdiagram_flex_rail_dim,\dim_use:N\l_dhkdiagram_flex_solo_y_dim)
+        --(dhkdiag-\l_dhkdiagram_flex_solo_tl.\l_dhkdiagram_flex_solo_anchor_tl)
+        \dhkdiagram_flex_note:n {above};}
+     \seq_map_inline:Nn \l_dhkdiagram_group_seq
+      {
+       \tl_set:Nn \l_dhkdiagram_group_item_tl {##1}
+       \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+       \pgfextracty{\l_dhkdiagram_flex_y_dim}
+        {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{center}}
+       \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+        {\draw[thin,-{Stealth[length=1.6mm]}]
+          (\dim_use:N\l_dhkdiagram_flex_rail_dim,\dim_use:N\l_dhkdiagram_flex_y_dim)
+          --(dhkdiag-\l_dhkdiagram_group_item_tl.\l_dhkdiagram_flex_group_anchor_tl);}
+        {\draw[thin]
+          (dhkdiag-\l_dhkdiagram_group_item_tl.\l_dhkdiagram_flex_group_anchor_tl)
+          --(\dim_use:N\l_dhkdiagram_flex_rail_dim,\dim_use:N\l_dhkdiagram_flex_y_dim);}
+      }
+    }
+    {
+     % Common horizontal rail, regardless of the column numbers.
+     \draw[thin]
+      (\dim_use:N\l_dhkdiagram_flex_left_dim,\dim_use:N\l_dhkdiagram_flex_rail_dim)
+      --
+      (\dim_use:N\l_dhkdiagram_flex_right_dim,\dim_use:N\l_dhkdiagram_flex_rail_dim);
+     \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+      {\draw[thin]
+        (dhkdiag-\l_dhkdiagram_flex_solo_tl.\l_dhkdiagram_flex_solo_anchor_tl)
+        --(\dim_use:N\l_dhkdiagram_flex_solo_x_dim,\dim_use:N\l_dhkdiagram_flex_rail_dim)
+        \dhkdiagram_flex_note:n {right};}
+      {\draw[thin,-{Stealth[length=1.6mm]}]
+        (\dim_use:N\l_dhkdiagram_flex_solo_x_dim,\dim_use:N\l_dhkdiagram_flex_rail_dim)
+        --(dhkdiag-\l_dhkdiagram_flex_solo_tl.\l_dhkdiagram_flex_solo_anchor_tl)
+        \dhkdiagram_flex_note:n {right};}
+     \seq_map_inline:Nn \l_dhkdiagram_group_seq
+      {
+       \tl_set:Nn \l_dhkdiagram_group_item_tl {##1}
+       \tl_trim_spaces:N \l_dhkdiagram_group_item_tl
+       \pgfextractx{\l_dhkdiagram_flex_x_dim}
+        {\pgfpointanchor{dhkdiag-\l_dhkdiagram_group_item_tl}{center}}
+       \str_if_eq:VnTF \l_dhkdiagram_dir_tl {split}
+        {\draw[thin,-{Stealth[length=1.6mm]}]
+          (\dim_use:N\l_dhkdiagram_flex_x_dim,\dim_use:N\l_dhkdiagram_flex_rail_dim)
+          --(dhkdiag-\l_dhkdiagram_group_item_tl.\l_dhkdiagram_flex_group_anchor_tl);}
+        {\draw[thin]
+          (dhkdiag-\l_dhkdiagram_group_item_tl.\l_dhkdiagram_flex_group_anchor_tl)
+          --(\dim_use:N\l_dhkdiagram_flex_x_dim,\dim_use:N\l_dhkdiagram_flex_rail_dim);}
+      }
+    }
+ }
+
+\cs_new_protected:Npn \dhkdiagram_flex_note:n #1
+ {
+  \tl_if_blank:VF \l_dhkdiagram_annotation_tl
+   {node[midway,#1=2mm,fill=white,inner~sep=0.5pt,font=\ttfamily\small]
+     {\tl_use:N \l_dhkdiagram_annotation_tl}}
+ }
+
 \cs_new_protected:Npn \dhkdiagram_draw_connector:n #1
  {
   \tl_set:Nn \l_dhkdiagram_left_tl {#1}
@@ -2372,6 +2702,8 @@
   \prop_clear:N \l_dhkdiagram_x_prop
   \prop_clear:N \l_dhkdiagram_y_prop
   \prop_clear:N \l_dhkdiagram_gapafter_prop
+  \seq_gclear:N \g_dhkdiagram_flex_deferred_seq
+  \bool_set_false:N \l_dhkdiagram_flex_foreground_bool
   \int_zero:N \l_dhkdiagram_connector_serial_int
   \int_zero:N \l_dhkdiagram_maxrow_int
   \int_zero:N \l_dhkdiagram_maxcol_int
@@ -2383,8 +2715,8 @@
      {\seq_put_right:NV \l_dhkdiagram_lines_seq \l_tmpa_tl
       \exp_args:NV \dhkdiagram_scan:n \l_tmpa_tl}}
   \ior_close:N \g_dhkdiagram_ior
-  \seq_map_inline:Nn \l_dhkdiagram_lines_seq
-   {\dhkdiagram_scan_spacing:n {##1}}
+  % v4.1: do not preallocate extra gaps for connectors or labels.
+  % All rows use the same vgap; all columns retain the same hgap.
   \dhkdiagram_positions:
   \par\smallskip\noindent
   \hspace*{\l_dhkvisual_indent_dim}%
@@ -2395,6 +2727,10 @@
      \seq_map_inline:Nn \l_dhkdiagram_lines_seq
       {\dhkdiagram_draw_connector:n {##1}}
     \end{scope}
+    % v4: draw flexible (nonlegacy) routes after the original background.
+    \bool_set_true:N \l_dhkdiagram_flex_foreground_bool
+    \seq_map_inline:Nn \g_dhkdiagram_flex_deferred_seq
+      {\dhkdiagram_draw_group:n {##1}}
   \end{tikzpicture}
   \dhkdiagramfitend
   \par\smallskip
@@ -2411,6 +2747,7 @@
  \end{VerbatimOut}%
  \dhkdiagramrender%
 }
+
 
 % ================================================================
 % 10. dhkgraph v7 — nested groups, preserving v6 features
