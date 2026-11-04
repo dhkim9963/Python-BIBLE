@@ -1169,7 +1169,7 @@
 }
 
 % ==================================================
-% 8. DHK Branch v15: compact layout + [in=N] + arrowup
+% 8. DHK Branch v16: arrows in labels + reliable chained handoff
 % ==================================================
 % Syntax (one instruction per line):
 %   node   main :: Shell                 (STEP: breaks the spine)
@@ -1180,9 +1180,11 @@
 %   branch     main -> data :: --data (horizontal arrow)
 %   node data :: Path(...)            (STEP in the offshoot)
 %   node main :: First line // Second line  (manual line break)
-%   node data :: Parent //* child       (small L-shaped child inside node)
+%   node data :: Parent // child        (explicit second line)
 %   handoff main -> next :: process()  (end source trunk, continue on next)
 % After handoff main -> next, use arrow next / node next (not main).
+% All label text: ASCII ->, <-, <-> displays as real arrows.
+% The former //* child branch is removed; old //* is treated as //.
 %   arrow data                         (vertical arrow only on data)
 %   stop data                          (ends only data, keeps main)
 % No automatic downward arrow is added when branching.
@@ -1216,7 +1218,6 @@
 \dim_new:N \l_dhkbranch_row_dim
 \box_new:N \l_dhkbranch_label_box
 \seq_new:N \l_dhkbranch_label_lines_seq
-\seq_new:N \l_dhkbranch_child_parts_seq
 \bool_new:N \l_dhkbranch_valid_bool
 \bool_new:N \l_dhkbranch_horizontal_arrow_bool
 \bool_new:N \l_dhkbranch_first_row_bool
@@ -1266,6 +1267,46 @@
    {\int_max:nn {\l_dhkbranch_max_int} {\l_dhkbranch_new_slot_tl}}
  }
 \cs_generate_variant:Nn \prop_put:Nnn { NnV }
+% v16: handoff is a transfer to the NEXT lane on the right.
+% Old allocation re-used freed lanes, so after 3+ handoffs the transfer
+% alternated right/left and overlapped the new step/label.
+% Keep the old recycling allocator for ordinary branches and stop.
+\cs_new_protected:Npn \dhkbranch_allocate_handoff:n #1
+ {
+  \tl_set:Nx \l_dhkbranch_new_slot_tl
+   {\int_use:N \l_dhkbranch_next_int}
+  \int_incr:N \l_dhkbranch_next_int
+  \prop_put:NnV \l_dhkbranch_lanes_prop {#1} \l_dhkbranch_new_slot_tl
+  \int_set:Nn \l_dhkbranch_max_int
+   {\int_max:nn {\l_dhkbranch_max_int} {\l_dhkbranch_new_slot_tl}}
+ }
+% For branches starting inside a handed-off lane, never recycle a slot
+% to the LEFT of the parent.  main (slot 0) keeps v15 recycling exactly.
+\cs_generate_variant:Nn \seq_remove_all:Nn {NV}
+\cs_new_protected:Npn \dhkbranch_allocate_right_of:nn #1#2
+ {
+  \int_compare:nNnTF {#1} = {0}
+   {\dhkbranch_allocate:n {#2}}
+   {
+    \tl_clear:N \l_dhkbranch_new_slot_tl
+    \seq_map_inline:Nn \l_dhkbranch_free_seq
+     {
+      \tl_if_blank:VT \l_dhkbranch_new_slot_tl
+       {\int_compare:nNnT {##1} > {#1}
+         {\tl_set:Nn \l_dhkbranch_new_slot_tl {##1}}}
+     }
+    \tl_if_blank:VTF \l_dhkbranch_new_slot_tl
+     {\tl_set:Nx \l_dhkbranch_new_slot_tl
+        {\int_use:N \l_dhkbranch_next_int}
+      \int_incr:N \l_dhkbranch_next_int}
+     {\seq_remove_all:NV \l_dhkbranch_free_seq
+       \l_dhkbranch_new_slot_tl}
+    \prop_put:NnV \l_dhkbranch_lanes_prop {#2}
+      \l_dhkbranch_new_slot_tl
+    \int_set:Nn \l_dhkbranch_max_int
+     {\int_max:nn {\l_dhkbranch_max_int} {\l_dhkbranch_new_slot_tl}}
+   }
+ }
 % Split one raw instruction into command/columns and literal label.
 \cs_new_protected:Npn \dhkbranch_decode:n #1
  {
@@ -1284,6 +1325,13 @@
     \seq_if_empty:NF \l_dhkbranch_chunks_seq
      {\seq_pop_left:NN \l_dhkbranch_chunks_seq \l_dhkbranch_label_tl}
     \tl_trim_spaces:N \l_dhkbranch_label_tl
+    % v16: change arrows in labels ONLY, never in DSL command syntax.
+    % Longest replacement first to protect <->.
+    \tl_replace_all:Nnn \l_dhkbranch_label_tl {<->} {\ensuremath{\leftrightarrow}}
+    \tl_replace_all:Nnn \l_dhkbranch_label_tl {->} {\ensuremath{\rightarrow}}
+    \tl_replace_all:Nnn \l_dhkbranch_label_tl {<-} {\ensuremath{\leftarrow}}
+    % Compatibility: former L-shaped child syntax becomes a plain line break.
+    \tl_replace_all:Nnn \l_dhkbranch_label_tl {//*} {//}
     \tl_trim_spaces:N \l_dhkbranch_line_tl
     \regex_extract_once:nVNTF
       {\A(branchline|branch|handoff)\s+([-A-Za-z0-9\_]+)\s*->\s*([-A-Za-z0-9\_]+)\Z}
@@ -1323,7 +1371,7 @@
       \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
        {
         \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_right_tl \l_tmpb_tl
-         {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+         {} {\exp_args:NVV \dhkbranch_allocate_right_of:nn \l_tmpa_tl \l_dhkbranch_right_tl}
        } {}
      }
     {handoff}
@@ -1331,7 +1379,7 @@
      \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl \l_tmpa_tl
       {
        \prop_get:NVNTF \l_dhkbranch_lanes_prop \l_dhkbranch_right_tl \l_tmpb_tl
-        {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+        {} {\exp_args:NV \dhkbranch_allocate_handoff:n \l_dhkbranch_right_tl}
        \str_if_eq:VnF \l_dhkbranch_left_tl {main}
         {\seq_put_right:NV \l_dhkbranch_free_seq \l_tmpa_tl}
        \prop_remove:NV \l_dhkbranch_lanes_prop \l_dhkbranch_left_tl
@@ -1359,43 +1407,8 @@
 %
 \dim_new:N \l_dhkbranch_label_width_dim
 \tl_new:N \l_dhkbranch_label_slot_tl
-% The // syntax is unchanged.  "//*" adds an indented child line.
-% It is drawn inside the existing label box, so row heights and gaps
-% are still computed from the final typeset node dimensions.
-\cs_new_protected:Npn \dhkbranch_normal_part:n #1
- {
-  \seq_set_split:Nnn \l_dhkbranch_label_lines_seq {//} {#1}
-  \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
-   {
-    \int_compare:nNnT {##1} > {1} {\kern 1mm}
-    \tl_set:Nn \l_tmpb_tl {##2}
-    \tl_trim_spaces:N \l_tmpb_tl
-    \hbox{\ttfamily\small\tl_use:N \l_tmpb_tl}
-   }
- }
-\cs_new_protected:Npn \dhkbranch_child_part:n #1
- {
-  \seq_set_split:Nnn \l_dhkbranch_label_lines_seq {//} {#1}
-  \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
-   {
-    \kern 1mm
-    \tl_set:Nn \l_tmpb_tl {##2}
-    \tl_trim_spaces:N \l_tmpb_tl
-    \hbox{\kern 1mm
-      \tikz[baseline=-0.3ex]{\draw[thin] (0,1.2ex)--(0,0)--(2mm,0);}%
-      \kern 0.75mm\ttfamily\small\tl_use:N \l_tmpb_tl}
-   }
- }
-\cs_new_protected:Npn \dhkbranch_child_label:
- {
-  \seq_set_split:NnV \l_dhkbranch_child_parts_seq {//*} \l_dhkbranch_label_tl
-  \seq_map_indexed_inline:Nn \l_dhkbranch_child_parts_seq
-   {
-    \int_compare:nNnTF {##1} = {1}
-     {\dhkbranch_normal_part:n {##2}}
-     {\dhkbranch_child_part:n {##2}}
-   }
- }
+% // is always a plain explicit line break.
+% (The legacy //* alias is normalized to // during decode.)
 \cs_new_protected:Npn \dhkbranch_prepare_row:
  {
   \tl_set_eq:NN \l_dhkbranch_label_slot_tl \l_dhkbranch_left_tl
@@ -1416,17 +1429,13 @@
   \tl_set:Nx \l_tmpa_tl {\tl_to_str:n {//}}
   \seq_set_split:NVV \l_dhkbranch_label_lines_seq
     \l_tmpa_tl \l_dhkbranch_label_tl
-  \tl_if_in:VnTF \l_dhkbranch_label_tl {//*}
-   {\vbox_set:Nn \l_dhkbranch_label_box
-     {\offinterlineskip\dhkbranch_child_label:}}
-   {
   \int_compare:nNnTF {\seq_count:N \l_dhkbranch_label_lines_seq} = {1}
    {
     \hbox_set:Nn \l_dhkbranch_label_box
       {\ttfamily\small\tl_use:N \l_dhkbranch_label_tl}
    }
    {
-    % Natural-width vertical box; 1mm between explicit lines.
+    % Natural-width vertical box; 1mm between explicit // lines.
     \vbox_set:Nn \l_dhkbranch_label_box
      {
       \offinterlineskip
@@ -1439,7 +1448,6 @@
        }
      }
    }
-   }
   % Wrap only when the whole label would exceed the usable page width.
   % This also supports // inside an unusually long label.
   \dim_compare:nNnT
@@ -1450,16 +1458,12 @@
      {
       \begin{minipage}{\l_dhkbranch_label_width_dim}
        \raggedright\ttfamily\small
-       \tl_if_in:VnTF \l_dhkbranch_label_tl {//*}
-        {\par\noindent\vbox{\offinterlineskip\dhkbranch_child_label:}}
-        {
        \seq_map_indexed_inline:Nn \l_dhkbranch_label_lines_seq
         {
          \int_compare:nNnT {##1} > {1} {\par\vspace{1mm}\noindent}
          \tl_set:Nn \l_tmpb_tl {##2}
          \tl_trim_spaces:N \l_tmpb_tl
          \tl_use:N \l_tmpb_tl
-        }
         }
       \end{minipage}
      }
@@ -1684,7 +1688,7 @@
          {
           \prop_get:NVNTF \l_dhkbranch_lanes_prop
             \l_dhkbranch_right_tl \l_tmpb_tl
-           {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+           {} {\exp_args:NVV \dhkbranch_allocate_right_of:nn \l_tmpa_tl \l_dhkbranch_right_tl}
          }{}
        }
       \str_if_eq:VnT \l_dhkbranch_command_tl {handoff}
@@ -1694,7 +1698,7 @@
          {
           \prop_get:NVNTF \l_dhkbranch_lanes_prop
             \l_dhkbranch_right_tl \l_tmpb_tl
-           {} {\exp_args:NV \dhkbranch_allocate:n \l_dhkbranch_right_tl}
+           {} {\exp_args:NV \dhkbranch_allocate_handoff:n \l_dhkbranch_right_tl}
          }{}
        }
       \dhkbranch_prepare_row:
