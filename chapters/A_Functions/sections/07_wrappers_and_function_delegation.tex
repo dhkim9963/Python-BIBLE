@@ -840,3 +840,652 @@ True
 
 지금까지는 원본 함수가 정상적으로 반환하는 경우만 살펴봤다.
 
+이번에는 예외가 발생하는 상황을 분석해 보자.
+
+\begin{dhkcode}
+def trace(func):
+
+    def wrapper(*args, **kwargs):
+        print("Before")
+
+        result = func(*args, **kwargs)
+
+        print("After")
+
+        return result
+
+    return wrapper
+
+
+@trace
+def divide(a, b):
+    return a / b
+
+
+try:
+    divide(10, 0)
+except ZeroDivisionError:
+    print("ZeroDivisionError 처리")
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Before
+ZeroDivisionError 처리
+\end{dhkzsh}
+
+여기서 \zsh{"After"}는 출력되지 않는다.
+
+왜 그럴까?
+
+실행 흐름을 살펴보자.
+
+\begin{dhkbranch}[in=8]
+node main :: divide(10, 0)
+arrow main
+node main :: wrapper(10, 0)
+branchline main -> a :: print("Before")
+stop a
+arrow main
+node main :: func(10, 0)
+arrow main
+node main :: 원본 divide 실행
+arrow main
+node main :: 10 / 0
+arrow main
+node main :: ZeroDivisionError 발생
+arrow main
+node main :: wrapper의 정상 실행 중단
+arrow main
+node main :: 호출자의 except 블록
+\end{dhkbranch}
+
+예외가 발생하면 다음 문장의 정상적인 평가가 완료되지 않는다.
+
+\begin{dhkcode}
+result = func(*args, **kwargs)
+\end{dhkcode}
+
+따라서 \zsh{result}에 반환 객체가 바인딩되지 않고, 뒤에 있는 \zsh{"After"} 출력문에도 도달하지 않는다.
+
+예외는 \zsh{wrapper}에서 처리되지 않았으므로 호출자 쪽으로 전파된다.
+
+여기서 중요한 사실이 있다.
+
+원본 함수에서 예외가 발생하더라도 \zsh{wrapper}가 자동으로 예외를 처리하지는 않는다.
+
+Wrapper 역시 일반적인 함수이므로 Python의 예외 전파 규칙을 그대로 따르기 때문이다.
+
+\subsubsection{\zsh{try}, \zsh{except}, \zsh{finally}를 이용한 예외 처리}
+
+실전 데코레이터에서는 원본 함수가 성공하든 실패하든 특정 후처리를 실행해야 하는 경우가 있다.
+
+예를 들어 실행 기록, 자원 정리, 처리 시간 측정 등이 해당된다.
+
+이때 \zsh{finally}를 사용할 수 있다.
+
+\begin{dhkcode}
+def trace(func):
+
+    def wrapper(*args, **kwargs):
+        print("Before")
+
+        try:
+            result = func(*args, **kwargs)
+        finally:
+            print("Cleanup")
+
+        print("After")
+
+        return result
+
+    return wrapper
+
+
+@trace
+def divide(a, b):
+    return a / b
+
+
+print(divide(10, 2))
+
+try:
+    divide(10, 0)
+except ZeroDivisionError:
+    print("Exception caught")
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Before
+Cleanup
+After
+5.0
+Before
+Cleanup
+Exception caught
+\end{dhkzsh}
+
+여기서 두 호출의 차이를 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+정상 반환하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{divide(10, 2)}는 5.0을 반환한다.
+
+\zsh{try} 블록의 실행이 정상적으로 완료되면 \zsh{finally} 블록이 실행된다.
+
+그다음 \zsh{"After"}가 출력되고 \zsh{result}가 반환된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+예외가 발생하는 경우
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{divide(10, 0)}에서는 \zsh{ZeroDivisionError}가 발생한다.
+
+이때도 \zsh{finally} 블록이 실행된다.
+
+따라서 \zsh{"Cleanup"}은 출력된다.
+
+하지만 예외가 처리된 것은 아니다.
+
+\zsh{finally} 블록이 정상적으로 종료되면 기존 예외가 계속 전파된다.
+
+따라서 \zsh{"After"}는 출력되지 않고 호출자의 \zsh{except} 블록이 실행된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+주의할 경계 조건
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{finally}가 항상 기존 예외를 보존한다고 이해하면 안 된다.
+
+예를 들어 \zsh{finally} 블록 안에서 새로운 예외를 발생시키거나
+
+\zsh{return}을 실행하면 기존 예외 또는 반환 흐름이 달라질 수 있다.
+
+따라서 예외를 보존하면서 후처리하려는 데코레이터에서는 \zsh{finally} 내부의 제어 흐름을 신중하게 설계해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+예외를 기록하고 다시 전파하기
+\end{dhksmry}
+\end{dhknote}
+
+다음 방식도 자주 사용된다.
+
+\begin{dhkcode}
+def trace(func):
+
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+
+        except Exception as error:
+            print("실행 실패:", type(error).__name__)
+            raise
+
+    return wrapper
+\end{dhkcode}
+
+여기서 \zsh{raise}는 현재 처리 중인 예외를 다시 전파한다.
+
+이렇게 하면 데코레이터가 예외를 기록하면서도 호출자가 원래의 실패를 처리할 수 있다.
+
+\subsubsection{Wrapper는 원본 함수의 동작을 변경할 수도 있다}
+
+지금까지는 \zsh{wrapper}가 원본 함수의 인수와 반환값을 그대로 전달하는 구조를 살펴보았다.
+
+하지만 \zsh{wrapper}는 반드시 그렇게 동작해야 하는 것은 아니다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def double_result(func):
+
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+
+        return result * 2
+
+    return wrapper
+
+
+@double_result
+def add(a, b):
+    return a + b
+
+
+print(add(10, 20))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+60
+\end{dhkzsh}
+
+원본 함수는 30을 반환하지만 \zsh{wrapper}는 그 결과에 2를 곱해 60을 반환한다.
+
+따라서 데코레이터가 적용된 함수의 관찰 가능한 동작이 달라진 것이다.
+
+또한 다음과 같이 원본 함수를 호출하지 않는 데코레이터도 만들 수 있다.
+
+\begin{dhkcode}
+def skip_call(func):
+
+    def wrapper(*args, **kwargs):
+        return "Skipped"
+
+    return wrapper
+
+
+@skip_call
+def greet():
+    print("Hello")
+    return 10
+
+
+print(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Skipped
+\end{dhkzsh}
+
+이 예제에서는 원본 \zsh{greet} 함수의 본문이 실행되지 않는다.
+
+따라서 \zsh{"Hello"}도 출력되지 않는다.
+
+이 사실은 중요한 설계 원리와 연결된다.
+
+\begin{dhksmry}[centered]
+데코레이터는 호출을 중개하는 구조이므로 원본함수의
+
+실행 여부, 인수, 반환값, 예외를 변경할 수 있다.
+\end{dhksmry}
+
+따라서 데코레이터를 분석할 때 단순히 원본 함수의 코드만 확인해서는 전체 동작을 판단할 수 없다.
+
+실제 호출 대상인 \zsh{wrapper}의 구현까지 함께 살펴봐야 한다.
+
+\subsubsection{클로저와 호출 프레임의 관계}
+
+이제 \zsh{A.4}에서 학습한 클로저와 이번 단원의 호출 과정을 연결해 보자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        return result
+
+    return wrapper
+
+
+@decorator
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+이 코드에는 서로 다른 두 종류의 환경이 관여한다.
+
+첫째는 \zsh{wrapper} 함수 객체가 유지하는 \zsh{클로저 환경}이다.
+
+둘째는 \zsh{wrapper}를 호출할 때마다 만들어지는 \zsh{함수 호출의 지역 실행 환경}이다.
+
+이 둘을 구별해야 한다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: __closure__ // Cell func
+node n2 (1,2) :: 원본 add 함수
+group g1(n1, n2) :: wrapper 함수 객체에 연결된 환경
+edge n1 -> n2
+
+node n3 (3,1) :: args -> (1, 2) // kwargs -> // result -> 3
+node n4 (3,2) :: args -> (3, 4) // kwargs -> // result -> 7
+
+group g2(n3) :: wrapper 호출 1
+group g3(n4) :: wrapper 호출 2
+
+explain :: 같은 함수 객체 호출
+
+caption :: 개념도: 서로 다른 wrapper 호출은 각자의 지역 매개변수와 결과를 가지지만, 동일한 wrapper 함수 객체에 연결된 클로저 환경을 사용할 수 있다.
+\end{dhkgraph}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+print(add(1, 2))
+print(add(3, 4))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+3
+7
+\end{dhkzsh}
+
+첫 번째 호출에서는 \zsh{args}가 \zsh{(1, 2)}를 참조하고 \zsh{result}가 3을 참조한다.
+
+두 번째 호출에서는 새로운 호출의 지역 바인딩 환경이 형성되고 \zsh{args}가 \zsh{(3, 4)}를 참조하며 \zsh{result}가 7을 참조한다.
+
+하지만 두 호출 모두 같은 \zsh{wrapper} 함수 객체를 실행하므로, 그 함수 객체의 클로저를 통해 동일한 원본 함수 객체에 접근할 수 있다.
+
+이것이 다음 두 개념의 차이다.
+
+\begin{dhktable}
+|구분|	클로저 환경|	호출의 지역 실행 환경|
+|:---|:---|:---|
+|생성과 연결|	wrapper 함수 객체 생성 시 연결|	wrapper 호출 시마다 형성|
+|대표적인 이름|	func|	args, kwargs, result|
+|여러 호출 사이의 관계|	동일한 함수 객체의 클로저를 계속 사용 가능|	각 호출의 지역 바인딩은 독립적|
+|주요 역할|	외부 바인딩 유지|	현재 호출의 인수와 계산 결과 관리|
+\end{dhktable}
+
+이 구분은 \zsh{A.5}에서 학습한 호출 횟수 데코레이터를 이해하는 데도 중요하다.
+
+\zsh{count}가 클로저 셀을 통해 유지된다면 호출마다 상태가 이어질 수 있지만, \zsh{wrapper}의 지역 이름 \zsh{result}는 호출마다 새롭게 바인딩되는 것이다.
+
+\subsubsection{Generator Function을 감쌀 때의 경계 조건}
+
+여기서 Generator Function과 Generator Object의 구분을 연결해 본다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+def trace(func):
+
+    def wrapper(*args, **kwargs):
+        print("wrapper before")
+
+        result = func(*args, **kwargs)
+
+        print("wrapper after")
+
+        return result
+
+    return wrapper
+
+
+@trace
+def numbers():
+    print("generator body")
+    yield 1
+
+
+generator = numbers()
+
+print("generator created")
+
+print(next(generator))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper before
+wrapper after
+generator created
+generator body
+1
+\end{dhkzsh}
+
+왜 \zsh{"wrapper after"}가 \zsh{"generator body"}보다 먼저 출력될까?
+
+원본 \zsh{numbers}는 Generator Function이다.
+
+Generator Function을 호출하면 일반적으로 함수 본문이 즉시 실행되는 것이 아니라 Generator Object가 반환된다.
+
+따라서 \zsh{wrapper}의 다음 문장은
+
+\begin{dhkcode}
+result = func(*args, **kwargs)
+\end{dhkcode}
+
+Generator Object를 생성하며 반환받는 과정이다.
+
+아직 \zsh{yield}까지 본문이 실행된 것은 아니다.
+
+이후 \zsh{wrapper}는 \zsh{"wrapper after"}를 출력하고 Generator Object를 반환한다.
+
+마지막으로 다음 문장이 실행될 때
+
+\begin{dhkcode}
+next(generator)
+\end{dhkcode}
+
+Generator Object의 실행이 시작되어 \zsh{"generator body"}가 출력되는 것이다.
+
+이 예제는 매우 중요한 경계 조건을 보여준다.
+
+일반 함수용 \zsh{wrapper}의 호출 전후 처리가 항상 원본 함수 본문의 실제 실행 전후를 의미하는 것은 아니다.
+
+Generator Function에서는 Generator Object의 생성 시점과 실행·재개 시점을 구별해야 한다.
+
+비슷하게 \zsh{async def}로 정의된 코루틴 함수(Coroutine Function)를 감쌀 때도 주의가 필요하다.
+
+일반적인 동기 \zsh{wrapper}가 코루틴 함수를 호출하면 코루틴 객체를 반환받을 수 있지만, 그 자체로 코루틴 본문의 실행 완료를 의미하지는 않는다.
+
+코루틴의 실행과 반환을 올바르게 중개하려면 일반적으로 비동기 \zsh{wrapper}에서 \zsh{await}을 사용하는 구조를 고려해야 한다.
+
+이것은 Python의 함수 종류에 따라 호출 결과의 성격이 달라질 수 있다는 사실과 연결된다.
+
+\subsubsection{실전 응용 - 호출 횟수와 예외를 함께 기록하는 데코레이터}
+
+이제 \zsh{A.5}의 \zsh{nonlocal}과 \zsh{A.7}의 인수 전달·반환·예외 전파를 하나의 예제로 통합해 보자.
+
+\begin{dhkcode}
+def monitor(func):
+    count = 0
+
+    def wrapper(*args, **kwargs):
+        nonlocal count
+
+        count += 1
+
+        print(f"호출 #{count}")
+
+        try:
+            return func(*args, **kwargs)
+
+        except Exception as error:
+            print("실행 실패:", type(error).__name__)
+            raise
+
+    return wrapper
+
+
+@monitor
+def calculate_cost(quantity, unit_price):
+    if quantity < 0:
+        raise ValueError("수량은 음수일 수 없습니다.")
+
+    return quantity * unit_price
+
+
+print(calculate_cost(3, 100))
+
+try:
+    calculate_cost(-1, 100)
+except ValueError:
+    print("호출자에서 예외 처리")
+
+print(calculate_cost(2, 200))
+\end{dhkcode}
+
+예상 결과:
+
+\begin{dhkzsh}
+호출 #1
+300
+호출 #2
+실행 실패: ValueError
+호출자에서 예외 처리
+호출 #3
+400
+\end{dhkzsh}
+
+이 코드를 객체와 바인딩 관점에서 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 데코레이션 시점
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{calculate_cost} 원본 함수 객체가 생성된다.
+
+그 객체가 \zsh{monitor}에 전달되고, \zsh{monitor}의 매개변수 \zsh{func}에 바인딩된다.
+
+다음 문장이 실행된다.
+
+\begin{dhkcode}
+count = 0
+\end{dhkcode}
+
+그리고 \zsh{wrapper} 함수 객체가 생성된다.
+
+\zsh{wrapper}는 외부 함수의 \zsh{func}와 \zsh{count}를 참조하므로 두 이름이 자유 변수로 사용된다.
+
+\zsh{monitor}는 \zsh{wrapper}를 반환하고, 모듈 이름 \zsh{calculate_cost}가 \zsh{wrapper}에 재바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 첫 번째 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+calculate_cost(3, 100)
+\end{dhkcode}
+
+\zsh{wrapper}가 호출되고 \zsh{args}가 \zsh{(3, 100)}을 참조한다.
+
+\zsh{nonlocal count}에 따라 \zsh{count += 1}이 외부 바인딩을 변경한다.
+
+그다음 원본 함수가 호출되고 300을 반환한다.
+
+\zsh{return func(*args, **kwargs)}는 원본 함수의 반환 객체를 그대로 호출자에게 전달한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 두 번째 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+calculate_cost(-1, 100)
+\end{dhkcode}
+
+\zsh{wrapper}가 다시 호출된다.
+
+동일한 클로저 셀을 사용하므로 기존 \zsh{count}는 1이다.
+
+\zsh{count += 1} 이후 \zsh{count}는 2를 참조한다.
+
+원본 함수에서 \zsh{ValueError}가 발생하고 \zsh{wrapper}의 \zsh{except} 블록이 실행된다.
+
+예외를 기록한 다음 \zsh{raise}로 다시 전파한다.
+
+따라서 호출자의 \zsh{except ValueError} 블록이 실행된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 세 번째 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+calculate_cost(2, 200)
+\end{dhkcode}
+
+앞선 호출에서 예외가 발생했지만 \zsh{count}는 이미 2로 변경되었다.
+
+따라서 이번 호출에서 \zsh{count}는 3이 된다.
+
+여기서 중요한 점은 호출 횟수가 성공한 호출의 수가 아니라 \zsh{wrapper}에 진입한 호출의 수라는 사실이다.
+
+이것은 데코레이터의 상태 변경 시점에 따라 결정된다.
+
+성공한 호출만 세고 싶다면 원본 함수가 정상적으로 반환된 이후에 카운트를 증가시키도록 구현해야 한다.
+
+이처럼 데코레이터의 동작을 분석할 때는 단순히 어떤 기능을 추가했는지가 아니라, 그 기능이 호출 흐름의 어느 위치에서 실행되는지까지 확인해야 한다.
+
+\subsubsection{자주 발생하는 오해와 경계 조건}
+
+\begin{dhktable}
+|오해|	정확한 설명|
+|:---|:---|
+|*args, **kwargs를 사용하면 원본 함수의 인수 제약이 사라진다.|	원본 함수의 매개변수 바인딩 규칙은 그대로 적용된다.|
+|Wrapper는 인수 객체를 자동으로 복사한다.|	새로운 매개변수 바인딩이 형성될 뿐, 전달 객체가 자동 복사되는 것은 아니다.|
+|원본 함수가 값을 반환하면 wrapper도 자동으로 같은 값을 반환한다.|	Wrapper에 적절한 return이 있어야 한다.|
+|return func와 return func()는 같다.|	전자는 함수 객체를 반환하고, 후자는 호출 결과를 반환한다.|
+|원본 함수에서 예외가 발생해도 wrapper의 나머지 문장이 실행된다.|	예외를 처리하지 않으면 정상 실행이 중단되고 예외가 전파된다.|
+|finally는 예외를 자동으로 처리한다.|	일반적으로 후처리를 실행할 뿐, 예외를 자동으로 제거하지 않는다.|
+|Wrapper는 반드시 원본 함수를 한 번 호출해야 한다.|	원본 함수를 호출하지 않거나 여러 번 호출하도록 구현할 수도 있다.|
+|Wrapper의 호출 완료는 Generator 본문의 실행 완료와 같다.|	Generator Object 생성과 본문 실행은 서로 다른 시점이다.|
+|Wrapper의 메타데이터는 원본 함수와 자동으로 동일해진다.|	메타데이터 보존은 별도로 처리해야 한다.|
+\end{dhktable}
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습에서는 데코레이터가 적용된 함수의 실제 호출 과정을 분석하였다.
+
+가장 중요한 구조는 다음과 같다.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        return result
+
+    return wrapper
+\end{dhkcode}
+
+이 코드를 해석할 때는 다음 순서를 따르면 된다.
+
+\begin{dhksmry}
+Wrapper 호출의 전체 흐름
+
+1. 호출자가 데코레이션된 이름을 조회해 wrapper 함수 객체를 호출한다.
+
+2. Wrapper의 매개변수 바인딩이 수행되고 args, kwargs가 해당 객체를
+   참조한다.
+
+3. Wrapper가 클로저를 통해 원본 함수 객체 func를 조회한다.
+
+4. func(*args, **kwargs)에서 인수를 펼쳐 원본 함수의 매개변수
+   바인딩을 수행한다.
+
+5. 원본 함수가 정상적으로 반환하면 그 반환 객체가 wrapper의 result에
+   바인딩된다.
+
+6. Wrapper의 return result가 반환 객체를 호출자에게 전달한다.
+
+7. 중간에 예외가 발생하면 실제 예외 처리 구조에 따라 실행 경로가 달라진다.
+\end{dhksmry}
+
+여기서 최종적으로 구별해야 하는 것은 네 가지다.
+
+첫째, 함수 객체의 생성과 호출은 다르다. 데코레이터 적용 시 wrapper 함수 객체가 생성되더라도 wrapper 본문이 즉시 실행되는 것은 아니다.
+
+둘째, 함수 호출과 인수 바인딩은 호출 대상마다 별도로 수행된다. Wrapper와 원본 함수는 서로 다른 함수 객체이므로 각각 자신의 매개변수 규칙을 적용한다.
+
+셋째, 원본 함수의 반환과 wrapper의 반환은 서로 다른 단계다. 원본 함수가 반환한 객체를 wrapper가 어떻게 처리하는지에 따라 최종 결과가 결정된다.
+
+넷째, 예외는 반환값이 아니다. 원본 함수에서 예외가 발생하면 정상적인 반환 경로가 중단되며, wrapper의 예외 처리 구조에 따라 전파·변환·처리될 수 있다.
+
+이 네 가지를 구별하면 대부분의 일반적인 함수 기반 데코레이터를 정확하게 추적할 수 있다.
