@@ -1,0 +1,1421 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.9. 인수를 받는 데코레이터
+% ==================================================
+
+\subsection{인수를 받는 데코레이터와 데코레이터 팩토리}
+
+Decorator Factory · Higher-Order Function · Nested Closure · Argument Binding · Configuration State
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{A.6}부터 \zsh{A.8}까지는 다음과 같은 데코레이터를 중심으로 학습했다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@decorator
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+여기서 \zsh{@decorator}는 일반적인 단일 데코레이터 상황에서 다음 변환식과 대응했다.
+
+\begin{dhkcode}
+add = decorator(add)
+\end{dhkcode}
+
+이 구조에는 두 번의 함수 호출이 관여한다.
+
+첫 번째는 함수 정의문이 실행될 때 발생하는 \zsh{decorator(add)} 호출이고, 두 번째는 이후 \zsh{add(10, 20)}을 실행할 때 발생하는 wrapper 호출이다.
+
+\zsh{A.8}에서는 이 구조에 \zsh{functools.wraps}를 추가하여 원본 함수의 메타데이터와 \zsh{__wrapped__} 참조를 유지하는 방법까지 학습했다.
+
+그런데 다음과 같은 기능을 구현하려면 어떻게 해야 할까?
+
+\begin{dhkcode}
+@repeat(3)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+이 코드는 \zsh{greet()}을 한 번 호출할 때 원본 함수의 본문을 세 번 실행하도록 만들려는 의도를 가지고 있다.
+
+여기에는 두 종류의 인수가 존재한다.
+
+\begin{dhksmry}
+    - 3: 데코레이터의 동작을 설정하는 함수
+
+    - greet()에 전달하는 인수: 실제 원본 함수를 실행할 때 사용하는 인수
+\end{dhksmry}
+
+이 둘은 서로 다른 함수 호출에 속한다.
+
+이번 학습에서는 이 차이를 바탕으로 데코레이터를 생성하는 함수, 원본 함수를 전달받는 함수, 실제 호출을 중개하는 함수를 각각 구별할 것이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서 해결할 질문은 다음과 같다.
+
+\begin{dhksmry}
+1. @repeat(3)은 왜 @repeat와 다른가?
+
+2. repeat(3)(greet)에는 어떤 함수 객체와 호출 결과가 관여하는가?
+
+3. 세 단계로 중첩된 함수는 각각 어떤 네임스페이스를 가지는가?
+
+4. 설정값 times와 원본 함수 객체 func는 어느 클로저 셀에 유지되는가?
+
+5. repeat(2)와 repeat(5)로 만든 데코레이터는 상태를 공유하는가?
+
+6. 데코레이터가 반환한 wrapper는 원본 함수의 인수와 반환값을 어떻게 
+   처리하는가?
+
+7. 데코레이터의 설정값을 변경하거나 검증하려면 어떤 조건을 고려해야 하는가?
+\end{dhksmry}
+
+가장 중요한 개념은 다음이다.
+
+\begin{dhksmry}[centered]
+인수를 받는 데코레이터는 일반적으로 데코레이터를 반환하는 함수,
+
+즉 데코레이터 팩토리(Decorator Factory)를 통해 구현한다.
+\end{dhksmry}
+
+여기서 팩토리는 새로운 종류의 Python 객체가 아니다.
+
+다른 함수를 생성하거나 반환하는 역할을 수행하는 일반적인 호출 가능한 객체를 의미한다.
+
+\subsubsection{\zsh{@repeat(3)}의 기본 변환식}
+
+먼저 두 문법을 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인수가 없는 데코레이터
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@decorator
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+대응 관계:
+
+\begin{dhkcode}
+greet = decorator(greet)
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인수를 받는 데코레이터
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@repeat(3)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+대응 관계:
+
+\begin{dhkcode}
+greet = repeat(3)(greet)
+\end{dhkcode}
+
+두 번째 변환식의 오른쪽을 분석해 보자.
+
+\begin{dhkcode}
+repeat(3)(greet)
+\end{dhkcode}
+
+이 표현식은 하나의 함수에 인수 두 개를 전달하는 호출이 아니다.
+
+다음과 같이 두 번의 호출이 연속으로 이루어지는 표현식이다.
+
+\begin{dhkcode}
+decorator = repeat(3)
+
+replacement = decorator(greet)
+\end{dhkcode}
+
+첫 번째 호출인 \zsh{repeat(3)}의 결과가 호출 가능한 객체여야 두 번째 호출인
+\zsh{decorator(greet)}이 가능하다.
+
+일반적으로 이 결과가 원본 함수를 전달받는 데코레이터 함수 객체다.
+
+이후 데코레이터가 wrapper를 반환한다면 다음과 같은 관계가 성립한다.
+
+\begin{dhkbranch}[in=8]
+node main :: repeat(3)
+arrow main
+node main :: decorator 함수 객체
+line main
+line main :: 원본 greet 함수 객체 전달
+arrow main
+node main :: decorator(greet)
+arrow main
+node main :: wrapper 함수 객체
+arrow main
+node main :: greet 이름에 바인딩
+\end{dhkbranch}
+
+그다음 사용자가 \zsh{greet()}을 호출하면 세 번째 함수 호출 단계가 시작된다.
+
+\begin{dhkbranch}[in=8]
+node main :: greet()
+arrow main
+node main :: wrapper()
+branchline main -> a1 :: 원본 greet() 호출
+stop a1
+branchline main -> a2 :: 원본 greet() 호출
+stop a2
+handoff main -> a3 :: 원본 greet() 호출
+\end{dhkbranch}
+
+따라서 \zsh{@repeat(3)} 구조에서는 다음 세 호출을 구별해야 한다.
+
+\begin{dhktable}
+|단계|	호출 표현식	목적|	시점|
+|:---|:---|:---|
+|1|	repeat(3)|	설정값을 받아 데코레이터 생성|	정의문 실행 중|
+|2|	decorator(//*greet)|	원본 함수를 받아 wrapper 생성|	정의문 실행 중|
+|3|	greet()|	wrapper를 통해 원본 함수 실행|	이후 실제 호출 시|
+\end{dhktable}
+
+이 세 단계를 혼동하지 않는 것이 이번 학습의 출발점이다.
+
+\subsubsection{\zsh{repeat(3)}을 직접 구현해 보자}
+
+먼저 독립적으로 실행할 수 있는 전체 코드를 살펴본다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def repeat(times):
+    print("factory:", times)
+
+    def decorator(func):
+        print("decorator:", func.__name__)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            print("wrapper start")
+
+            result = None
+
+            for i in range(times):
+                print("iteration:", i + 1)
+                result = func(*args, **kwargs)
+
+            print("wrapper end")
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+@repeat(3)
+def greet(name):
+    print("Hello", name)
+    return name.upper()
+
+
+print("definition complete")
+
+print("result:", greet("Kim"))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+factory: 3
+decorator: greet
+definition complete
+wrapper start
+iteration: 1
+Hello Kim
+iteration: 2
+Hello Kim
+iteration: 3
+Hello Kim
+wrapper end
+result: KIM
+\end{dhkzsh}
+
+이 출력은 세 함수의 실행 시점을 명확하게 보여준다.
+
+\zsh{factory: 3}은 \zsh{repeat(3)}이 호출될 때 출력된다.
+
+\zsh{decorator: greet}은 반환된 데코레이터가 원본 \zsh{greet}함수 객체를 전달받을 때 출력된다.
+
+반면 \zsh{wrapper start}부터 \zsh{wrapper end}까지는 실제로 \zsh{greet("Kim")}을 호출한 뒤에 출력된다.
+
+즉, 데코레이터를 생성하는 것, 원본 함수를 데코레이션하는 것, 데코레이션된 함수를 실행하는 것은 서로 다른 단계다.
+
+이제 각 단계에서 어떤 객체가 생성되고 어떤 이름이 바인딩되는지 분석해 보자.
+
+\subsubsection{첫 번째 단계 - \zsh{repeat(3)}과 설정값 바인딩}
+
+다음 표현식이 평가된다.
+
+\begin{dhkcode}
+repeat(3)
+\end{dhkcode}
+
+이때 \zsh{repeat} 함수가 호출되고 매개변수 \zsh{times}가 정수 객체 3에 바인딩된다.
+
+\begin{dhkcode}
+def repeat(times):
+    ...
+\end{dhkcode}
+
+함수 본문에서 다음 중첩 함수 정의문이 실행된다.
+
+\begin{dhkcode}
+def decorator(func):
+    ...
+\end{dhkcode}
+
+여기서 새로운 \zsh{decorator} 함수 객체가 생성된다.
+
+그다음 다음 문장을 만난다.
+
+\begin{dhkcode}
+return decorator
+\end{dhkcode}
+
+이 문장은 \zsh{decorator()}를 호출하는 것이 아니다.
+
+생성된 \zsh{decorator} 함수 객체 자체를 반환하는 문장이다.
+
+그렇다면 \zsh{repeat()} 호출이 종료된 뒤에도 \zsh{decorator}는 설정값 \zsh{times}를 사용할 수 있을까?
+
+가능하다.
+
+왜냐하면 \zsh{decorator} 내부에서 정의된 \zsh{wrapper}가 \zsh{times}를 참조하기 때문이다.
+
+Python은 중첩된 함수들이 외부 함수의 바인딩에 접근할 수 있도록 클로저 환경을 구성한다.
+
+여기서 \zsh{A.4}의 자유 변수와 셀 객체 개념이 다시 등장한다.
+
+\begin{dhkdir}[in=6]
+repeat(3) 호출
+> times -> 3
+> decorator 함수 객체 생성
+>> times 바인딩에 접근 가능
+\end{dhkdir}
+
+\zsh{repeat()} 호출이 끝났다고 해서 \zsh{times}를 참조하는 클로저 환경까지 즉시 소멸하는 것은 아니다.
+
+반환된 함수 객체가 해당 바인딩에 접근할 수 있는 상태를 유지하는 것이다.
+
+\subsubsection{두 번째 단계 - \zsh{decorator(greet)}과 원본 함수 바인딩}
+
+이제 \zsh{repeat(3)}이 반환한 함수 객체가 원본 \zsh{greet} 함수 객체를 인수로 전달받아 호출된다.
+
+개념적으로 다음과 같다.
+
+\begin{dhkcode}
+configured_decorator = repeat(3)
+
+replacement = configured_decorator(greet)
+\end{dhkcode}
+
+여기서 \zsh{configured_decorator}는 \zsh{repeat(3)}이 반환한 \zsh{decorator} 함수 객체를 참조한다.
+
+그리고 \zsh{configured_decorator(greet)} 호출에서는 매개변수 \zsh{func}가 원본 \zsh{greet} 함수 객체에 바인딩된다.
+
+\begin{dhkcode}
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        ...
+\end{dhkcode}
+
+이 단계에서 새로운 \zsh{wrapper} 함수 객체가 생성된다.
+
+Wrapper는 두 가지 외부 이름을 사용한다.
+
+\begin{dhkzsh}
+times
+func
+\end{dhkzsh}
+
+\zsh{times}는 가장 바깥쪽 함수인 \zsh{repeat}의 매개변수이고, \zsh{func}는 바로 바깥쪽 함수인 \zsh{decorator}의 매개변수다.
+
+따라서 wrapper는 서로 다른 렉시컬 스코프에 정의된 두 바인딩에 접근해야 한다.
+
+\zsh{@wraps(func)}도 이 단계에서 적용된다.
+
+\zsh{A.8}에서 학습한 것처럼 wrapper의 메타데이터가 설정되고 \zsh{__wrapped__} 속성이 원본 함수 객체를 참조하게 된다.
+
+마지막으로 다음 문장이 실행된다.
+
+\begin{dhkcode}
+return wrapper
+\end{dhkcode}
+
+이제 데코레이터는 wrapper 함수 객체를 반환하고, 그 객체가 최종적으로 모듈 이름 \zsh{greet}에 바인딩된다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: 이름 greet
+node n2 (1,2) :: wrapper 함수 객체
+node n3 (2,1) :: Cell times // 3
+node n4 (2,2) :: Cell func // 원본 함수 참조
+node n5 (3,2) :: 원본 greet 함수 객체 // 실제 Hello 출력 코드
+
+edge n1 -> n2
+split n2 -> n3, n4
+edge n4 -> n5
+
+explain :: 데코레이션 이후
+
+caption :: Wrapper는 설정값 times와 원본 함수 객체 func를 서로 다른 클로저 셀을 통해 참조한다. 그림은 핵심 바인딩 관계를 단순화한 것이다.
+\end{dhkgraph}
+
+여기서 중요한 점은 \zsh{times}와 \zsh{func}가 같은 함수의 매개변수가 아니라는 사실이다.
+
+\zsh{times}는 \zsh{repeat()} 호출에서 바인딩되고, \zsh{func}는 \zsh{decorator()} 호출에서 바인딩된다.
+
+두 이름이 만들어지는 시점과 네임스페이스가 서로 다르다.
+
+\subsubsection{세 번째 단계 - Wrapper 호출과 반복 실행}
+
+이제 다음 문장을 실행한다고 하자.
+
+\begin{dhkcode}
+greet("Kim")
+\end{dhkcode}
+
+현재 모듈 이름 \zsh{greet}은 wrapper 함수 객체를 참조한다.
+
+따라서 wrapper가 호출되고 다음 바인딩이 형성된다.
+
+\begin{dhkzsh}
+args = ("Kim",)
+kwargs = {}
+\end{dhkzsh}
+
+Wrapper는 자신의 클로저를 통해 \zsh{times}가 참조하는 정수 객체 3을 조회한다.
+
+그다음 다음 반복문을 실행한다.
+
+\begin{dhkcode}
+for i in range(times):
+    result = func(*args, **kwargs)
+\end{dhkcode}
+
+반복문은 세 번 실행된다.
+
+각 반복에서 \zsh{func}가 참조하는 원본 \zsh{greet} 함수 객체가 호출된다.
+
+원본 함수는 \zsh{"Hello Kim"}을 출력하고 문자열 \zsh{"KIM"}을 반환한다.
+
+그 반환 객체가 wrapper의 지역 이름 \zsh{result}에 바인딩된다.
+
+세 번의 호출이 완료되면 마지막 호출의 반환 객체가 \zsh{result}에 바인딩된 상태로 남아 있다.
+
+따라서 다음 문장은
+
+\begin{dhkcode}
+return result
+\end{dhkcode}
+
+마지막 원본 함수 호출의 반환 객체를 최종 호출자에게 전달한다.
+
+여기서 중요한 점이 있다.
+
+\zsh{repeat(3)}이 원본 함수의 반환값을 세 배로 만드는 것은 아니다. 원본 함수를 세 번 호출하는 것이다.
+
+원본 함수가 상태를 변경한다면 그 상태 변경도 세 번 발생할 수 있다.
+
+\subsubsection{\zsh{repeat(3)}의 평가 시점과 함수 정의 시점}
+
+\zsh{A.6}에서는 데코레이터가 함수 정의문 실행 중 적용된다고 설명했다.
+
+이번에는 한 단계 더 정확하게 구별한다.
+
+데코레이터 표현식 \zsh{repeat(3)}은 원본 함수 객체가 생성되기 전에 평가된다.
+
+반면 \zsh{repeat(3)}이 반환한 데코레이터는 원본 함수 객체가 생성된 다음 적용된다.
+
+다음 코드로 확인해 보자.
+
+\begin{dhkcode}
+def factory(times):
+    print("factory:", times)
+
+    def decorator(func):
+        print("decorator:", func.__name__)
+        return func
+
+    return decorator
+
+@factory(2)
+def greet(value=print("default evaluated")):
+    print("body")
+
+print("definition complete")
+greet()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+factory: 2
+default evaluated
+decorator: greet
+definition complete
+body
+\end{dhkzsh}
+
+왜 이런 순서일까?
+
+먼저 \zsh{@factory(2)}라는 데코레이터 표현식이 평가된다.
+
+따라서 \zsh{factory(2)}가 호출되고 데코레이터 함수 객체가 반환된다.
+
+그다음 함수 정의에 필요한 기본 인수 표현식이 평가된다.
+
+\begin{dhkcode}
+value=print("default evaluated")
+\end{dhkcode}
+
+이 표현식은 \zsh{"default evaluated"}를 출력하고 \zsh{None}을 반환한다.
+
+그 결과가 기본 인수 객체로 사용된다.
+
+이후 원본 \zsh{greet} 함수 객체가 생성되고, 앞에서 준비한 데코레이터가 적용된다.
+
+마지막으로 데코레이터의 반환 객체가 \zsh{greet}이라는 이름에 바인딩된다.
+
+따라서 \zsh{A.9.3}의 변환식
+
+\begin{dhkcode}
+greet = repeat(3)(greet)
+\end{dhkcode}
+
+은 데코레이터 적용의 의미를 설명하는 데 유용하지만, 모든 부작용의 평가 순서까지 완전히 재현하는 문자 그대로의 소스 코드 치환은 아니다.
+
+이 차이는 데코레이터 표현식이나 기본 인수 표현식에 부작용이 있을 때 중요해진다.
+
+\subsubsection{세 단계의 클로저를 직접 검증하기}
+
+이번에는 \zsh{A.4}와 \zsh{A.5}에서 사용한 \zsh{co_cellvars}, \zsh{co_freevars}, \zsh{__closure__}를 활용해 내부 구조를 확인해 보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def repeat(times):
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            result = None
+
+            for _ in range(times):
+                result = func(*args, **kwargs)
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+configured = repeat(2)
+
+
+def square(x):
+    return x * x
+
+
+wrapped = configured(square)
+
+print(repeat.__code__.co_cellvars)
+
+print(configured.__code__.co_freevars)
+print(configured.__code__.co_cellvars)
+
+print(wrapped.__code__.co_freevars)
+
+closure_map = dict(
+    zip(wrapped.__code__.co_freevars, wrapped.__closure__)
+)
+
+print(closure_map["times"].cell_contents)
+print(closure_map["func"].cell_contents is square)
+
+print(wrapped.__wrapped__ is square)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('times',)
+('times',)
+('func',)
+('func', 'times')
+2
+True
+True
+\end{dhkzsh}
+
+각 결과를 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. repeat의 셀 변수
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+repeat.__code__.co_cellvars
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('times',)
+\end{dhkzsh}
+
+\zsh{times}는 \zsh{repeat}의 지역 매개변수이지만 중첩 함수에서도 참조된다.
+
+따라서 클로저 셀을 통해 유지할 필요가 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. decorator의 자유 변수
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+configured.__code__.co_freevars
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('times',)
+\end{dhkzsh}
+
+\zsh{decorator} 함수는 \zsh{repeat}의 렉시컬 환경에서 정의되었다.
+
+그 내부에 정의되는 wrapper가 \zsh{times}를 사용하므로, 이 바인딩을 중첩된 함수까지 전달할 수 있는 클로저 구조가 형성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. decorator의 셀 변수
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+configured.__code__.co_cellvars
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('func',)
+\end{dhkzsh}
+
+\zsh{func}는 \zsh{decorator}의 지역 매개변수다.
+
+그런데 wrapper가 이 이름을 참조하므로 셀 변수로 관리된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. wrapper의 자유 변수
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+wrapped.__code__.co_freevars
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+('func', 'times')
+\end{dhkzsh}
+
+Wrapper는 원본 함수 객체아ㅗ 설정값에 모두 접근해야 하므로 두 자유 변수를 사용한다.
+
+이때 \zsh{__closure__}의 셀 순서를 임의로 가정하면 안 된다.
+
+따라서 다음과 같이 이름과 셀을 대응시키는 것이 정확하다.
+
+\begin{dhkcode}
+closure_map = dict(
+    zip(wrapped.__code__.co_freevars, wrapped.__closure__)
+)
+\end{dhkcode}
+
+이후 다음 표현식으로 각 바인딩을 확인할 수 있다.
+
+\begin{dhkcode}
+closure_map["times"].cell_contents
+closure_map["func"].cell_contents
+\end{dhkcode}
+
+여기서 핵심은 다음이다.
+
+\begin{dhksmry}[centered]
+데코레이터 팩토리는 중첩 함수가 세 단계라는 점이 특별한 것이 아니라,
+
+서로 다른 단계에서 형성된 바인딩을 최종 wrapper가 함께 참조한다.
+\end{dhksmry}
+
+이 점이 중요하다.
+
+\subsubsection{서로 다른 팩토리 호출은 상태를 공유할까?}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def repeat(times):
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            result = None
+
+            for _ in range(times):
+                result = func(*args, **kwargs)
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+@repeat(2)
+def first():
+    print("First")
+
+
+@repeat(3)
+def second():
+    print("Second")
+
+
+first()
+second()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+First
+First
+Second
+Second
+Second
+\end{dhkzsh}
+
+여기서 \zsh{repeat()}이 두 번 호출된다.
+
+첫 번째 호출에서는 \zsh{times}가 2를 참조하고, 두 번째 호출에서는 \zsh{times}가 3을 참조한다.
+
+각 호출에서 독립적인 클로저 환경이 형성된다.
+
+따라서 두 wrapper는 서로 다른 \zsh{times} 셀을 참조하게 된다.
+
+이를 직접 검증할 수 있다.
+
+\begin{dhkcode}
+def cells_of(func):
+    return dict(
+        zip(func.__code__.co_freevars, func.__closure__)
+    )
+
+
+first_cells = cells_of(first)
+second_cells = cells_of(second)
+
+print(
+    first_cells["times"] is second_cells["times"]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+두 wrapper가 서로 다른 팩토리 호출에서 만들어진 셀을 참조하기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+반대로 하나의 데코레이터를 재사용한다면?
+\end{dhksmry}
+\end{dhknote}
+
+다음 구조를 생각해 보자.
+
+\begin{dhkcode}
+configured = repeat(2)
+
+@configured
+def first():
+    return 10
+
+
+@configured
+def second():
+    return 20
+\end{dhkcode}
+
+여기서는 \zsh{repeat(2)}가 한 번만 호출된다.
+
+반환된 동일한 \zsh{configured} 데코레이터 함수 객체를 두 함수에 적용한 것이다.
+
+따라서 두 wrapper는 같은 \zsh{times} 셀을 공유할 수 있다.
+
+하지만 각각 다른 원본 함수를 전달받았으므로 \zsh{func} 셀은 서로 다르다.
+
+\begin{dhktable}
+|비교 대상|	first와 second의 관계|
+|:---|:---|
+|times 셀|	동일한 셀을 공유|
+|func 셀|	서로 다른 셀|
+|wrapper 함수 객체|	서로 다른 객체|
+|원본 함수 객체|	서로 다른 객체|
+\end{dhktable}
+
+이것은 팩토리 호출의 횟수와 데코레이터 적용 횟수가 서로 다르기 때문이다.
+
+같은 팩토리 함수로 만들었다는 사실보다, 팩토리를 몇 번 호출했고, 어떤 반환 객체를 재사용했는지가 상태 공유 여부를 결정한다.
+
+\subsubsection{설정값을 읽을 때 \zsh{nonlocal}이 필요할까?}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+def repeat(times):
+
+    def decorator(func):
+
+        def wrapper(*args, **kwargs):
+            for _ in range(times):
+                func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+\end{dhkcode}
+
+Wrapper는 \zsh{times}를 조회하지만 재바인딩하지 않는다.
+
+따라서 \zsh{nonlocal times}가 필요하지 않다.
+
+하지만 다음과 같이 변경하면 상황이 달라진다.
+
+\begin{dhkcode}
+def repeat(times):
+
+    def decorator(func):
+
+        def wrapper(*args, **kwargs):
+            times += 1
+
+            for _ in range(times):
+                func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+\end{dhkcode}
+
+이 코드는 wrapper를 호출할 때 \zsh{UnboundLocalError}가 발생할 수 있다.
+
+왜냐하면 \zsh{times += 1}이 현재 함수 블록에서 일믕르 할당하는 연산이기 때문이다.
+
+Python은 \zsh{times}를 wrapper의 지역 이름으로 분류하지만, 증가 연산을 위해 값을 읽으려는 시점에는 아직 지역 바인딩이 존재하지 않는다.
+
+외부 \zsh{times}를 재바인딩하려면 다음과 같이 작성해야 한다.
+
+\begin{dhkcode}
+def wrapper(*args, **kwargs):
+    nonlocal times
+
+    times += 1
+    ...
+\end{dhkcode}
+
+이 경우 \zsh{times}는 외부 \zsh{repeat} 호출의 바인딩을 변경하게 된다.
+
+여기서 중요한 점은 \zsh{nonlocal}이 설정값을 읽기 위해 필요한 것이 아니라는 사실이다.
+
+외부 바인딩을 재바인딩하려는 경우에 필요한 선언이다.
+
+따라서 설정값을 읽기만 하는 일반적인 데코레이터 팩토리에서는 \zsh{nonlocal}을 사용하지 않아도 된다.
+
+\subsubsection{설정값이 유효성 검사는 언제 수행해야 할까?}
+
+지금까지 작성한 \zsh{repeat}에는 한 가지 문제가 있다.
+
+다음 호출이 가능하다는 점이다.
+
+\begin{dhkcode}
+@repeat(0)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+기존 구현에서는 반복문이 한 번도 실행되지 않는다.
+
+따라서 원본 함수도 호출되지 않고 \zsh{result}의 초기값인 \zsh{None}이 반환된다.
+
+이것이 의도한 동작이라면 문제가 없지만, 반복 횟수가 반드시 양의 정수여야 한다는 계약이라면 유효성을 검사해야 한다.
+
+\begin{dhkcode}
+from functools import wraps
+
+
+def repeat(times):
+
+    if (
+        not isinstance(times, int)
+        or isinstance(times, bool)
+        or times < 1
+    ):
+        raise ValueError("times는 양의 정수여야 합니다.")
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            result = None
+
+            for _ in range(times):
+                result = func(*args, **kwargs)
+
+            return result
+
+        return wrapper
+
+    return decorator
+\end{dhkcode}
+
+이 검사는 \zsh{repeat(times)}가 호출되는 시점에 실행된다.
+
+따라서 다음과 같은 코드는 함수 정의문 실행 중 오류가 발생한다.
+
+\begin{dhkcode}
+@repeat(0)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+왜냐하면 \zsh{repeat(0)}이 데코레이터 표현식으로 평가되는 순간 \zsh{ValueError}가 발생하기 때문이다.
+
+여기서 \zsh{bool}을 별도로 검사한 이유도 있다.
+
+Python에서는 다음 표현식이 \zsh{True}다.
+
+\begin{dhkcode}
+isinstance(True, int)
+\end{dhkcode}
+
+\zsh{bool}이 \zsh{int}의 하위 클래스이기 때문이다.
+
+따라서 단순히 \zsh{isinstance(times, int)}만 검사하면 \zsh{True}도 정수로 받아들일 수 있다.
+
+이처럼 설정값 검증은 데코레이터의 실행 의미를 명확하게 만드는 역할을 한다.
+
+\subsubsection{\zsh{@repeat}과 \zsh{@repeat(3)}을 혼동하면 어떻게 될까?}
+
+다음과 같이 정의된 팩토리를 생각해 보자.
+
+\begin{dhkcode}
+def repeat(times):
+
+    def decorator(func):
+        ...
+
+    return decorator
+\end{dhkcode}
+
+이 함수는 원본 함수 객체가 아니라 설정값 \zsh{times}를 먼저 전달받도록 설계되었다.
+
+따라서 정상적인 사용법은 다음과 같다.
+
+\begin{dhkcode}
+@repeat(3)
+def greet():
+    ...
+\end{dhkcode}
+
+반면 다음과 같이 작성하면 어떻게 될까?
+
+\begin{dhkcode}
+@repeat
+def greet():
+    ...
+\end{dhkcode}
+
+이때 Python은 개념적으로 다음 호출을 수행한다.
+
+\begin{dhkcode}
+greet = repeat(greet)
+\end{dhkcode}
+
+따라서 \zsh{times}에는 정수 3이 아니라 원본 \zsh{greet} 함수 객체가 전달된다.
+
+이후 동작은 팩토리 구현에 따라 달라진다.
+
+앞에서 작성한 유효성 검사가 있다면 함수 객체는 정수가 아니므로 정의 시점에
+\zsh{ValueError}가 발생한다.
+
+유효성 검사가 없다면 함수 객체가 \zsh{times}에 저장된 상태로 데코레이터 함수가 반환될 수 있고, 이후 호출에서 예상하지 못한 오류가 발생할 수 있다.
+
+반대로 다음 코드도 주의해야 한다.
+
+\begin{dhkcode}
+@repeat()
+def greet():
+    ...
+\end{dhkcode}
+
+\zsh{repeat}이 필수 매개변수 \zsh{times}를 요구한다면 인수를 전달하지 않았으므로 \zsh{TypeError}가 발생한다.
+
+정리하면 다음과 같다.
+
+\begin{dhktable}
+|문법|	실제 적용 방식|
+|:---|:---|
+|@repeat|	repeat(원본 함수 객체)|
+|@repeat()|	repeat()의 반환값을 원본 함수에 적용|
+|@repeat(3)|	repeat(3)의 반환값을 원본 함수에 적용|
+|@repeat(times=3)|	repeat(times=3)의 반환값을 원본 함수에 적용|
+\end{dhktable}
+
+하나의 데코레이터를 \zsh{@repeat}과 \zsh{@repeat(3)} 양쪽 형태로 사용하도록 구현할 수도 있다.
+
+하지만 이 경우에는 전달받은 객체가 설정값인지 원본 함수 객체인지 구별하는 추가 설계가 필요하다.
+
+이번 학습에서는 두 형태를 명확하게 분리해서 이해하는 것이 우선이다.
+
+\subsubsection{\zsh{return decorator}, \zsh{return wrapper}, \zsh{return wrapper()}의 차이}
+
+데코레이터 팩토리를 처음 구현할 때 가장 자주 혼동하는 부분이다.
+
+다음 구조를 다시 보자.
+
+\begin{dhkcode}
+def repeat(times):
+
+    def decorator(func):
+
+        def wrapper(*args, **kwargs):
+            result = None
+
+            for _ in range(times):
+                result = func(*args, **kwargs)
+
+            return result
+
+        return wrapper
+
+    return decorator
+\end{dhkcode}
+
+여기에는 서로 다른 세 반환 위치가 존재한다.
+
+\begin{dhktable}
+|위치|	반환 표현식|	반환 객체|
+|:---|:---|:---|
+|repeat|	return decorator|	데코레이터 함수 객체|
+|decorator|	return wrapper|	Wrapper 함수 객체|
+|wrapper|	return result|	원본 함수 호출의 결과 객체|
+\end{dhktable}
+
+이 중 하나라도 잘못 작성하면 호출 구조가 달라진다.
+
+예를 들어 다음과 같이 작성했다고 하자.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper()
+\end{dhkcode}
+
+여기서는 wrapper 함수 객체를 반환하는 것이 아니라, wrapper를 즉시 호출하고 그 결과를 반환한다.
+
+따라서 원본 함수가 인수를 요구한다면 데코레이션 시점에 오류가 발생할 수 있다.
+
+반대로 인수가 필요 없는 원본 함수라면 데코레이션 시점에 원본 함수가 실행되고, 그 반환 객체가 원래 함수 이름에 바인딩될 수 있다.
+
+이것은 일반적인 wrapper 데코레이터에서 의도한 구조와 다르다.
+
+따라서 다음 구분을 기억해야 한다.
+
+\begin{dhkcode}
+return decorator  # 데코레이터 함수 객체 반환
+return wrapper    # wrapper 함수 객체 반환
+return wrapper()  # wrapper를 호출한 결과 반환
+\end{dhkcode}
+
+\zsh{A.1}에서 학습한 함수 객체와 함수 호출 결과의 차이가 그대로 적용되는 것이다.
+
+\subsubsection{실전 응용 - 재시도 횟수를 설정하는 데코레이터}
+
+이번에는 단순 반복이 아니라 실제 프로그램에서 활용할 수 있는 재시도(Retry) 데코레이터를 구현해 보자.
+
+함수 실행 중 일시적인 오류가 발생하면 지정된 횟수만큼 다시 호출하는 구조다.
+
+\begin{dhkcode}
+from functools import wraps
+
+class TemporaryError(Exception):
+    pass
+
+def retry(max_attempts):
+
+    if (
+        not isinstance(max_attempts, int)
+        or isinstance(max_attempts, bool)
+        or max_attempts < 1
+    ):
+        raise ValueError("max_attempts는 양의 정수여야 합니다.")
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+
+            for attempt in range(1, max_attempts + 1):
+
+                try:
+                    return func(*args, **kwargs)
+
+                except TemporaryError:
+
+                    if attempt == max_attempts:
+                        raise
+
+                    print(
+                        f"재시도: {attempt}/{max_attempts}"
+                    )
+
+        return wrapper
+
+    return decorator
+
+
+state = {"calls": 0}
+
+
+@retry(3)
+def unstable_operation():
+
+    state["calls"] += 1
+
+    if state["calls"] < 3:
+        raise TemporaryError("일시적인 실패")
+
+    return "Success"
+
+
+print(unstable_operation())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+재시도: 1/3
+재시도: 2/3
+Success
+\end{dhkzsh}
+
+이 코드를 순차적으로 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 데코레이터 팩토리 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+retry(3)
+\end{dhkcode}
+
+\zsh{max_attempts}가 정수 객체 3에 바인딩된다.
+
+유효성 검사가 통과하면 \zsh{decorator} 함수 객체가 반환된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 원본 함수 데코레이션
+\end{dhksmry}
+\end{dhknote}
+
+반환된 데코레이터가 원본 \zsh{unstable_operation} 함수 객체를 전달받아 호출된다.
+
+\zsh{func}가 원본 함수 객체에 바인딩되고 wrapper 함수 객체가 생성된다.
+
+Wrapper는 \zsh{max_attempts}와 \zsh{func}를 클로저를 통해 참조할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 첫 번째 실제 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+unstable_operation()
+\end{dhkcode}
+
+현재 이름은 wrapper를 참조하므로 wrapper가 실행된다.
+
+반복문의 첫 번째 시도에서 원본 함수가 호출된다.
+
+\zsh{state["calls"]}가 1이 되고 \zsh{TemporaryError}가 발생한다.
+
+Wrapper는 해당 예외를 처리하고 다음 시도로 진행한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 두 번째 실제 호출
+\end{dhksmry}
+\end{dhknote}
+
+같은 wrapper 호출 안에서 원본 함수가 다시 호출된다.
+
+\zsh{state["calls"]}가 2가 되고 \zsh{TemporaryError}가 발생한다.
+
+아직 최대 시도 횟수에 도달하지 않았으므로 다음 반복으로 진행한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5. 세 번째 실제 호출
+\end{dhksmry}
+\end{dhknote}
+
+원본 함수가 세 번째로 호출된다.
+
+이번에는 \zsh{state["calls"]}가 3이므로 예외가 발생하지 않고 \zsh{"Success"}를 반환한다.
+
+따라서 다음 문장이 실행된다.
+
+\begin{dhkcode}
+return func(*args, **kwargs)
+\end{dhkcode}
+
+원본 함수의 반환 객체가 wrapper의 반환 객체가 되고, wrapper 실행이 종료된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+이 예제에서 중요한 설계 조건
+\end{dhksmry}
+\end{dhknote}
+
+재시도 데코레이터는 원본 함수를 여러 번 호출할 수 있다.
+
+따라서 원본 함수가 외부 시스템의 상태를 변경하는 경우에는 주의해야 한다.
+
+예를 들어 결제 요청, 데이터베이스 갱신, 파일 생성처럼 부작용이 있는 연산은 실패 후 재호출할 때 중복 처리가 발생할 수 있다.
+
+이러한 경우에는 멱등성(Idempotency), 트랜잭션, 중복 요청 식별 등의 조건을 함께 고려해야 한다.
+
+또한 모든 예외를 무조건 재시도하는 것이 적절하지는 않다.
+
+위 예제에서는 의도적으로 \zsh{TemporaryError}만 처리하도록 설계했다.
+
+즉, 데코레이터의 설정값은 단순한 반복 횟수가 아니라 호출 정책을 정의하는 구성 요소가 될 수 있다.
+
+\subsubsection{데코레이터 팩토리와 클래스 인스턴스의 상태 비교}
+
+이전 학습에서 클로저와 클래스 인스턴스의 상태 유지 방식을 비교했다.
+
+이번에는 설정값을 가진 데코레이터 팩토리에도 같은 관점을 적용해 본다.
+
+\begin{dhkcode}
+@repeat(3)
+def greet():
+    ...
+\end{dhkcode}
+
+여기서 반복 횟수 3은 클로저 셀을 통해 유지된다.
+
+반면 클래스 기반으로 비슷한 긴으을 구현한다면 다음과 같은 구조를 생각할 수 있다.
+
+\begin{dhkcode}
+class Repeat:
+
+    def __init__(self, times):
+        self.times = times
+
+    def __call__(self, func):
+
+        def wrapper(*args, **kwargs):
+            result = None
+
+            for _ in range(self.times):
+                result = func(*args, **kwargs)
+
+            return result
+
+        return wrapper
+\end{dhkcode}
+
+이 클래스의 인스턴스는 호출 가능한 객체다.
+
+따라서 다음과 같이 사용할 수 있다.
+
+\begin{dhkcode}
+@Repeat(3)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+여기서 \zsh{@Repeat(3)}은 \zsh{Repeat} 인스턴스를 생성한다.
+
+그리고 생성된 인스턴스가 데코레이터로 호출되면서 원본 함수 객체를 전달받는다.
+
+함수 기반 팩토리와 클래스 기반 팩토리를 비교하면 다음과 같다.
+
+\begin{dhktable}
+|비교 기준|	함수 기반 팩토리|	클래스 기반 팩토리|
+|:---|:---|:---|
+|설정값 저장|	클로저 셀|	인스턴스 속성|
+|설정값 접근|	자유 변수 times|	self.times|
+|데코레이터 역할|	반환된 함수 객체|	__call__을 가진 인스턴스|
+|원본 함수 보존|	wrapper의 클로저|	wrapper의 클로저 등|
+|설정값 변경|	외부 바인딩 재바인딩 또는 가변 객체 변경|	인스턴스 속성 재바인딩|
+\end{dhktable}
+
+여기서 두 방식의 목적은 유사하지만 내부 상태 저장 구조는 다르다.
+
+함수 기반 팩토리는 클로저 환경을 이용하고, 클래스 기반 팩토리는 인스턴스 네임스페이스를 이용한다.
+
+또한 클래스 기반 구현에서 \zsh{self.times}를 변경하면 이미 생성된 \zsh{wrapper}의 동작에도 영향을 줄 수 있다.
+
+왜냐하면 wrapper가 실행될 때ㅔ마다 동일한 인스턴스의 \zsh{self.times} 속성을 조회하기 때문이다.
+
+이것은 \zsh{A.5}에서 학습한 클로저의 상태 변경과 클래스의 속성 변경이 서로 다른 메커니즘으로 유사한 동작을 구현할 수 있다는 사례다.
+
+\subsubsection{Generator와 Coroutine에 적용할 때의 경계 조건}
+
+\zsh{A.7}에서 Generator Function에 일반적인 wrapper를 적용하면 Generator Object 생성과 실제 본문 실행 시점이 달라질 수 있다는 사실을 학습했다.
+
+이번 학습의 \zsh{repeat}에도 같은 문제가 존재한다.
+
+\begin{dhkcode}
+@repeat(3)
+def numbers():
+    yield 1
+    yield 2
+\end{dhkcode}
+
+이 경우 wrapper가 원본 Generato Function을 세 번 호출하면 Generator Object가 세 개 생성될 수 있다.
+
+하지만 각 Generator Object의 본문이 자동으로 실행되는 것은 아니다.
+
+따라서 \zsh{repeat(3)}이 1, 2를 세 번 생성하는 반복 시퀀스를 자동으로 만들어 준다고 생각하면 안 된다.
+
+마찬가지로 \zsh{async def}로 정의된 코루틴 함수에 동기 wrapper를 적용하면, 반복 호출에서 코루틴 객체만 여러 개 생성할 수 있다.
+
+따라서 데코레이터의 설계는 원본 함수가 일반 함수인지, Generator Function인지, Coroutine Function인지에 따라 달라질 수 있다.
+
+이 문제의 핵심은 함수 호출이 반환하는 객체와 함수 본문의 실제 실행 시점을 구별하는 것이다.
+
+\subsubsection{자주 발생하는 오해와 판단 기준}
+
+\begin{dhktable}
+|오해	|정확한 설명|
+|:---|:---|
+|@repeat(3)은 원본 함수에 3을 전달한다.	|3은 데코레이터 팩토리의 설정값이다.|
+|repeat(3)이 실행되면 원본 함수도 세 번 실행된다.|	일반적인 구현에서는 데코레이터가 생성될 뿐이다.|
+|팩토리, 데코레이터, wrapper는 같은 함수 객체다.|	일반적으로 서로 다른 함수 객체다.|
+|return decorator와 return decorator()는 같다.|	전자는 함수 객체 반환, 후자는 호출 결과 반환이다.|
+|Wrapper가 times를 읽으려면 nonlocal이 필요하다.|	외부 바인딩을 읽는 데는 필요하지 않다.|
+|같은 팩토리 함수를 사용하면 모든 설정값을 공유한다.	|각 팩토리 호출의 클로저 환경은 일반적으로 독립적이다.|
+|@wraps(func)가 설정값을 저장한다.	|설정값은 일반적으로 클로저에 유지되고, wraps는 메타데이터를 설정한다.|
+|반복 호출의 반환값은 자동으로 모두 합쳐진다.	|반환값 처리 방식은 wrapper 구현에 따라 결정된다.|
+|재시도 데코레이터는 어떤 함수에도 안전하게 적용할 수 있다.	|부작용, 예외 종류, 멱등성 등을 고려해야 한다.|
+\end{dhktable}
+
+\subsubsection{핵심 정리}
+
+이번 학습의 핵심 구조는 다음과 같다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def decorator_factory(config):
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # config와 func를 활용
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+\end{dhkcode}
+
+이 코드는 세 단계의 함수 객체와 서로 다른 바인딩 환경으로 구성된다.
+
+\begin{dhksmry}
+데코레이터 팩토리의 전체 실행 구조
+
+1. 팩토리 호출
+   decorator_factory(config)가 실행되고 설정값이 외부 함수의 매개변수에
+   바인딩된다. 데코레이터 함수 객체가 생성되어 반환된다.
+
+2. 데코레이터 적용
+   반환된 데코레이터가 원본 함수 객체를 전달받아 호출된다. func가 원본 함수
+   객체에 바인딩되고 wrapper 함수 객체가 생성된다.
+
+3. 이름 재바인딩
+   데코레이터가 반환한 wrapper 함수 객체가 원래 함수 이름에 바인딩된다.
+
+4. 실제 함수 호출
+   이후 사용자가 데코레이션된 이름을 호출하면 wrapper가 실행된다. 
+   Wrapper는 클로저를 통해 설정값과 원본 함수 객체에 접근한다.
+
+5. 반환 또는 예외 전파
+   Wrapper의 구현에 따라 원본 함수의 호출 횟수, 인수 전달, 반환값 처리,
+   예외 전파가 결정된다.
+\end{dhksmry}
+
+이번 학습에서 가장 중요한 판단 기준은 다음이다.
+
+\begin{dhksmry}[centered]
+@factory(config)를 분석할 때는 함수가 세 단계로 중첩되어 있다는
+
+표면적인 구조보다, 각 함수가 언제 호출되고 어떤 객체를 반환하며
+
+어떤 바인딩을 클로저로 유지하는지를 추적해야 한다.
+\end{dhksmry}
+
+이 기준을 적용하면 반복, 재시도, 캐싱 정책, 로깅 수준 설정 등 다양한 데코레이터 팩토리를 동일한 객체 모델로 이해할 수 있다.
