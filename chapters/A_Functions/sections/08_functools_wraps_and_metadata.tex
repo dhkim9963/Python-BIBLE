@@ -1,0 +1,1445 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.8. functools.wraps와 함수 메타데이터
+% ==================================================
+
+\subsection{\zsh{functools.wraps}와 함수 메타데이터}
+
+Function Metadata · \zsh{update_wrapper} · \zsh{__wrapped__} · Introspection · inspect.signature
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{A.7}에서는 데코레이터가 적용된 함수의 호출이 실제로 어떤 경로를 따라 실행되는지 분석했다.
+
+\begin{dhkcode}
+def decorator(func):
+
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        return result
+
+    return wrapper
+
+
+@decorator
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+이 코드에서 \zsh{add(10, 20)}을 호출하면 원본 \zsh{add}가 아니라 \zsh{wrapper}가 먼저 실행된다.
+
+\zsh{wrapper}는 클로저를 통해 원본 함수 객체를 조회하고, 인수를 전달한 뒤 반환값을 호출자에게 다시 전달한다.
+
+그런데 아직 해결하지 않은 문제가 있다.
+
+데코레이션 이후 \zsh{add}라는 이름은 \zsh{wrapper} 함수 객체를 참조하는데, 외부에서는 이 객체를 원본 \zsh{add} 함수처럼 설명하고 다룰 수 있을까?
+
+예를 들어 다음 정보들이 있다.
+
+\begin{dhksmry}
+    - 함수 이름: __name__
+
+    - 함수의 정규화된 이름: __qualname__
+
+    - 독스트링: __doc__
+
+    - 타입 주석: __annotations__
+
+    - 함수의 호출 시그니처(Signature)
+
+    - 원본 함수 객체에 대한 참조
+\end{dhksmry}
+
+이 정보들은 로깅, 문서 자동 생성, 디버깅, 테스트, 프레임워크의 함수 분석 등에 활용된다.
+
+이번 학습에서는 실제 호출을 수행하는 함수 객체와 그 함수에 대해 외부 도구가 관찰하는 메타데이터를 구별하는 것이 핵심이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서는 다음 문제를 해결할 것이다.
+
+\begin{dhksmry}
+1. 데코레이터를 적용하면 원본 함수의 메타데이터는 왜 사라진 것처럼 
+   보일까?
+
+2. functools.wraps는 어떤 객체를 생성하거나 변경할까?
+
+3. @wraps(func)와 update_wrapper(wrapper, func)는 
+   어떤 관계일까?
+
+4. __wrapped__는 클로저의 __closure__와 어떻게 다를까?
+
+5. inspect.signature()는 왜 wrapper의 실제 매개변수와 
+   다른 시그니처를 반환할 수 있을까?
+
+6. 여러 데코레이터가 적용되면 원본 함수 객체를 어떻게 추적할 수 있을까?
+
+7. functools.wraps가 보존하지 못하는 것은 무엇일까?
+\end{dhksmry}
+
+이번 학습 전체를 관통하는 원리는 다음과 같다.
+
+\begin{dhksmry}[centered]
+functools.wraps는 wrapper를 원본 함수로 바꾸는 기능이 아니라,
+
+wrapper 함수 객체에 원본 함수의 메타데이터와 참조 정보를 설정한다.
+\end{dhksmry}
+
+\subsubsection{데코레이터 적용 전후의 함수 메타데이터}
+
+먼저 \zsh{functools.wraps}를 사용하지 않은 예제를 살펴보자.
+
+\begin{dhkcode}
+import inspect
+
+
+def decorator(func):
+
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@decorator
+def add(a: int, b: int = 10) -> int:
+    """두 정수를 더한다."""
+    return a + b
+
+
+print(add(5))
+
+print(add.__name__)
+print(add.__qualname__)
+print(add.__doc__)
+print(add.__annotations__)
+print(inspect.signature(add))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+15
+wrapper
+decorator.<locals>.wrapper
+None
+{}
+(*args, **kwargs)
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+데코레이션 이전에는 모듈 이름 \zsh{add}가 원본 함수 객체를 참조했다.
+
+하지만 데코레이션 이후에는 다음 관계가 형성된다.
+
+\begin{dhkbranch}[in=2]
+node main :: 모듈 네임 스페이스
+handoff main -> a :: add
+arrow a
+node a :: wrapper 함수 객체
+branchline a -> a1 :: __name__ -> "wrapper"
+stop a1
+branchline a -> a2 :: __qualname__ -> "decorator.<locals>.wrapper"
+stop a2
+branchline a -> a3 :: __doc__ -> None
+stop a3
+branchline a -> a4 :: __code__ -> wrapper의 코드
+stop a4
+handoff a -> c :: __closure__
+arrow c
+node c :: Cell func
+arrow c
+node c :: 원본 add 함수 객체
+\end{dhkbranch}
+
+여기서 중요한 점은 원본 함수의 메타데이터가 실제로 삭제된 것이 아니라는 사실이다.
+
+원본 함수 객체에는 여전히 다음 정보가 존재한다.
+
+\begin{dhkcode}
+original = add.__closure__[0].cell_contents
+
+print(original.__name__)
+print(original.__doc__)
+print(original.__annotations__)
+print(inspect.signature(original))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+add
+두 정수를 더한다.
+{'a': <class 'int'>, 'b': <class 'int'>, 'return': <class 'int'>}
+(a: int, b: int = 10) -> int
+\end{dhkzsh}
+
+즉, 원본 함수 객체와 wrapper 함수 객체는 각각 자신의 메타데이터를 가지고 있다.
+
+문제는 데코레이션 이후 \zsh{add}라는 이름이 \zsh{wrapper}를 참조하므로, 일반적인 속성 조회에서 \zsh{wrapper}의 정보가 나타난다는 것이다.
+
+따라서 해결해야 할 문제는 원본 함수 객체를 복원하는 것이 아니라, \zsh{wrapper}에 어떤 메타데이터를 설정할 것인지 결정하는 것이다.
+
+\subsubsection{\zsh{functools.wraps}를 적용하면 무엇이 달라질까?}
+
+이제 Python 표준 라이브러리의 \zsh{functools.wraps}를 사용해 본다.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@decorator
+def add(a: int, b: int = 10) -> int:
+    """두 정수를 더한다."""
+    return a + b
+
+
+print(add(5))
+print(add.__name__)
+print(add.__qualname__)
+print(add.__doc__)
+print(add.__annotations__)
+print(inspect.signature(add))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+15
+add
+add
+두 정수를 더한다.
+{'a': <class 'int'>, 'b': <class 'int'>, 'return': <class 'int'>}
+(a: int, b: int = 10) -> int
+\end{dhkzsh}
+
+\zsh{A.8.3}과 비교하면 결과가 달라졌다.
+
+\begin{dhktable}
+|조회 대상|	@wraps 없음|	@wraps(func) 사용|
+|:---|:---|:---|
+|__name__|	wrapper|	add|
+|__qualname__|	decorator.<locals>.//*wrapper|	add|
+|__doc__|	None|	원본 독스트링|
+|__annotations__|	{}|	원본 타입 주석|
+|inspect.signature()|	(*args, **kwargs)|	(a: int, b: int = 10) -> int|
+\end{dhktable}
+
+그렇다면 \zsh{functools.wraps}가 \zsh{wrapper} 함수 객체를 원본 \zsh{add} 함수 객체로 바꾼 것일까?
+
+그렇지 않다.
+
+실제 함수 객체는 여전히 \zsh{wrapper}다.
+
+\zsh{functools.wraps}는 \zsh{wrapper}에 원본 함수의 메타데이터를 설정하고, 원본 객체를 추적할 수 있도록 \zsh{__wrapped__} 속성을 추가한다.
+
+그리고 \zsh{inspect.signature()}는 이 참조 정보를 활용해 원본 함수의 시그니처를 조회할 수 있다.
+
+여기에는 서로 다른 두 동작이 포함된다.
+
+\begin{dhksmry}
+1. functools.wraps가 함수 객체의 메타데이터를 설정하는 동작
+
+2. instpect.signature()가 __wrapped__를 따라가며 시그니처를
+   조회하는 동작
+\end{dhksmry}
+
+이 둘을 구분해야 한다.
+
+\subsubsection{\zsh{functools.wraps}의 정확한 정의}
+
+\zsh{functools.wraps}는 \zsh{wrapper} 함수에 원본 함수의 메타데이터를 설정하기 위한 데코레이터 생성기(Decorator Factory)다.
+
+기본적인 사용 형태는 다음과 같다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+\end{dhkcode}
+
+여기서 주목해야 할 표현식은 다음이다.
+
+\begin{dhkcode}
+@wraps(func)
+\end{dhkcode}
+
+\zsh{A.6}에서 학습한 변환식을 적용하면, 이 표현식은 개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+wrapper = wraps(func)(wrapper)
+\end{dhkcode}
+
+즉, \zsh{wraps(func)}는 실제로 \zsh{wrapper}를 꾸며 줄 데코레이터를 반환한다.
+
+그다음 반환된 데코레이터가 \zsh{wrapper} 함수 객체에 적용되는 것이다.
+
+이 과정을 나누면 다음과 같다.
+
+\begin{dhksmry}[centered]
+원본 함수 객체
+\da
+wraps(func)
+\da
+데코레이터 객체 반환
+\da
+데코레이터(wrapper)
+\da
+wrapper 메타데이터 설정
+\da
+wrapper 함수 객체 반환
+\end{dhksmry}
+
+여기서 중요한 사실이 있다.
+
+\zsh{@wraps(func)}는 원본 함수 \zsh{func}를 호출하는 문법이 아니다.
+
+\zsh{wraps}라는 데코레이터 생성기에 원본 함수 객체를 전달하고,
+
+그 결과를 \zsh{wrapper}에 적용하는 문법이다.
+
+\subsubsection{\zsh{wraps()}와 \zsh{update_wrapper()}의 관계}
+
+\zsh{functools.wraps}를 정확하게 이해하려면 \zsh{functools.update_wrapper}를 알아야 한다.
+
+두 함수의 관계는 다음과 같다.
+
+\begin{dhksmry}
+- update_wrapper(wrapper, wrapped)는 wrapper 객체의 메타데이터를
+  설정하는 함수다.
+
+- wraps(wrapped)는 update_wrapper를 데코레이터 형태로 사용하기
+  편하게 만든 함수다.
+\end{dhksmry}
+
+먼저 \zsh{update_wrapper}를 직접 사용해 보자.
+
+\begin{dhkcode}
+from functools import update_wrapper
+
+def original(a, b):
+    """두 수를 더한다."""
+    return a + b
+
+
+def wrapper(*args, **kwargs):
+    return original(*args, **kwargs)
+
+
+before = wrapper
+
+returned = update_wrapper(wrapper, original)
+
+print(returned is before)
+print(wrapper.__name__)
+print(wrapper.__doc__)
+print(wrapper.__wrapped__ is original)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+original
+두 수를 더한다.
+True
+\end{dhkzsh}
+
+이 결과에서 중요한 부분은 다음이다.
+
+\begin{dhkcode}
+returned is before
+\end{dhkcode}
+
+결과가 \zsh{True}라는 것은 \zsh{update_wrapper}가 새로운 \zsh{wrapper} 함수 객체를 만들어 반환한 것이 아니라는 뜻이다.
+
+기존 \zsh{wrapper} 함수 객체의 메타데이터를 설정한 뒤 그 객체 자체를 반환한 것이다.
+
+따라서 다음 두 코드는 일반적인 함수 기반 \zsh{wrapper}에서 같은 목적을 수행한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+@wraps 사용
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+from functools import wraps
+
+def decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+update_wrapper 직접 사용
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+from functools import update_wrapper
+
+def decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    update_wrapper(wrapper, func)
+
+    return wrapper
+\end{dhkcode}
+
+\zsh{wraps}는 내부적으로 \zsh{update_wrapper}를 사용한다.
+
+표준 라이브러리에서는 \zsh{functools.partial}을 활용하여 \zsh{update_wrapper}의 \zsh{wrapped} 인수를 미리 지정한 데코레이터를 반환하는 방식으로 구현되어 있다.
+
+따라서 \zsh{A.6}에서 배운 데코레이터 생성 구조가 여기에도 그대로 적용된다.
+
+\subsubsection{\zsh{update_wrapper()}는 어떤 속성을 설정할까?}
+
+기본 동작을 이해하려면 다음 두 상수를 살펴보면 된다.
+
+\begin{dhkcode}
+from functools import WRAPPER_ASSIGNMENTS
+from functools import WRAPPER_UPDATES
+\end{dhkcode}
+
+현대 Python의 기본 설정에서 \zsh{update_wrapper}는 크게 두 방식으로 메타데이터를 처리한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 속성 할당 - assigned
+\end{dhksmry}
+\end{dhknote}
+
+원본 객체의 특정 속성값을 \zsh{wrapper}에 할당한다.
+
+\begin{dhktable}
+|속성|	의미|
+|:---|:---|
+|__module__|	함수가 정의된 모듈 이름|
+|__name__|	함수 이름|
+|__qualname__|	함수의 정규화된 이름|
+|__doc__|	독스트링|
+|__annotations__|	타입 주석 정보|
+|__type_params__|	제네릭 함수의 타입 매개변수 정보|
+\end{dhktable}
+
+\zsh{__type_params__}는 Python 3.12부터 기본 복사 대상에 포함되었다.
+
+따라서 정확한 기본 속성 목록은 Python 버전에 따라 달라질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 네임스페이스 갱신 - updated
+\end{dhksmry}
+\end{dhknote}
+
+기본적으로 \zsh{wrapper}의 \zsh{__dict__}를 원본 객체의 \zsh{__dict__}에 있는 항목으로 갱신한다.
+
+이는 원본 함수에 사용자가 추가한 속성도 \zsh{wrapper}에 전달할 수 있다는 뜻이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 원본 객체 참조 설정 - __wrapped__
+\end{dhksmry}
+\end{dhknote}
+
+마지막으로 다음 관계를 설정한다.
+
+\begin{dhkcode}
+wrapper.__wrapped__ = wrapped
+\end{dhkcode}
+
+여기서 \zsh{wrapped}는 원본 함수 객체를 참조한다.
+
+이 설정은 \zsh{assigned}와 \zsh{updated} 목록을 비워도 기본적으로 수행된다.
+
+따라서 \zsh{update_wrapper}의 기본적인 동작을 개념적으로 단순화하면 다음과 같다.
+
+\begin{dhkcode}
+# 개념적 수도 코드: 실제 구현 전체가 아님
+
+for name in assigned:
+    # 원본에 존재하는 메타데이터 속성을 wrapper에 할당
+    ...
+
+for name in updated:
+    # wrapper의 해당 매핑을 원본의 매핑으로 갱신
+    ...
+
+wrapper.__wrapped__ = wrapped
+
+return wrapper
+\end{dhkcode}
+
+이때 중요한 사실은 \zsh{__code__}, \zsh{__closure__}, \zsh{__default__} 등이 기본적으로 복사 대상이 아니라는 것이다.
+
+따라서 \zsh{functools.wraps}를 사용해도 \zsh{wrapper}의 실제 코드와 호출 동작이 원본 함수로 바뀌지는 않는다.
+
+\subsubsection{함수 객체의 동일성과 메타데이터의 동일성}
+
+이제 실제 함수 객체가 여전히 다르다는 사실을 검증해 보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@decorator
+def add(a, b):
+    return a + b
+
+
+original = add.__wrapped__
+
+print(add is original)
+print(add.__name__ == original.__name__)
+print(add.__code__ is original.__code__)
+print(add.__closure__ is original.__closure__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+True
+False
+False
+\end{dhkzsh}
+
+각 결과를 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+add is original
+\end{dhkcode}
+
+\zsh{False}다.
+
+두 이름이 서로 다른 함수 객체를 참조하기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+add.__name__ == original.__name__
+\end{dhkcode}
+
+\zsh{True}다.
+
+\zsh{functools.wraps}가 \zsh{wrapper}의 \zsh{__name__}을 원본 함수의 이름으로 설정했기 때문이다.
+
+하지만 메타데이터 값이 같다는 사실은 함수 객체가 동일하다는 뜻이 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 번째 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+add.__code__ is original.__code__
+\end{dhkcode}
+
+\zsh{False}다.
+
+\zsh{wrapper}와 원본 함수는 서로 다른 코드 객체를 사용한다.
+
+\zsh{functools.wraps}가 \zsh{wrapper}의 코드를 원본 함수의 코드로 교체한 것이 아니기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+네 번째 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+add.__closure__ is original.__closure__
+\end{dhkcode}
+
+\zsh{False}다.
+
+이 예제에서 \zsh{wrapper}는 \zsh{func}라는 자유 변수를 참조하므로 클로저를 가진다.
+
+반면 원본 \zsh{add}는 외부 함수의 자유 변수를 사용하지 않으므로 \zsh{__closure__}가 \zsh{None}이다.
+
+따라서 두 값은 동일하지 않다.
+
+여기서 다음 네 가지를 구별해야 한다.
+
+\begin{dhktable}
+|비교 대상|	의미|
+|:---|:---|
+|함수 객체의 동일성|	같은 함수 객체인가?|
+|메타데이터의 값|	이름, 독스트링 등이 같은가?|
+|코드 객체의 동일성|	같은 코드 객체를 사용하는가?|
+|클로저 환경|	어떤 외부 바인딩에 접근하는가?|
+\end{dhktable}
+
+\zsh{functools.wraps}는 이 네 가지를 모두 동일하게 만드는 기능이 아니다.
+
+\subsubsection{\zsh{__wrapped__}와 \zsh{__closure__}의 차이}
+
+이번 학습에서 가장 중요한 부분 중 하나다.
+
+다음 두 속성은 모두 원본 함수 객체에 접근하는 데 사용될 수 있다.
+
+\begin{dhkcode}
+wrapper.__wrapped__
+
+wrapper.__closure__
+\end{dhkcode}
+
+하지만 두 속성의 의미는 전혀 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__closure__
+\end{dhksmry}
+\end{dhknote}
+
+클로저를 구성하는 셀 객체들의 튜플이다.
+
+함수 본문에서 참조하는 자유 변수의 바인딩을 유지하기 위해 사용된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__wrapped__
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{functools.update_wrapper}가 \zsh{wrapper}에 설정하는 속성이다.
+
+어떤 객체를 감싸고 있는지 외부 도구가 추적할 수 있도록 제공하는 메타데이터다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@decorator
+def greet():
+    return "Hello"
+
+
+original_from_metadata = greet.__wrapped__
+
+original_from_closure = greet.__closure__[0].cell_contents
+
+print(original_from_metadata is original_from_closure)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+두 경로가 같은 원본 함수 객체에 도달한다.
+
+그렇다고 두 경로가 같은 메커니즘이라는 뜻은 아니다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,2) [accent] :: wrapper 함수 객체
+node n2 (2,1) :: __wrapped__ // 메타데이터 속성
+node n3 (2,3) :: __closure__ // Cell func
+node n4 (3,2) [accent]:: 원본 함수 객체
+
+edge n1 -> n2
+edge n1 -> n3
+merge n2,n3 -> n4
+
+caption :: 같은 원본 함수 객체를 참조하더라도, __wrapped__는 명시적인 속성이고 __closure__는 자유 변수 바인딩을 유지하는 셀 구조다.
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클로저가 없어도 __wrapped__는 존재할 수 있다
+\end{dhksmry}
+\end{dhknote}
+
+이 차이를 명확하게 보여주는 예제를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def original():
+    return 10
+
+
+@wraps(original)
+def wrapper():
+    return 0
+
+
+print(wrapper.__closure__)
+print(wrapper.__wrapped__ is original)
+print(wrapper())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+None
+True
+0
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{wrapper} 본문에서는 외부 함수의 자유 변수를 참조하지 않는다.
+
+따라서 클로저가 필요하지 않다.
+
+하지만 \zsh{@wraps(original)}은 \zsh{wrapper}의 \zsh{__wrapped__} 속성에 원본 함수 객체를 설정한다.
+
+그러므로 \zsh{__wrapped__}는 존재하지만 \zsh{__closure__}는 \zsh{None}일 수 있다.
+
+또한 \zsh{wrapper()}를 호출하면 0이 반환된다.
+
+\zsh{__wrapped__}가 원본 함수 객체를 참조한다고 해서 Python이 자동으로 원본 함수를 호출하는 것은 아니기 때문이다.
+
+\zsh{__wrapped__}는 호출을 위임하는 장치가 아니라 원본 객체를 가리키는 참조 정보다.
+
+\subsubsection{\zsh{inspect.signature()}는 무엇을 조회할까?}
+
+이제 함수 시그니처 문제를 살펴보자.
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@decorator
+def power(base, exponent=2):
+    return base ** exponent
+
+
+print(inspect.signature(power))
+
+print(
+    inspect.signature(
+        power,
+        follow_wrapped=False
+    )
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(base, exponent=2)
+(*args, **kwargs)
+\end{dhkzsh}
+
+두 결과가 다른 이유는 무엇일까?
+
+기본적으로 \zsh{inspect.signature()}는 함수 객체에 \zsh{__wrapped__} 체인이 있으면 이를 따라가며 시그니처를 분석할 수 있다.
+
+따라서 첫 번째 호출은 원본 \zsh{power}의 시그니처를 반환한다.
+
+반면 다음 옵션을 사용하면
+
+\begin{dhkcode}
+follow_wrapped=False
+\end{dhkcode}
+
+\zsh{wrapper}의 실제 함수 정의를 기준으로 시그니처를 조회한다.
+
+이 예제에서 \zsh{wrapper}는 다음과 같이 정의되어 있다.
+
+\begin{dhkcode}
+def wrapper(*args, **kwargs):
+    return func(*args, **kwargs)
+\end{dhkcode}
+
+따라서 \zsh{(*args, **kwargs)}가 반환되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+코드 객체를 통해 검증하기
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(power.__code__.co_varnames)
+
+print(power.__wrapped__.__code__.co_varnames)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+('args', 'kwargs')
+('base', 'exponent')
+\end{dhkzsh}
+
+이 결과는 다음 사실을 보여준다.
+
+\zsh{functools.wraps}를 적용했더라도 현재 \zsh{power}가 참조하는 함수 객체의 코드는 \zsh{wrapper}의 코드다.
+
+반면 \zsh{power.__wrapped__}는 원본 함수 객체를 참조하므로 원본 매개변수 이름을 확인할 수 있다.
+
+따라서 다음 두 표현식은 서로 다른 질문에 답하는 것이다.
+
+\begin{dhkcode}
+inspect.signature(power)
+\end{dhkcode}
+
+기본 설정에서는 외부에 표현되는 원본 함수의 호출 인터페이스를 조회하려는 동작이다.
+
+\begin{dhkcode}
+inspect.signature(power, follow_wrapped=False)
+\end{dhkcode}
+
+반면 이 표현식은 \zsh{__wrapped__}를 따라가지 않고 현재 함수 객체 자체의 시그니처를 조회하려는 동작이다.
+
+단, \zsh{inspect.signature()}는 \zsh{__signature__} 같은 별도의 메타데이터도 고려할 수 있으므로, 모든 상황에서 두 번째 호출이 내부 구현의 모든 호출 제약을 완전히 설명한다고 단정할 수는 없다.
+
+\subsubsection{표시되는 시그니처와 실제 호출 규칙은 다를 수 있다}
+
+이제 조금 더 중요한 문제를 살펴보자.
+
+\zsh{functools.wraps}를 적용하면 \zsh{inspect.signature()}는 원본 함수의 시그니처를 반환할 수 있다.
+
+그렇다면 Python이 실제로 \zsh{wrapper}를 호출할 때도 원본 함수의 시그니처를 사용해서 인수를 바인딩할까?
+
+그렇지 않다.
+
+다음 예제를 보자.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+def add_prefix(func):
+
+    @wraps(func)
+    def wrapper(prefix, *args, **kwargs):
+        return prefix + func(*args, **kwargs)
+
+    return wrapper
+
+
+@add_prefix
+def greet(name):
+    return f"Hello, {name}"
+
+
+print(inspect.signature(greet))
+
+print(
+    inspect.signature(
+        greet,
+        follow_wrapped=False
+    )
+)
+
+print(greet(">> ", "Kim"))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(name)
+(prefix, *args, **kwargs)
+>> Hello, Kim
+\end{dhkzsh}
+
+여기서 외부에 표시되는 시그니처는 다음과 같다.
+
+\begin{dhkcode}
+(name)
+\end{dhkcode}
+
+하지만 실제 \zsh{wrapper}의 정의는 다음과 같다.
+
+\begin{dhkcode}
+def wrapper(prefix, *args, **kwargs):
+    ...
+\end{dhkcode}
+
+따라서 다음 호출은
+
+\begin{dhkcode}
+greet(">> ", "Kim")
+\end{dhkcode}
+
+실제로 \zsh{wrapper}의 매개변수에 다음과 같이 바인딩된다.
+
+\begin{dhksmry}
+    prefix \ra ">> "
+    args   \ra ("Kim",)
+    kwargs \ra {}
+\end{dhksmry}
+
+그다음 원본 함수가 호출된다.
+
+\begin{dhkcode}
+func("Kim")
+\end{dhkcode}
+
+결과적으로 \zsh{"Hello, Kim"}이 반환되고 \zsh{wrapper}가 접두어를 추가한다.
+
+여기서 중요한 문제가 드러난다.
+
+\zsh{functools.wraps}가 원본 시그니처를 외부에 표현하도록 도와주더라도, 실제 \zsh{wrapper}의 인수 바인딩 규칙을 변경하지는 않는다.
+
+따라서 원본 함수와 \zsh{wrapper}의 호출 인터페이스가 다르다면
+
+\zsh{inspect.signature()}의 기본 결과가 실제 \zsh{wrapper} 호출 방법을 충분히 설명하지 못할 수 있다.
+
+이것은 문서 자동 생성이나 함수 시그니처를 분석하는 프레임워크에서 중요한 문제다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+판단 기준
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}
+- Wrapper가 원본 함수의 인수와 반환값을 그대로 중개한다면
+  @wraps(func)는 대체로 자연스러운 선택이다.
+
+- Wrapper가 호출 인터페이스를 변경한다면 원본 시그니처를 그대로
+  노출하는 것이 적절한지 검토해야 한다.
+
+- 실제 호출 가능 여부는 최종적으로 호출 대상 객체의 동작과 인수 바인딩
+  규칙에 따라 결정된다.
+\end{dhksmry}
+
+\subsubsection{\zsh{__wrapped__} 체인과 \zsh{inspect.unwrap()}}
+
+이번에는 데코레이터가 여러 번 적용되는 경우를 살펴보자.
+
+\zsh{A.10}에서 데코레이터의 평가 순서와 적용 순서를 자세히 분석할 것이므로, 여기서는 원본 함수 참조 구조에만 집중할 것이다.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+def first(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def second(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@first
+@second
+def calculate(x):
+    return x * 2
+
+
+outer = calculate
+middle = calculate.__wrapped__
+original = middle.__wrapped__
+
+print(outer is middle)
+print(middle is original)
+
+print(inspect.unwrap(calculate) is original)
+
+print(calculate(10))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+False
+True
+20
+\end{dhkzsh}
+
+여기에는 서로 다른 세 함수 객체가 존재한다.
+
+\begin{dhkbranch}[in=8]
+node main :: 모듈 이름 calculate
+arrow main
+node main :: first의 wrapper
+handoff main -> a :: __wrapped__
+arrow a
+node a :: second의 wrapper
+handoff a -> c :: __wrapped__
+arrow c
+node c :: 원본 calculate
+\end{dhkbranch}
+
+각 \zsh{wrapper}에 \zsh{functools.wraps}가 적용되었기 때문에
+
+\zsh{__wrapped__} 속성이 연결된다.
+
+따라서 다음 표현식은
+
+\begin{dhkcode}
+calculate.__wrapped__
+\end{dhkcode}
+
+바로 안쪽의 \zsh{wrapper} 함수 객체를 반환한다.
+
+그리고 다음 표현식은
+
+\begin{dhkcode}
+calculate.__wrapped__.__wrapped__
+\end{dhkcode}
+
+원본 함수 객체를 반환한다.
+
+이러한 연결 구조를 따라 최종 원본 객체를 찾기 위해 
+
+\zsh{inspect.unwrap()}을 사용할 수 있다.
+
+\begin{dhkcode}
+inspect.unwrap(calculate)
+\end{dhkcode}
+
+이 함수는 기본적으로 \zsh{__wrapped__} 체인을 따라가 마지막 객체를 반환한다.
+
+따라서 직접 여러 번 \zsh{.__wrapped__}를 조회하지 않아도 원본 함수 객체에 접근할 수 있다.
+
+다만 \zsh{inspect.unwrap()}은 모든 경우에 무조건 마지막 함수까지 이동하는 단순 반복 함수만은 아니다.
+
+사용자가 지정한 중단 조건이 있으면 중간에 탐색을 멈출 수 있고, 순환 참조가 발견되면 \zsh{ValueError}를 발생시킬 수 있다.
+
+또한 \zsh{inspect.signature()}는 자체적인 시그니처 분석 규칙에 따라 
+
+\zsh{__wrapped__} 체인을 탐색한다.
+
+\subsubsection{\zsh{__dict__} 갱신과 얕은 복사(Shallow Copy)}
+
+이제 \zsh{update_wrapper}의 두 번째 주요 동작인 \zsh{__dict__} 갱신을 살펴본다.
+
+일반적인 Python 함수 객체는 사용자 정의 속성을 가질 수 있다.
+
+\begin{dhkcode}
+def calculate(x):
+    return x * 2
+
+calculate.category = ["math"]
+\end{dhkcode}
+
+이때 \zsh{category}는 함수 객체에 추가된 속성이다.
+
+\zsh{functools.wraps}는 기본적으로 원본 함수의 \zsh{__dict__}에 있는 항목을 
+
+\zsh{wrapper}의 \zsh{__dict__}에 갱신한다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def decorator(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def calculate(x):
+    return x * 2
+
+
+calculate.category = ["math"]
+
+wrapped = decorator(calculate)
+
+print(wrapped.__dict__ is calculate.__dict__)
+
+print(wrapped.category is calculate.category)
+
+wrapped.category.append("python")
+
+print(calculate.category)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+True
+['math', 'python']
+\end{dhkzsh}
+
+이 결과를 구분해서 해석해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+wrapped.__dict__ is calculate.__dict__
+\end{dhkcode}
+
+\zsh{False}다.
+
+\zsh{wrapper}와 원본 함수는 서로 다른 함수 객체이므로 일반적으로 서로 다른 속성 네임스페이스를 가진다.
+
+\zsh{update_wrapper}가 두 함수의 \zsh{__dict__} 자체를 하나의 딕셔너리로 통합하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+wrapped.category is calculate.category
+\end{dhkcode}
+
+\zsh{True}다.
+
+\zsh{__dict__}의 항목을 갱신할 때 리스트 객체를 깊은 복사(Deep Copy)하지 않기 때문이다.
+
+따라서 두 함수 객체의 \zsh{category} 속성이 같은 리스트 객체를 참조할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 번째 연산
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+wrapped.category.append("python")
+\end{dhkcode}
+
+기존 리스트 객체를 직접 변경한다.
+
+원본 함수의 \zsh{category}도 같은 리스트 객체를 참조하므로 변경된 내용을 관찰할 수 있다.
+
+이것은 \zsh{A.5}에서 학습한 객체 변경과 이름 재바인딩의 차이와 연결된다.
+
+\zsh{functools.wraps}가 메타데이터를 복사한다는 설명을 모든 참조 객체에 대한 깊은 복사로 이해하면 안 된다.
+
+참고로 \zsh{__annotations__}도 기본적으로 원본의 속성값이 \zsh{wrapper}에 할당된다.
+
+따라서 일반적인 함수에서는 두 객체의 타입 주석 딕셔너리가 동일한 객체일 수 있다.
+
+\subsubsection{\zsh{functools.wraps}가 보존하지 않는 것}
+
+지금까지 \zsh{functools.wraps}가 설정하는 정보를 살펴보았다.
+
+이제 반대로 무엇을 보존하지 않는지 정리해 본다.
+
+\begin{dhktable}
+|항목|	functools.wraps의 기본 동작|
+|:---|:---|
+|함수 이름|	원본의 __name__을 설정|
+|독스트링|	원본의 __doc__를 설정|
+|타입 주석|	원본의 __annotations__를 설정|
+|사용자 정의 속성|	기본적으로 __dict__ 항목 갱신|
+|원본 객체 참조|	__wrapped__ 설정|
+|실제 코드 객체|	교체하지 않음|
+|클로저 셀|	원본의 셀로 교체하지 않음|
+|실제 인수 바인딩 규칙|	변경하지 않음|
+|반환값 처리|	변경하지 않음|
+|예외 처리|	변경하지 않음|
+|동기·비동기 실행 방식|	자동 변환하지 않음|
+\end{dhktable}
+
+여기서 중요한 원칙은 다음이다.
+
+\zsh{functools.wraps}는 함수의 실행 의미를 보존하는 장치가 아니라, 메타데이터와 원본 참조를 설정하는 장치다.
+
+따라서 다음과 같은 데코레이터를 작성할 수도 있다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def skip(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return "Skipped"
+
+    return wrapper
+
+
+@skip
+def calculate(x):
+    return x * 2
+
+
+print(calculate.__name__)
+print(calculate(10))
+print(calculate.__wrapped__(10))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+calculate
+Skipped
+20
+\end{dhkzsh}
+
+\zsh{calculate.__name__}은 원본 함수의 이름으로 설정되어 있다.
+
+하지만 \zsh{calculate(10)}은 원본 함수를 호출하지 않고 \zsh{"Skipped"}를 반환한다.
+
+반면 \zsh{calculate.__wrapped__(10)}은 원본 함수 객체를 직접 호출하므로 20을 반환한다.
+
+이 예제는 메타데이터와 실제 동작이 서로 독립적이라는 사실을 보여준다.
+
+또한 \zsh{__wrapped__}를 통해 원본 함수에 접근할 수 있으므로, \zsh{wrapper}에 구현한 검사만으로 원본 함수의 직접 호출까지 차단된다고 가정하면 안 된다.
+
+\subsubsection{실전 응용 - 로깅 데코레이터와 함수 분석}
+
+이번에는 실제로 활용할 수 있는 로깅 데코레이터를 작성해 보자.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+def log_execution(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print(f"[START] {func.__name__}")
+
+        try:
+            return func(*args, **kwargs)
+
+        finally:
+            print(f"[END] {func.__name__}")
+
+    return wrapper
+
+
+@log_execution
+def predict(features: list[float], scale: float = 1.0) -> float:
+    """입력 특성값의 합계에 배율을 적용한다."""
+    return sum(features) * scale
+
+
+print(predict([1.0, 2.0, 3.0], scale=2.0))
+
+print(predict.__name__)
+print(predict.__doc__)
+print(inspect.signature(predict))
+\end{dhkcode}
+
+이 코드는 세 가지 기능을 분리하고 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫째, 원본 함수의 계산 책임
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{predict}는 입력 특성값을 합산하고 배율을 적용하는 계산만 담당한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+둘째, wrapper의 실행 기록 책임
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{wrapper}는 원본 함수의 호출 전후에 로그를 출력한다.
+
+\zsh{finally}를 사용하므로 원본 함수에서 예외가 발생해도 종료 로그를 기록하려고 시도한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+셋째, functools.wraps의 메타데이터 관리 책임
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{@wraps(func)}는 \zsh{wrapper}에 원본 함수의 메타데이터를 설정한다.
+
+따라서 함수 이름, 독스트링, 타입 주석 등의 정보를 외부 도구에서 활용할 수 있다.
+
+이 구조는 PyTorch 모델의 추론 함수나 데이터 전처리 함수에 공통 로깅 기능을 추가할 때도 응용할 수 있다.
+
+다만 \zsh{functools.wraps} 자체가 Tensor의 계산 그래프, 자동 미분, 장치 배치, 메모리 사용 등을 제어하는 것은 아니다.
+
+그러한 동작은 원본 함수와 \zsh{wrapper}가 실제로 수행하는 연산에 따라 결정된다.
+
+\subsubsection{FastAPI와 함수 시그니처 분석의 연결}
+
+이제 이 개념이 왜 웹프레임워크에서 중요한지 살펴보자.
+
+FastAPI와 같은 프레임워크는 함수의 시그니처를 분석하여 매개변수와 요청 데이터를 연결하는 기능을 제공한다.
+
+예를 들어 다음과 같은 함수가 있다고 하자.
+
+\begin{dhkcode}
+def get_item(item_id: int):
+    return {"item_id": item_id}
+\end{dhkcode}
+
+함수의 시그니처에는 다음 정보가 포함된다.
+
+\begin{dhkcode}
+(item_id: int)
+\end{dhkcode}
+
+그런데 이 함수에 일반적인 \zsh{wrapper}를 적용하면 실제 함수 객체의 정의는 다음과 같이 바뀔 수 있다.
+
+\begin{dhkcode}
+def wrapper(*args, **kwargs):
+    ...
+\end{dhkcode}
+
+이때 프레임워크가 어떤 객체의 시그니처를 분석하는지가 중요해진다.
+
+\zsh{functools.wraps}는 \zsh{__wrapped__}를 설정하므로 \zsh{inspect.signature()}가 원본 함수의 시그니처를 추적하는 데 도움을 줄 수 있다.
+
+하지만 여기서 다음과 같이 단정하면 안 된다.
+
+\begin{dhksmry}[centered]
+@wraps를 사용하면 모든 FastAPI 데코레이터가 정상적으로 동작한다.
+\end{dhksmry}
+
+실제 동작은 데코레이터의 적용 순서, 동기·비동기 함수 여부, \zsh{wrapper}의 인수 처리 방식, 프레임워크가 함수를 등록하고 분석하는 방식 등에 따라 달라질 수 있다.
+
+따라서 \zsh{functools.wraps}는 함수 메타데이터 보존에 중요한 도구이지만, 프레임워크의 모든 호출 계약을 자동으로 보장하는 장치는 아니다.
+
+이 부분은 \zsh{A.12}의 등록형 데코레이터와 FAstAPI에서 구체적인 실행 구조로 다시 분석할 것이다.
+
+\subsubsection{자주 발생하는 오해와 예외}
+
+이번 학습에서 주의해야 할 개념을 정리해 본다.
+
+\begin{dhktable}
+|오해|	정확한 설명|
+|:---|:---|
+|@wraps(func)는 원본 함수를 호출한다.|	wraps(func)는 메타데이터 설정용 데코레이터를 생성한다.|
+|functools.wraps는 새로운 함수 객체를 만든다.|	기존 wrapper 함수 객체의 메타데이터를 설정하는 방식이다.|
+|__name__이 같으면 같은 함수 객체다.|	메타데이터 값과 객체 동일성은 별개다.|
+|__wrapped__와 __closure__는 같은 역할이다.|	전자는 원본 참조 메타데이터, 후자는 자유 변수 바인딩 환경이다.|
+|inspect.signature()는 항상 실제 wrapper의 시그니처를 보여준다.|	기본적으로 __wrapped__ 체인을 따라 원본 시그니처를 조회할 수 있다.|
+|@wraps를 사용하면 인수 전달이 자동으로 처리된다.|	실제 인수 전달은 wrapper 구현에 달려 있다.|
+|@wraps를 사용하면 원본의 실행 동작이 보존된다.|	반환값, 예외, 실행 여부 등은 wrapper가 결정할 수 있다.|
+|메타데이터 복사는 모든 객체의 깊은 복사다.|	기본적으로 속성 할당과 매핑 갱신을 수행한다.|
+|여러 데코레이터가 적용되면 원본 함수에 접근할 수 없다.|	__wrapped__ 체인과 inspect.unwrap()으로 추적할 수 있다.|
+\end{dhktable}
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습에서 가장 중요한 객체 관계를 다시 정리해 본다.
+
+\begin{dhkbranch}[in=8]
+node main :: 모듈 이름 add
+arrow main
+node main :: wrapper 함수 객체
+branchline main -> a1 :: __name__ = "add"
+stop a1
+branchline main -> a2 :: __doc__ = 원본 독스트링
+stop a2
+branchline main -> a3 :: __annotations__ = 원본 타입 주석 정보
+stop a3
+branchline main -> a4 :: __wrapped__ -> 원본 add 함수 객체
+stop a4
+branchline main -> a5 :: __code__ -> wrapper의 실제 코드
+stop a5
+handoff main -> a6 :: __closure__
+arrow a6
+node a6 :: Cell func
+arrow a6
+node a6 :: 원본 add 함수 객체
+\end{dhkbranch}
+
+이 구조에서 중요한 사실은 다음과 같다.
+
+함수 객체의 정체성은 메타데이터와 별개다.
+
+\zsh{functools.wraps}가 \zsh{__name__}, \zsh{__doc__}, \zsh{__annotations__} 등을 설정하더라도 \zsh{wrapper}와 원본 함수는 여전히 서로 다른 객체다.
+
+\zsh{__wrapped__}와 \zsh{__closure__}는 서로 다른 참조 메커니즘이다.
+
+\zsh{__wrapped__}는 원본 객체를 추적하기 위한 속성이고, \zsh{__closure__}는 자유 변수 바인딩을 유지하기 위한 구조다.
+
+\zsh{inspect.signature()}는 실제 호출을 수행하는 함수 객체의 매개변수 정의와 다른 정보를 보여줄 수 있다.
+
+기본적으로 \zsh{__wrapped__}를 따라가 원본 함수의 시그니처를 분석할 수 있기 때문이다.
+
+\zsh{functools.wraps}는 호출 의미를 자동으로 보존하지 않는다.
+
+Wrapper가 인수를 어떻게 전달하고, 원본 함수를 언제 호출하고, 반환값과 예외를 어떻게 처리하는지는 실제 구현에 따라 결정된다.
+
+따라서 데코레이터를 분석할 때는 다음 네 가지 질문을 순서대로 확인하면 된다.
+
+\begin{dhksmry}
+1. 현재 이름은 어떤 함수 객체를 참조하는가?
+
+2. 그 함수 객체의 실제 코드와 호출 규칙은 무엇인가?
+
+3. __wrapped__는 어떤 객체를 참조하는가?
+
+4. 외부 도구가 표시하는 메타데이터는 어느 객체에서 유래했는가?
+\end{dhksmry}
+
+이 기준을 적용하면 \zsh{functools.wraps}를 단순한 이름 복사 도구가 아니라, 함수 객체의 실행 구조와 외부에 노출되는 인터페이스 정보를 연결하는 장치로 이해할 수 있다.
