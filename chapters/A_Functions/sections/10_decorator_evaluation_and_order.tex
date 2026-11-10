@@ -1,0 +1,1421 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.10. 여러 데코레이터의 평가·적용 순서
+% ==================================================
+
+\subsection{여러 데코레이터의 평가·적용 순서}
+
+Decorator Stacking · Evaluation Order · Application Order · Wrapper Call Chain · Function Composition
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{A.9}에서는 인수를 받는 데코레이터를 다음 세 단계로 분석했다.
+
+\begin{dhkcode}
+@repeat(3)
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+\begin{dhksmry}
+1. repeat(3)을 호출해 데코레이터 함수 객체를 생성한다.
+
+2. 반환된 데코레이터에 원본 greet 함수 객체를 전달해 wrapper를 생성한다.
+
+3. 이후 greet()을 호출하면 wrapper가 실행된다.
+\end{dhksmry}
+
+이 구조를 이해했다면 이제 여러 데코레이터를 하나의 함수에 적용할 수 있다.
+
+\begin{dhkcode}
+@first
+@second
+def greet():
+    print("Hello")
+\end{dhkcode}
+
+이 코드는 단일 데코레이터의 변환식을 확장한 것으로, 개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+greet = first(second(greet))
+\end{dhkcode}
+
+그런데 여기서 주의할 점이 있다.
+
+\zsh{first}가 위에 작성되어 있으므로 먼저 적용될 것이라고 생각하기 쉽지만, 실제로는 그렇지 않다.
+
+Python에서는 데코레이터 표현식의 평가 순서, 함수 객체에 데코레이터를 적용하는 순서, 최종 함수 호출 시 wrapper가 실행되는 순서를 구별해야 한다.
+
+이 세 순서는 서로 관련되어 있지만 동일하지 않다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서는 다음 문제를 해결할 것이다.
+
+\begin{dhksmry}
+1. 여러 데코레이터 표현식은 어떤 순서로 평가되는가?
+
+2. 평가된 데코레이터는 원본 함수 객체에 어떤 순서로 적용되는가?
+
+3. 데코레이션 이후 함수 이름은 어떤 wrapper 객체를 참조하는가?
+
+4. 실제 함수를 호출하면 ㅈrapper는 어떤 순서로 실행되는가?
+
+5. 반환값과 예외는 wrapper 사이에서 어떤 경로로 전달되는가?
+
+6. __wrapped__와 __closure__를 이용하면 중첩 구조를 어떻게
+   추적할 수 있는가?
+
+7. 데코레이터의 적용 순서를 바꾸면 프로그램의 동작이 달라질 수 있는가?
+\end{dhksmry}
+
+핵심 원리는 다음과 같다.
+
+\begin{dhksmry}[centered]
+데코레이터 표현식은 위에서 아래로 평가되고, 
+
+그 결과는 아래에서 위로 적용된다.
+
+이후 실제 호출은 가장 바깥쪽 wrapper부터 안쪽으로 진행하며,
+
+정상 반환은 반대 방향으로 전달된다.
+\end{dhksmry}
+
+다만 모든 데코레이터가 반드시 wrapper를 반환하는 것은 아니므로, 마지막의 호출·반환 순서는 함수 기반 wrapper를 중첩한 경우에 성립하는 구조다.
+
+\subsubsection{세 가지 순서를 먼저 구별하자}
+
+다음 코드를 기준으로 생각해 보자.
+
+\begin{dhkcode}
+@A()
+@B()
+def func():
+    ...
+\end{dhkcode}
+
+\zsh{A()}와 \zsh{B()}가 각각 데코레이터 함수 객체를 반환한다고 가정한다.
+
+그러면 세 단계는 다음과 같이 진행 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 데코레이터 표현식 평가 - 위에서 아래
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}
+    (1) A() : 데코레이터 A 생성
+
+    (2) B() : 데코레이터 B 생성
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 원본 함수에 적용 - 아래에서 위
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhksmry}[centered]
+original \ra B(original) \ra A(B(original))
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 실제 호출 - 바깥에서 안으로, 반환은 반대로
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: 원본 함수
+group g1(n1) :: B wrapper
+group g2(g1) :: A wrapper
+
+explain :: 호출 진입은 A wrapper에서 원본 함수순으로,//반환 전달은 원본 함수에서 A wrapper 순으로
+
+caption :: 원본 함수에 가까운 wrapper가 먼저 생성되고, 마지막에 생성된 바깥쪽 wrapper가 최종 함수 이름에 바인딩된다.
+\end{dhkgraph}
+
+이를 표로 정리하면 다음과 같다.
+
+\begin{dhktable}
+|구분	|순서	|의미|
+|:---|:---|:---|
+|표현식 평가|	A() → B()|	데코레이터 객체 준비|
+|데코레이터 적용|	B → A|	원본 함수에서 바깥쪽으로 객체 변환|
+|실제 호출 진입|	A wrapper → B wrapper → 원본|	바깥쪽에서 안쪽으로|
+|정상 반환 전달|	원본 → B wrapper → A wrapper|	안쪽에서 바깥쪽으로|
+\end{dhktable}
+
+여기서 첫 번째와 두 번째 순서가 반대라는 점이 중요하다.
+
+이것을 단순히 "데코레이터는 역순으로 실행된다"라고 암기하면 안 된다.
+
+무엇을 평가하는지, 무엇을 적용하는지, 어떤 함수 객체를 실제로 호출하는지에 따라 순서가 달라지기 때문이다.
+
+\subsubsection{실행 결과로 세 가지 순서를 검증하기}
+
+먼저 하나의 독립적인 예제로 평가·적용·호출 순서를 모두 확인해 본다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def layer(label):
+    print("evaluate:", label)
+
+    def decorator(func):
+        print("apply:", label)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            print("enter:", label)
+
+            result = func(*args, **kwargs)
+
+            print("exit:", label)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+@layer("A")
+@layer("B")
+def calculate(x):
+    print("body:", x)
+    return x * 2
+
+
+print("definition complete")
+print("result:", calculate(3))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+evaluate: A
+evaluate: B
+apply: B
+apply: A
+definition complete
+enter: A
+enter: B
+body: 3
+exit: B
+exit: A
+result: 6
+\end{dhkzsh}
+
+이 코드는 세 가지 시점으로 나누어 분석해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 데코레이터 표현식 평가
+\end{dhksmry}
+\end{dhknote}
+
+Python이 함수 정의문을 실행하면서 먼저 다음 표현식을 평가한다.
+
+\begin{dhkcode}
+layer("A")
+\end{dhkcode}
+
+\zsh{layer}의 매개변수 \zsh{label}이 문자열 객체 \zsh{"A"}에 바인딩된다.
+
+\zsh{layer}는 중첩된 \zsh{decorator} 함수 객체를 생성하고 반환한다.
+
+이때 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+evaluate: A
+\end{dhkzsh}
+
+이어서 두 번째 데코레이터 표현식을 평가한다.
+
+\begin{dhkcode}
+layer("B")
+\end{dhkcode}
+
+마찬가지로 \zsh{"B"}를 참조하는 클로저 환경을 가진 새로운 \zsh{decorator} 함수 객체가 생성된다.
+
+\begin{dhkzsh}
+evaluate: B
+\end{dhkzsh}
+
+여기서 두 데코레이터 함수 객체는 같은 \zsh{decorator} 정의문으로부터 생성되었지만 서로 다른 함수 객체다.
+
+각각 다른 \zsh{label} 바인딩을 유지하고 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 원본 함수 객체에 데코레이터 적용
+\end{dhksmry}
+\end{dhknote}
+
+데코레이터 표현식의 평가가 끝나면 원본 \zsh{calculate} 함수 객체가 생성된다.
+
+이제 아래쪽 데코레이터부터 적용된다.
+
+먼저 \zsh{layer("B")}가 반환한 데코레이터에 원본 함수 객체가 전달된다.
+
+\begin{dhkcode}
+inner_wrapper = decorator_B(original_calculate)
+\end{dhkcode}
+
+이때 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+apply: B
+\end{dhkzsh}
+
+\zsh{decorator_B}는 새로운 wrapper 함수 객체를 생성하고 반환한다.
+
+이 wrapper는 \zsh{label="B"}와 원본 \zsh{calculate} 함수 객체에 접근할 수 있다.
+
+그다음 위쪽 데코레이터가 적용된다.
+
+\begin{dhkcode}
+outer_wrapper = decorator_A(inner_wrapper)
+\end{dhkcode}
+
+여기서 \zsh{decorator_A}가 전달받는 \zsh{func}는 
+
+원본 \zsh{calculate}가 아니라 B의 wrapper 함수 객체다.
+
+이때 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+apply: A
+\end{dhkzsh}
+
+마지막으로 \zsh{outer_wrapper}가 모듈 이름 \zsh{calculate}에 바인딩된다.
+
+따라서 최종 관계는 다음과 같다.
+
+\begin{dhkbranch}[in=8]
+node main :: calculate
+arrow main
+node main :: A의 wrapper
+line main
+line main :: func
+arrow main
+node main :: B의 wrapper
+line main
+line main :: func
+arrow main
+node main :: 원본 calculate
+\end{dhkbranch}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 실제 함수 호출
+\end{dhksmry}
+\end{dhknote}
+
+이제 다음 문장이 실행된다.
+
+\begin{dhkcode}
+calculate(3)
+\end{dhkcode}
+
+현재 \zsh{calculate}는 A의 wrapper 함수 객체를 참조하므로 A의 wrapper가 먼저 호출된다.
+
+\begin{dhkzsh}
+enter: A
+\end{dhkzsh}
+
+A의 wrapper는 자신의 클로저에 저장된 \zsh{func}를 호출한다.
+
+그 객체는 B의 wrapper다.
+
+\begin{dhkzsh}
+enter: B
+\end{dhkzsh}
+
+B의 wrapper 역시 자신의 클로저에 저장된 \zsh{func}를 호출한다.
+
+이번에는 원본 \zsh{calculate} 함수 객체가 호출된다.
+
+\begin{dhkzsh}
+body: 3
+\end{dhkzsh}
+
+원본 함수는 정수 객체 6을 반환한다.
+
+그 반환값이 B의 wrapper로 전달되고, B의 wrapper는 \zsh{"exit: B"}를 출력한 뒤 다시 6을 반환한다.
+
+이후 A의 wrapper가 \zsh{"exit: A"}를 출력하고 같은 반환 객체를 최종 호출자에게 전달한다.
+
+따라서 최종 출력은 다음과 같다.
+
+\begin{dhkzsh}
+result: 6
+\end{dhkzsh}
+
+여기서 중요한 점은 적용 순서가 B → A이기 때문에 최종 호출 순서가 A → B가 된다는 것이다.
+
+마지막에 적용된 A가 가장 바깥쪽 함수 객체가 되기 때문이다.
+
+\subsubsection{함수 객체의 생성과 이름 바인딩을 추적하기}
+
+이번에는 실행 결과가 아니라 객체 관계 자체를 분석해 보자.
+
+앞에서 작성한 코드를 개념적으로 풀어 쓰면 다음과 같다.
+
+\begin{dhkcode}
+decorator_A = layer("A")
+decorator_B = layer("B")
+
+
+def calculate(x):
+    return x * 2
+
+
+original = calculate
+
+inner = decorator_B(original)
+outer = decorator_A(inner)
+
+calculate = outer
+\end{dhkcode}
+
+이 코드는 핵심적인 객체 변환 관계를 나타낸 것이다.
+
+실제 데코레이터 구문의 모든 평가·바인딩 세부사항을 그대로 재현한 것은 아니다.
+
+이제 각 이름이 참조하는 객체를 정리해 보자.
+
+\begin{dhktable}
+|이름	|참조 객체|	역할|
+|:---|:---|:---|
+|decorator_A|	A 설정을 유지하는 데코레이터 함수|	바깥쪽 wrapper 생성|
+|decorator_B|	B 설정을 유지하는 데코레이터 함수|	안쪽 wrapper 생성|
+|original|	원본 함수 객체|	실제 계산 수행|
+|inner|	B의 wrapper 함수 객체|	원본 함수 호출 중개|
+|outer|	A의 wrapper 함수 객체|	B의 wrapper 호출 중개|
+|calculate|	outer와 동일한 객체|	최종 공개 이름|
+\end{dhktable}
+
+이 구조에서 새로운 함수 객체는 여러 개 생성되지만 원본 함수 객체가 수정되는 것은 아니다.
+
+데코레이터가 각각 새로운 wrapper를 생성하고 반환하며, 최종 이름이 가장 바깥쪽 객체에 바인딩되는 것이다.
+
+따라서 다음과 같은 관계가 성립한다.
+
+\begin{dhkcode}
+calculate is outer  # True
+outer is inner       # False
+inner is original    # False
+\end{dhkcode}
+
+데코레이터가 wrapper 대신 원본 함수를 그대로 반환한다면 이러한 객체 수와 동일성 관계는 달라질 수 있다.
+
+즉, 데코레이터를 여러 번 적용했다는 사실만으로 반드시 그 수만큼 새로운 함수 객체가 생성된다고 단정할 수는 없다.
+
+\subsubsection{\zsh{__wrapped__} 체인을 통해 중첩 구조 확인하기}
+
+\zsh{A.8}에서 학습한 \zsh{functools.wraps}를 사용하면 원본 함수 참조가 체인 형태로 유지된다.
+
+앞의 \zsh{layer}와 \zsh{calculate}를 그대로 사용한다고 하자.
+
+\begin{dhkcode}
+import inspect
+
+outer = calculate
+inner = outer.__wrapped__
+original = inner.__wrapped__
+
+print(outer is inner)
+print(inner is original)
+
+print(inspect.unwrap(calculate) is original)
+
+print(outer.__name__)
+print(inner.__name__)
+print(original.__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+False
+True
+calculate
+calculate
+calculate
+\end{dhkzsh}
+
+여기서 흥미로운 점이 있다.
+
+세 함수 객체는 모두 다른 객체인데 \zsh{__name__}은 같다.
+
+왜냐하면 각 wrapper에 \zsh{@wraps(func)}가 적용되어 원본 쪽 함수의 메타데이터가 설정되었기 때문이다.
+
+따라서 \zsh{__name__}만으로는 어떤 wrapper인지 구별할 수 없다.
+
+반면 \zsh{__wrapped__}는 각 wrapper가 어떤 객체로 감싸도록 설정되었는지 추적할 수 있게 한다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: outer = A의 wrapper // calculate 이름이 참조하는 객체
+node n2 (2,1) :: inner = B의 wrapper // A의 wrapper가 감싸는 객체
+node n3 (3,1) :: original = 원본 calculate // 실제 x*2 계산을 수행하는 함수 객체
+edge n1 -> n2 :: __wrapped__
+edge n2 -> n3 :: __wrapped__
+
+caption :: __wrapped__는 각 wrapper가 감싸는 객체를 가리킨다. 실제 호출도 이 경로를 따르는지는 wrapper의 본문에 달려 있다.
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+inspect.signature()의 동작
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+print(inspect.signature(calculate))
+
+print(
+    inspect.signature(
+        calculate,
+        follow_wrapped=False
+    )
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(x)
+(*args, **kwargs)
+\end{dhkzsh}
+
+첫 번째 결과는 \zsh{__wrapped__} 체인을 따라 원본 함수의 시그니처를 조회한 결과다.
+
+두 번째 결과는 바깥쪽 wrapper 자체의 시그니처를 조회한 결과이다.
+
+따라서 여러 데코레이터가 중첩되어 있어도 \zsh{functools.wraps}를 적절히 사용하면 외부 도구가 원본 함수의 인터페이스를 분석할 수 있다.
+
+다만 중간 데코레이터가 \zsh{__wrapped__}를 설정하지 않으면 체인이 끊길 수 있다.
+
+그리고 \zsh{__wrapped__} 체인은 메타데이터에 관한 관계이므로, wrapper가 실제로 \zsh{func()}를 호출하는지까지 보장하지는 않는다.
+
+\subsubsection{\zsh{__closure__}로 실제 함수 참조 관계 검증하기}
+
+이번에는 \zsh{A.4}와 \zsh{A.5}에서 학습한 클로저 셀을 활용해 본다.
+
+앞의 \zsh{layer} 구현에서 wrapper는 다음 두 자유 변수를 참조한다.
+
+\begin{dhkcode}
+label
+func
+\end{dhkcode}
+
+따라서 다음과 같이 클로저 셀을 확인할 수 있다.
+
+\begin{dhkcode}
+def closure_map(func):
+    return dict(
+        zip(
+            func.__code__.co_freevars,
+            func.__closure__ or ()
+        )
+    )
+
+
+outer_cells = closure_map(calculate)
+inner_cells = closure_map(calculate.__wrapped__)
+
+print(outer_cells["label"].cell_contents)
+print(inner_cells["label"].cell_contents)
+
+print(
+    outer_cells["func"].cell_contents
+    is calculate.__wrapped__
+)
+
+print(
+    inner_cells["func"].cell_contents
+    is calculate.__wrapped__.__wrapped__
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A
+B
+True
+True
+\end{dhkzsh}
+
+이 결과를 해석해 보자.
+
+A의 wrapper에 저장된 \zsh{func}는 B의 wrapper 함수 객체를 참조한다.
+
+반면 B의 wrapper에 저장된 \zsh{func}는 원본 \zsh{calculate} 함수 객체를 참조한다.
+
+따라서 두 wrapper는 같은 이름 \zsh{func}를 자유 변수로 사용하지만 서로 다른 클로저 셀에 접근한다.
+
+\begin{dhktable}
+|함수 객체|	label 셀의 내용|	func 셀의 내용|
+|:---|:---|:---|
+|A의 wrapper|	"A"|	B의 wrapper|
+|B의 wrapper|	"B"|	원본 calculate|
+\end{dhktable}
+
+여기서 클로저의 핵심 원리가 다시 나타난다.
+
+자유 변수의 이름이 같다는 사실은 동일한 바인딩을 공유한다는 뜻이 아니다.
+
+각 wrapper가 어느 데코레이터 호출에서 생성되었는지에 따라 클로저 셀이 달라진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+한 가지 더: 서로 다른 함수 객체가 같은 코드 객체를 사용할 수 있다
+\end{dhksmry}
+\end{dhknote}
+
+앞의 \zsh{layer} 구현에서는 A와 B의 wrapper가 동일한 \zsh{def wrapper} 정의문에서 생성된다.
+
+따라서 다음 결과를 확인할 수 있다.
+
+\begin{dhkcode}
+outer = calculate
+inner = calculate.__wrapped__
+
+print(outer is inner)
+print(outer.__code__ is inner.__code__)
+print(outer.__closure__ is inner.__closure__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+True
+False
+\end{dhkzsh}
+
+이 결과는 중요하다.
+
+A의 wrapper와 B의 wrapper는 서로 다른 함수 객체다.
+
+하지만 같은 함수 정의문의 코드 객체를 공유할 수 있다.
+
+반면 클로저 환경은 서로 다르다.
+
+즉, Python의 함수 객체를 분석할 때 다음 세 요소를 구별해야 한다.
+
+\begin{dhksmry}
+    - 함수 객체의 동일성
+
+    - 실행할 코드 객체의 동일성
+
+    - 함수 객체에 연결된 클로저 환경의 동일성
+\end{dhksmry}
+
+같은 코드 객체를 실행하더라도 서로 다른 클로저를 참조하면 동작이 달라질 수 있다.
+
+이것이 함수 객체와 코드 객체를 구별해야 하는 이유 중 하나다.
+
+\subsubsection{호출 프레임과 반환 순서}
+
+이제 실행 환경의 관점에서 중첩 호출을 분석해 보자.
+
+다음 호출을 생각해 보자.
+
+\begin{dhkcode}
+calculate(3)
+\end{dhkcode}
+
+실제 호출 경로는 다음과 같다.
+
+\begin{dhkbranch}[in=8]
+node main :: 호출자
+arrow main
+node main :: A의 wrapper 호출
+line main
+line main :: func(3)
+arrow main
+node main :: B의 wrapper 호출
+line main
+line main :: func(3)
+arrow main
+node main :: 원본 calculate 호출
+line main
+line main :: return 6
+arrow main
+node main :: B의 wrapper
+line main
+line main :: result -> 6
+line main :: return result
+arrow main
+node main :: A의 wrapper
+line main
+line main :: result -> 6
+line main :: return result
+arrow main
+node main :: 호출자
+\end{dhkbranch}
+
+여기서 wrapper마다 별도의 함수 호출이 발생하므로 각 호출은 자신의 지역 실행 환경을 가진다.
+
+예를 들어 A의 wrapper에도 \zsh{args, kwargs, result}라는 지역 이름이 존재하고, B의 wrapper에도 같은 이름이 존재한다.
+
+하지만 이 이름들이 하나의 네임스페이스를 공유하는 것은 아니다.
+
+A의 \zsh{result}와 B의 \zsh{result}는 서로 다른 함수 호출의 지역 바인딩이다.
+
+두 이름이 같은 정수 객체 6을 참조할 수 있을 뿐이다.
+
+따라서 다음 원리가 성립한다.
+
+\begin{dhksmry}[centered]
+중첩된 wrapper가 같은 반환 객체를 전달하더라도
+
+각 wrapper의 지역 이름은 독립적이다.
+\end{dhksmry}
+
+그리고 \zsh{return result}는 객체를 자동으로 복사하지 않는다.
+
+각 wrapper가 반환 객체를 변경하거나 교체하지 않는다면 원본 함수가 반환한 객체가 그대로 호출자에게 전달될 수 있다.
+
+\subsubsection{데코레이터의 적용 순서를 바꾸면 결과도 달라질까?}
+
+지금까지 살펴본 데코레이터는 원본 함수의 반환값을 그대로 전달했다.
+
+그렇다면 wrapper가 반환값을 변경하는 경우에는 어떻게 될까?
+
+다음 두 데코레이터를 정의해 보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def add_one(func):
+
+    @wraps(func)
+    def wrapper(x):
+        return func(x) + 1
+
+    return wrapper
+
+
+def double(func):
+
+    @wraps(func)
+    def wrapper(x):
+        return func(x) * 2
+
+    return wrapper
+\end{dhkcode}
+
+이제 적용 순서를 다르게 해 보자.
+
+\begin{dhkcode}
+@double
+@add_one
+def first(x):
+    return x
+
+
+@add_one
+@double
+def second(x):
+    return x
+
+
+print(first(3))
+print(second(3))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+8
+7
+\end{dhkzsh}
+
+왜 서로 다른 결과가 발생할까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 함수
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@double
+@add_one
+def first(x):
+    return x
+\end{dhkcode}
+
+이 코드는 다음과 대응한다.
+
+\begin{dhkcode}
+first = double(add_one(first))
+\end{dhkcode}
+
+실제 호출은 다음 순서로 진행된다.
+
+\begin{dhkbranch}[in=8]
+node main :: first(3)
+arrow main
+node main :: double의 wrapper
+arrow main
+node main :: add_one의 wrapper
+arrow main
+node main :: 원본 first(3)
+handoff main -> a :: 3 반환
+arrow a
+node a :: add_one: 3 + 1 = 4
+arrow a
+node a :: double: 4 * 2 = 8
+\end{dhkbranch}
+
+따라서 8이 반환된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 함수
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@add_one
+@double
+def second(x):
+    return x
+\end{dhkcode}
+
+이 코드는 다음과 대응한다.
+
+\begin{dhkcode}
+second = add_one(double(second))
+\end{dhkcode}
+
+실제 호출은 다음과 같다.
+
+\begin{dhkbranch}[in=8]
+node main :: second(3)
+arrow main
+node main :: add_one의 wrapper
+arrow main
+node main :: double의 wrapper 
+arrow main
+node main :: 원본 second(3)
+handoff main -> a :: 3 반환
+arrow a
+node a :: double: 3 * 2 = 6
+arrow a
+node a :: add_one: 6 + 1 = 7
+\end{dhkbranch}
+
+따라서 7이 반환된다.
+
+이 차이는 수학적인 함수 합성(Function Composition)과 연결된다.
+
+원본 함수를 \(f\), 반환값에 1을 더하는 변환을 \(P\), 두 배로 만드는 변환을 \(D\)라고 하자.
+
+그러면 첫 번째 경우는 다음과 같다.
+
+\[
+D(P(f))(x)=2(f(x)+1)
+\]
+
+두 번째 경우는 다음과 같다.
+
+\[
+P(D(f))(x)=2f(x)+1
+\]
+
+일반적으로 두 결과는 같지 않다.
+
+즉, 데코레이터의 적용 순서는 교환법칙을 만족하지 않는다.
+
+서로 다른 데코레이터를 적용하는 순서를 바꾸면 호출 구조뿐 아니라 최종 반환값도 달라질 수 있다.
+
+따라서 여러 데코레이터를 사용할 때는 각 데코레이터가 인수, 반환값, 상태, 예외 중 무엇을 변경하는지 확인해야 한다.
+
+\subsubsection{예외가 발생하면 wrapper는 어떤 순서로 종료될까?}
+
+\zsh{A.7}에서는 예외가 발생하면 원본 함수의 정상적인 반환 경로가 중단된다는 사실을 학습했다.
+
+여러 wrapper가 중첩된 경우에도 같은 규칙이 적용된다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+def layer(label):
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            print(label, "enter")
+
+            try:
+                return func(*args, **kwargs)
+
+            finally:
+                print(label, "finally")
+
+        return wrapper
+
+    return decorator
+
+@layer("A")
+@layer("B")
+def fail():
+    print("body")
+    raise ValueError("failed")
+
+try:
+    fail()
+
+except ValueError:
+    print("caught")
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A enter
+B enter
+body
+B finally
+A finally
+caught
+\end{dhkzsh}
+
+이 실행 순서를 분석해 보자.
+
+먼저 A의 wrapper가 호출된다.
+
+A의 wrapper는 \zsh{"A enter"}를 출력하고 B의 wrapper를 호출한다.
+
+B의 wrapper는 \zsh{"B enter"}를 출력하고 원본 \zsh{fail} 함수를 호출한다.
+
+원본 함수는 \zsh{"body"}를 출력한 다음 \zsh{ValueError}를 발생시킨다.
+
+여기서부터는 정상적인 반환이 아니라 예외 전파가 시작된다.
+
+B의 wrapper는 \zsh{try} 블록에서 예외를 받지만 해당 예외를 처리하는 \zsh{except} 블록이 없다.
+
+다만 \zsh{finally}가 존재하므로 \zsh{"B finally"}를 출력한다.
+
+그다음 예외가 A의 wrapper로 전파된다.
+
+A의 wrapper 역시 \zsh{finally}를 실행하여 \zsh{"A finally"}를 출력한다.
+
+마지막으로 호출자의 \zsh{except ValueError} 블록이 예외를 처리한다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: A enter
+node n2 (2,1) :: B enter
+node n3 (3,1) :: 원본: 예외 발생
+node n4 (3,2) :: B finally
+node n5 (2,2) :: A finally
+node n6 (1,2) :: 호출자의 except
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+edge n4 -> n5
+edge n5 -> n6
+
+explain :: 예외 발생 시 실행 경로 // 진입은 안쪽으로, 예외 전파는 바깥쪽으로
+\end{dhkgraph}
+
+여기서 중요한 점은 다음이다.
+
+\begin{dhksmry}[centered]
+예외가 발생하면 wrapper의 정상적인 반환 처리는 생략될 수 있지만,
+
+finally는 예외가 전파되는 과정에서 실행된다.
+\end{dhksmry}
+
+다만 \zsh{finally} 자체에서 새로운 예외가 발생하거나 \zsh{return} 등으로 제어 흐름을 변경하면 기존 예외의 전파 방식도 달라질 수 있다.
+
+따라서 여러 데코레이터의 예외 처리 구조를 분석할 때는 각 wrapper가 예외를 처리하는지, 다시 발생시키는지, 다른 예외로 변환하는지 구별해야 한다.
+
+\subsubsection{실전 응용 - 로깅과 재시도의 적용 순서}
+
+이제 \zsh{A.9}에서 학습한 재시도 데코레이터와 로깅 데코레이터를 결합해 보자.
+
+이 예제는 데코레이터 순서가 단순한 문법 문제가 아니라 실제 프로그램의 관찰 가능한 동작을 결정한다는 사실을 보여준다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def log(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("LOG")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def retry(max_attempts):
+
+    def decorator(func):
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+
+            for attempt in range(max_attempts):
+
+                try:
+                    return func(*args, **kwargs)
+
+                except ValueError:
+                    if attempt == max_attempts - 1:
+                        raise
+
+        return wrapper
+
+    return decorator
+\end{dhkcode}
+
+이제 같은 기능의 함수를 두 가지 순서로 데코레이션 해보자.
+
+\begin{dhkcode}
+state_a = {"count": 0}
+
+
+@log
+@retry(3)
+def task_a():
+    state_a["count"] += 1
+
+    if state_a["count"] < 3:
+        raise ValueError
+
+    return "Success"
+
+
+state_b = {"count": 0}
+
+
+@retry(3)
+@log
+def task_b():
+    state_b["count"] += 1
+
+    if state_b["count"] < 3:
+        raise ValueError
+
+    return "Success"
+
+
+print("A:", task_a())
+print("B:", task_b())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+LOG
+A: Success
+LOG
+LOG
+LOG
+B: Success
+\end{dhkzsh}
+
+왜 A에서는 로그가 한 번만 출력되고 B에서는 세 번 출력될까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+사례 A - 로깅이 바깥쪽
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@log
+@retry(3)
+def task_a():
+    ...
+\end{dhkcode}
+
+호출 구조는 다음과 같다.
+
+\begin{dhkdir}[in=6]
+log wrapper
+> retry wrapper
+>> 원본 호출 1 실패
+>> 원본 호출 2 실패
+>> 원본 호출 3 성공
+\end{dhkdir}
+
+로깅 wrapper는 한 번 호출된다.
+
+그 내부에서 재시도 wrapper가 세 번의 원본 함수 호출을 수행하는 것이다.
+
+따라서 \zsh{"LOG"}는 한 번만 출력된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+사례 B - 재시도가 바깥쪽
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@retry(3)
+@log
+def task_b():
+    ...
+\end{dhkcode}
+
+호출 구조는 다음과 같다.
+
+\begin{dhkdir}[in=6]
+retry wrapper
+> log wrapper -> 원본 호출 1 실패
+> log wrapper -> 원본 호출 2 실패
+> log wrapper -> 원본 호출 3 성공
+\end{dhkdir}
+
+이번에는 재시도 wrapper가 로깅 wrapper를 세 번 호출한다.
+
+따라서 \zsh{"LOG"}도 세 번 출력된다.
+
+이 차이는 실전에서 중요하다.
+
+\begin{dhktable}
+|목적	|적합한 구조|
+|:---|:---|
+|사용자 요청 한 건당 로그 한 번|	로깅을 재시도 바깥쪽에 배치|
+|재시도 시도마다 로그 기록|	로깅을 재시도 안쪽에 배치|
+\end{dhktable}
+
+물론 실제 로깅 구현에서 무엇을 기록하는지에 따라 세부 설계는 달라질 수 있다.
+
+핵심은 데코레이터를 어느 위치에 배치하는지가 기능의 적용 범위를 결정한다는 사실이다.
+
+이 원리는 로깅뿐 아니라 캐싱, 인증, 트랜잭션, 성능 측정 등에도 적용된다.
+
+\subsubsection{모든 데코레이터가 wrapper를 생성하는 것은 아니다}
+
+지금까지는 모든 데코레이터가 새로운 wrapper를 반환하는 구조를 살펴봤다.
+
+하지만 \zsh{A.6}에서 학습했듯 데코레이터는 원본 함수 객체를 그대로 반환할 수도 있다.
+
+대표적인 사례가 등록형 데코레이터(Registration Decorator)다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+registry = {}
+
+def register(func):
+    registry[func.__name__] = func
+    return func
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("TRACE")
+        return func(*args, **kwargs)
+
+    return wrapper
+\end{dhkcode}
+
+이제 적용 순서를 달리해 보자.
+
+\begin{dhkcode}
+@register
+@trace
+def first():
+    return 10
+
+
+@trace
+@register
+def second():
+    return 20
+
+
+print(registry["first"] is first)
+
+print(registry["second"] is second)
+
+print(
+    registry["second"]
+    is second.__wrapped__
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+False
+True
+\end{dhkzsh}
+
+왜 이런 차이가 발생할까?
+
+첫 번째 함수는 다음과 같이 반환된다.
+
+\begin{dhkcode}
+first = register(trace(first))
+\end{dhkcode}
+
+\zsh{trace(first)}가 먼저 실행되어 wrapper 함수 객체를 반환한다.
+
+그다음 \zsh{register}가 그 wrapper 객체를 전달받아 등록한다.
+
+\zsh{register}는 전달받은 객체를 그대로 반환하므로 최종 이름도 \zsh{first}도 등록된 wrapper를 참조한다.
+
+따라서 다음 비교는 \zsh{True}다.
+
+\begin{dhkcode}
+registry["first"] is first
+\end{dhkcode}
+
+반면 두 번째 함수는 다음과 같다.
+
+\begin{dhkcode}
+second = trace(register(second))
+\end{dhkcode}
+
+이번에는 \zsh{register}가 원본 함수 객체를 먼저 등록한다.
+
+그다음 \zsh{trace}가 새로운 wrapper를 생성해 반환한다.
+
+따라서 레지스트리에는 원본 함수 객체가 저장되어 있지만 최종 이름 \zsh{second}는 wrapper를 참조한다.
+
+그래서 다음 비교가 \zsh{False}인 것이다.
+
+\begin{dhkcode}
+registry["second"] is second
+\end{dhkcode}
+
+이 예제는 중요한 사실을 보여준다.
+
+데코레이터의 적용 순서는 어떤 객체가 외부 시스템에 전달되거나 등록되는지도 결정할 수 있다.
+
+이 내용은 \zsh{A.12}에서 FastAPI와 등록형 데코레이터를 분석할 때 다시 연결할 것이다.
+
+\subsubsection{데코레이터 적용 중 예외가 발생하면 이름 바인딩은 어떻게 될까?}
+
+이제 데코레이터가 적용되는 도중 오류가 발생하는 경계 조건을 살펴본다.
+
+\begin{dhkcode}
+def greet():
+    return "Old"
+
+
+def reject(func):
+    print("reject called")
+    raise ValueError("Decoration failed")
+
+
+try:
+    @reject
+    def greet():
+        return "New"
+
+except ValueError:
+    print("caught")
+
+
+print(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+reject called
+caught
+Old
+\end{dhkzsh}
+
+왜 \zsh{"New"}가 아니라 \zsh{"Old"}가 출력될까?
+
+두 번째 \zsh{def greet()} 문장이 실행될 때 새로운 원본 함수 객체가 생성된다.
+
+그 객체가 \zsh{reject}에 전달된다.
+
+하지만 \zsh{reject}가 \zsh{ValueError}를 발생시키므로 데코레이터 적용이 정상적으로 완료되지 않는다.
+
+따라서 새로운 반환 객체를 이름 \zsh{greet}에 바인딩하는 단계에 도달하지 못한다.
+
+기존 모듈 이름 \zsh{greet}은 여전히 이전 함수 객체를 참조한다.
+
+즉, 함수 정의문이 실행되는 과정에서 데코레이터 적용이 실패하면 새로운 함수 객체의 최종 이름 바인딩이 이루어지지 않을 수 있다.
+
+이것은 데코레이터가 기존 함수를 제자리에서 수정하는 기능이 아니라, 최종 반환 객체를 이름에 바인딩하는 구조라는 사실을 다시 보여준다.
+
+단, 데코레이터가 예외를 발생시키기 전에 수행한 다른 부작용까지 자동으로 취소되는 것은 아니다.
+
+\subsubsection{데코레이터 평가·적용·호출을 구별하는 판단 기준}
+
+지금까지의 내용을 하나의 표로 정리해 본다.
+
+\begin{dhktable}
+|질문|	확인할 대상|	판단 기준|
+|:---|:---|:---|
+|어떤 데코레이터 표현식이 먼저 실행되는가?|	@A(), @B()|	위에서 아래로 평가|
+|어떤 데코레이터가 원본 함수를 먼저 전달받는가?|	A(B(func))|	아래쪽 B부터 적용|
+|최종 이름은 어떤 객체를 참조하는가?|	가장 바깥쪽 적용 결과|	마지막 데코레이터의 반환 객체|
+|어떤 wrapper가 먼저 호출되는가?|	최종 이름이 참조하는 객체|	바깥쪽 wrapper부터|
+|원본 함수는 언제 호출되는가?|	각 wrapper의 실제 구현|	안쪽 wrapper가 원본을 호출할 때|
+|반환값은 어떤 순서로 전달되는가?|	중첩된 호출의 반환|	안쪽에서 바깥쪽으로|
+|예외는 어떤 순서로 전파되는가?|	try, except, finally|	호출 스택을 따라 바깥쪽으로|
+|원본 함수 객체는 어디에 있는가?|	__wrapped__, 클로저 등|	실제 데코레이터 구현에 따라 다름|
+|적용 순서를 바꿔도 결과가 같은가?|	인수·반환·상태·예외 처리|	일반적으로 보장되지 않음|
+\end{dhktable}
+
+여기서 특히 주의해야 할 점은 데코레이터 적용 순서와 wrapper 호출 순서를 같은 의미로 사용하지 않는 것이다.
+
+데코레이터를 적용하는 과정에서는 함수 객체가 바깥쪽으로 쌓이고, 실제 호출에서는 그 바깥쪽부터 실행이 시작된다.
+
+\subsubsection{기존 Python 객체 모델과의 연결}
+
+이번 \zsh{A.10}은 데코레이터만의 독립적인 규칙을 학습한 것이 아니다.
+
+지금까지 학습한 Python 객체 모델을 하나의 구조로 결합한 학습이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+함수 객체와 이름 바인딩 - A.1
+\end{dhksmry}
+\end{dhknote}
+
+데코레이터가 반환한 객체가 최종 함수 이름에 바인딩된다.
+
+이때 원본 함수 객체와 wrapper 함수 객체의 동일성은 별개다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+렉시컬 스코프와 LEGB - A.2, A.3
+\end{dhksmry}
+\end{dhknote}
+
+각 wrapper는 자신이 정의된 렉시컬 환경을 기준으로 외부 이름을 탐색한다.
+
+호출자가 어떤 위치에서 함수를 실행하는지는 클로저의 자유 변수 탐색 경로를 변경하지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클로저와 셀 객체 - A.4, A.5
+\end{dhksmry}
+\end{dhknote}
+
+각 wrapper는 외부 함수 객체나 설정값을 클로저 셀을 통해 유지할 수 있다.
+
+같은 코드 객체를 공유하는 wrapper라도 서로 다른 클로저를 사용하면 다른 함수 객체를 호출할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+데코레이터 변환식 - A.6
+\end{dhksmry}
+\end{dhknote}
+
+여러 데코레이터의 적용은 중첩된 함수 호출 형태로 표현할 수 있다.
+
+\begin{dhkcode}
+func = A(B(func))
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Wrapper의 인수 전달과 반환 - A.7
+\end{dhksmry}
+\end{dhknote}
+
+각 wrapper는 독립적으로 인수를 전달하고 반환값을 처리한다.
+
+따라서 여러 wrapper를 거치면서 반환값이 변경되거나 예외가 처리될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+functools.wraps와 메타데이터 - A.8
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{__wrapped__} 체인을 이용해 원본 함수 객체를 추적할 수 있다.
+
+하지만 이 체인은 실제 호출을 강제하는 장치가 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+데코레이터 팩토리 - A.9
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{@A()}와 \zsh{@B()}는 먼저 각각 평가되어 데코레이터 객체를 준비한다.
+
+그다음 아래쪽부터 원본 함수 객체에 적용된다.
+
+결국 \zsh{A.10}은 이러한 개념들을 하나의 실행 흐름으로 연결하는 것이다.
+
+\subsubsection{핵심 정리}
+
+이번 학습에서 반드시 구별해야 하는 것은 네 가지다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫째, 데코레이터 표현식의 평가 순서
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@A()
+@B()
+def func():
+    ...
+\end{dhkcode}
+
+\zsh{A()}가 먼저 평가되고 그다음 \zsh{B()}가 평가된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+둘째, 데코레이터의 적용 순서
+\end{dhksmry}
+\end{dhknote}
+
+원본 함수 객체가 생성된 다음 B가 먼저 적용되고 A가 나중에 적용된다.
+
+\begin{dhkcode}
+func = A_decorator(B_decorator(original))
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+셋째, 실제 wrapper 호출 순서
+\end{dhksmry}
+\end{dhknote}
+
+최종 이름이 A의 wrapper를 참조한다면 A의 wrapper가 먼저 호출된다.
+
+\begin{dhksmry}[centered]
+A wrapper \ra B wrapper \ra 원본 함수
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+넷째, 정상 반환과 예외 전파 순서
+\end{dhksmry}
+\end{dhknote}
+
+정상적인 반환은 원본 함수에서 시작해 B의 wrapper, A의 wrapper 순서로 전달된다.
+
+예외 역시 처리되지 않는다면 호출 스택을 따라 바깥쪽으로 전파된다.
+
+이 네 가지를 이해하면 여러 데코레이터가 적용된 코드를 볼 때 단순히 출력 순서를 암기하는 것이 아니라, 각 함수 객체가 어떤 객체를 참조하고 어떤 시점에 호출되는지를 근거로 실행 과정을 예측할 수 있다.
