@@ -1,0 +1,1990 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.11. 클래스·메서드 바인딩과 데코레이터
+% ==================================================
+
+\subsection{클래스·메서드 바인딩과 데코레이터}
+
+Method Binding · Descriptor Protocol · classmethod · staticmethod · property · Decorator Stacking
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{A.10}에서는 여러 데코레이터를 다음과 같은 함수 객체 변환 과정으로 분석했다.
+
+\begin{dhkcode}
+@first
+@second
+def calculate(x):
+    return x * 2
+\end{dhkcode}
+
+개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+calculate = first(second(calculate))
+\end{dhkcode}
+
+이 과정에서 원본 함수 객체가 생성되고, 데코레이터가 반환한 객체가 최종적으로 \zsh{calculate}라는 이름에 바인딩된다.
+
+그런데 함수가 클래스 내부에 정의되면 새로운 문제가 등장한다.
+
+\begin{dhkcode}
+class Person:
+
+    def introduce(self):
+        return "Hello"
+\end{dhkcode}
+
+이때 \zsh{introduce}는 어떤 객체일까?
+
+일반적인 함수 객체일까, 아니면 처음부터 인스턴스 메서드 객체일까?
+
+그리고 다음 두 표현식은 왜 다르게 동작할까?
+
+\begin{dhkcode}
+Person.introduce
+Person().introduce
+\end{dhkcode}
+
+이 차이를 설명하려면 데코레이터뿐 아니라 속성 탐색(Attribute Lookup)과 디스크립터 프로토콜(Descriptor Protocol)을 함께 이해해야 한다.
+
+이번 학습의 핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+데코레이터는 클래스 네임스페이스에 저장될 객체를 결정하고,
+
+디스크립터는 객체가 속성 조회 과정에서 어떻게 바인딩되는지 결정한다.
+\end{dhksmry}
+
+두 과정은 서로 다른 시점에 발생한다.
+
+\subsubsection{클래스 내부의 \zsh{def}는 무엇을 생성할까?}
+
+먼저 데코레이터가 없는 클래스를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+
+    def __init__(self, name):
+        self.name = name
+
+    def introduce(self):
+        return f"Hello, {self.name}"
+
+p = Person("Kim")
+\end{dhkcode}
+
+클래스 정의문이 실행될 때 클래스 본문도 실행된다.
+
+이 과정에서 \zsh{def introduce} 문장은 일반적인 Python 함수 객체를 생성하고, \zsh{introduce}라는 이름을 클래스 생성에 사용되는 네임스페이스에 바인딩한다.
+
+클래스 객체가 생성된 뒤에는 다음과 같이 확인할 수 있다.
+
+\begin{dhkcode}
+print(type(Person.__dict__["introduce"]))
+
+print(
+    Person.__dict__["introduce"]
+    is Person.introduce
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'function'>
+True
+\end{dhkzsh}
+
+여기서 첫 번째 결과가 중요하다.
+
+\zsh{Person} 클래스의 \zsh{__dict__}에 저장된 것은 바운드 메서드가 아니라 함수 객체(Function Object)다.
+
+\zsh{Person.__dict__}는 클래스 네임스페이스를 보여주는 \zsh{mappingproxy} 객체이고, 그 안에서 \zsh{"introduce"}라는 키가 함수 객체를 참조하고 있다.
+
+반면 \zsh{p.__dict__}에는 다음과 같은 인스턴스 상태가 저장된다.
+
+\begin{dhkcode}
+print(p.__dict__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+{'name': 'Kim'}
+\end{dhkzsh}
+
+즉, 클래스의 함수와 인스턴스의 데이터는 서로 다른 네임스페이스에 존재한다.
+
+\begin{dhkdir}[in=6]
+Person 클래스 객체
+> __dict__
+>> "__init__" -> 함수 객체
+>> "introduce" -> 함수 객체
+\end{dhkdir}
+
+\begin{dhkdir}[in=6]
+p 인스턴스
+> __class__ -> Person
+> __dict__
+>> "name" -> "Kim"
+\end{dhkdir}
+
+그런데 \zsh{p.introduce}를 조회하면 단순히 클래스에 저장된 함수 객체를 그대로 반환하지 않는다.
+
+왜 그럴까?
+
+일반적인 사용자 정의 함수 객체가 \zsh{__get__}을 제공하는 비데이터 디스크립터(Non-data Descriptor)이기 때문이다.
+
+\subsubsection{함수 객체가 바운드 메서드가 되는 과정}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+class Person:
+
+    def __init__(self, name):
+        self.name = name
+
+    def introduce(self):
+        return f"Hello, {self.name}"
+
+
+p = Person("Kim")
+
+func = Person.__dict__["introduce"]
+method = p.introduce
+
+print(type(func))
+print(type(method))
+
+print(method.__self__ is p)
+print(method.__func__ is func)
+
+print(method())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'function'>
+<class 'method'>
+True
+True
+Hello, Kim
+\end{dhkzsh}
+
+이 결과를 순서대로 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 클래스 네임스페이스에서 함수 객체 탐색
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+func = Person.__dict__["introduce"]
+\end{dhkcode}
+
+\zsh{func}는 원본 함수 객체를 참조한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 인스턴스에서 속성 조회
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+method = p.introduce
+\end{dhkcode}
+
+일반적인 인스턴스 속성 조회에서는 클래스의 MRO를 따라 속성을 탐색하고, 발견된 객체가 디스크립터라면 관련 규칙에 따라 \zsh{__get__}을 호출할 수 있다.
+
+여기서 함수 객체의 \zsh{__get__}이 사용된다.
+
+핵심 동작은 다음과 같이 표현할 수 있다.
+
+\begin{dhkcode}
+method = func.__get__(p, Person)
+\end{dhkcode}
+
+그 결과 바운드 메서드 객체가 반환된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 바운드 메서드의 내부 참조
+\end{dhksmry}
+\end{dhknote}
+
+바운드 메서드는 다음 두 객체를 참조한다.
+
+\begin{dhktable}
+|속성|	참조 대상|
+|:---|:---|
+|method.__self__|	바인딩된 p 인스턴스|
+|method.__func__|	원본 introduce 함수 객체|
+\end{dhktable}
+
+따라서 다음과 같은 구조가 형성된다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,2) :: p.introduce // 바운드 메서드 객체
+node n2 (2,1) :: p 인스턴스 // name = "Kim"
+node n3 (2,3) :: introduce 함수 // 원본 코드 객체 사용
+
+split n1 -> n2 :: __self__,n3 :: __func__
+
+caption :: 바운드 메서드는 바인딩된 인스턴스와 함수 객체를 연결하는 별도의 객체다.
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 바운드 메서드 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+method()
+\end{dhkcode}
+
+바운드 메서드는 자신이 참조하는 인스턴스를 원본 함수의 첫 번째 인수로 전달한다.
+
+따라서 일반적인 경우 다음 두 호출은 같은 함수 실행을 수행한다.
+
+\begin{dhkcode}
+p.introduce()
+Person.introduce(p)
+\end{dhkcode}
+
+여기서 \zsh{self}는 특별한 키워드가 아니다.
+
+함수 정의에서 사용한 첫 번째 매개변수 이름일 뿐이다.
+
+인스턴스를 자동 전달하는 기능은 \zsh{self}라는 이름에서 발생하는 것이 아니라, 함수 디스크립터가 만들어 낸 바운드 메서드의 호출 규칙에서 발생한다.
+
+\subsubsection{세 종류의 메서드는 무엇이 다른가?}
+
+다음 클래스를 보자.
+
+\begin{dhkcode}
+class Example:
+
+    def instance_method(self):
+        return self
+
+    @classmethod
+    def class_method(cls):
+        return cls
+
+    @staticmethod
+    def static_method():
+        return "static"
+
+
+obj = Example()
+\end{dhkcode}
+
+세 메서드 모두 \zsh{def} 문장을 통해 함수 객체를 생성하지만, 데코레이터 적용 이후 클래스 네임스페이스에 저장되는 객체가 달라진다.
+
+\begin{dhkcode}
+print(type(Example.__dict__["instance_method"]))
+print(type(Example.__dict__["class_method"]))
+print(type(Example.__dict__["static_method"]))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'function'>
+<class 'classmethod'>
+<class 'staticmethod'>
+\end{dhkzsh}
+
+그리고 클래스나 인스턴스를 통해 속성을 조회하면 다음과 같은 결과를 얻는다.
+
+\begin{dhkcode}
+print(type(Example.instance_method))
+print(type(obj.instance_method))
+
+print(type(Example.class_method))
+print(type(obj.class_method))
+
+print(type(Example.static_method))
+print(type(obj.static_method))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'function'>
+<class 'method'>
+<class 'method'>
+<class 'method'>
+<class 'function'>
+<class 'function'>
+\end{dhkzsh}
+
+이 차이를 표로 정리하면 다음과 같다.
+
+\begin{dhktable}
+|구분|	클래스에 저장된 객체|	클래스 접근 결과|	인스턴스 접근 결과|
+|:---|:---|:---|:---|
+|일반 인스턴스 메서드|	함수 객체|	함수 객체|	인스턴스 바운드 메서드|
+|@classmethod|	classmethod 디스크립터|	클래스 바운드 메서드	|클래스 바운드 메서드|
+|@staticmethod|	staticmethod 디스크립터|	함수 객체	|함수 객체|
+\end{dhktable}
+
+이 표가 이번 학습 전체를 관통하는 기준이다.
+
+\zsh{classmethod}와 \zsh{staticmethod}의 차이를 단순히 \zsh{self}와 \zsh{cls}의 차이로 이해하면 불완전하다.
+
+실제 차이는 클래스 네임스페이스에 저장된 디스크립터가 속성 조회 과정에서 어떤 객체를 반환하느냐에 있다.
+
+\subsubsection{\zsh{classmethod} - 함수 객체를 클래스에 바인딩하기}
+
+먼저 클래스 메서드부터 분석해 보자.
+
+\begin{dhkcode}
+class Animal:
+
+    @classmethod
+    def identify(cls):
+        return cls.__name__
+
+
+a = Animal()
+\end{dhkcode}
+
+이 코드에서 다음 부분은
+
+\begin{dhkcode}
+@classmethod
+def identify(cls):
+    return cls.__name__
+\end{dhkcode}
+
+개념적으로 다음 변환식과 대응한다.
+
+\begin{dhkcode}
+def identify(cls):
+    return cls.__name__
+
+identify = classmethod(identify)
+\end{dhkcode}
+
+\zsh{classmethod}는 원본 함수 객체를 받아 디스크립터 객체를 생성한다.
+
+따라서 클래스 네임스페이스에는 일반 함수 객체가 아니라 \zsh{classmethod} 객체가 저장된다.
+
+\begin{dhkcode}
+raw = Animal.__dict__["identify"]
+
+print(type(raw))
+print(type(raw.__func__))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'classmethod'>
+<class 'function'>
+\end{dhkzsh}
+
+여기서 \zsh{raw.__func__}는 \zsh{classmethod}가 감싸고 있는 원본 함수 객체를 참조한다.
+
+이제 클래스를 통해 속성을 조회해 보자.
+
+\begin{dhkcode}
+method = Animal.identify
+
+print(type(method))
+print(method.__self__ is Animal)
+print(method.__func__ is raw.__func__)
+print(method())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'method'>
+True
+True
+Animal
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{Animal.identify}를 조회하면 클래스 네임스페이스에서 \zsh{classmethod} 디스크립터를 찾게 된다.
+
+그 디스크립터의 \zsh{__get__}이 호출되면서 원본 함수 객체를 \zsh{Animal} 클래스에 바인딩한 메서드가 반환된다.
+
+따라서 다음과 같은 관계가 형성된다.
+
+\begin{dhkdiagram}[in=4]
+node n1 (1,2) :: Animal 클래스 객체
+node n2 (3,2) :: __dict__["identify"]
+node n3 (5,2) :: classmethod 객체
+node n4 (6,3) :: __func__
+node n5 (6,4) :: 원본 identify 함수
+node n6 (7,2) :: Animal.identify
+node n7 (9,2) :: 바운드 메서드
+node n10 (9,3) :: __func__
+node n8 (10,3) :: __self__
+node n9 (10,4) :: Animal 클래스 객체
+
+edge n1 -- n2
+edge n2 -> n3
+edge n3 -- n4 :: VH
+edge n4 -> n5
+edge n6 -> n7
+edge n7 -- n8 :: VH
+edge n8 -> n9
+edge n7 -- n10
+edge n10 -> n5 :: HV
+\end{dhkdiagram}
+
+이제 다음 호출을 생각해 보자.
+
+\begin{dhkcode}
+Animal.identify()
+\end{dhkcode}
+
+바운드 메서드가 \zsh{Animal}을 첫 번째 인수로 전달하므로 원본 함수에서는 다음 바인딩이 형성된다.
+
+\begin{dhksmry}[centered]
+cls \ra Animal 클래스 객체
+\end{dhksmry}
+
+즉, 개념적으로 다음과 같은 호출이다.
+
+\begin{dhkcode}
+raw.__func__(Animal)
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+인스턴스를 통해 조회한다면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+method = a.identify
+
+print(method.__self__ is Animal)
+print(method.__self__ is a)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+False
+\end{dhkzsh}
+
+인스턴스를 통해 접근하더라도 \zsh{classmethod}는 인스턴스가 아니라 클래스에 바인딩된다.
+
+따라서 클래스 메서드의 핵심은 첫 번째 매개변수 이름이 \zsh{cls}라는 사실이 아니라, 디스크립터가 클래스 객체를 바인딩한다는 사실이다.
+
+\subsubsection{상속과 \zsh{classmethod} - MRO와 동적 클래스 바인딩}
+
+이제 이전에 학습한 MRO와 연결해 보자.
+
+\begin{dhkcode}
+class Parent:
+
+    @classmethod
+    def identify(cls):
+        return cls.__name__
+
+
+class Child(Parent):
+    pass
+
+
+print(Parent.identify())
+print(Child.identify())
+
+print(Parent.identify.__self__ is Parent)
+print(Child.identify.__self__ is Child)
+
+print(
+    Parent.identify.__func__
+    is Child.identify.__func__
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Parent
+Child
+True
+True
+True
+\end{dhkzsh}
+
+여기서 중요한 질문이 있다.
+
+\zsh{Child}는 \zsh{identify}를 정의하지 않았는데 왜 \zsh{cls}가 \zsh{Parent}가 아니라 \zsh{Child}를 참조할까?
+
+속성 탐색과 메서드 바인딩을 구별하면 이해할 수 있다.
+
+먼저 \zsh{Child.identify}라는 속성을 조회할 때 MRO를 따라 
+
+\zsh{Parent}에서 \zsh{identify} 디스크립터를 찾는다.
+
+하지만 그 디스크립터가 반환하는 메서드는 실제 접근한 클래스인 \zsh{Child}에 바인딩된다.
+
+따라서 다음 관계가 형성된다.
+
+\begin{dhkdir}[in=6]
+Child.identify
+|바운드 메서드
+> __self__ -> Child
+> __func -> Parent에 정의된 identify 함수
+\end{dhkdir}
+
+즉, 함수를 어디에서 찾았는지와 그 함수가 어느 클래스에 바인딩되는지는 별개의 문제다.
+
+이것이 클래스 메서드를 대체 생성자(Alternative Constructor)로 사용할 수 있는 중요한 이유다.
+
+\begin{dhkcode}
+class Model:
+
+    def __init__(self, hidden_size):
+        self.hidden_size = hidden_size
+
+    @classmethod
+    def from_default(cls):
+        return cls(128)
+
+
+class TransformerModel(Model):
+    pass
+
+
+model = TransformerModel.from_default()
+
+print(type(model).__name__)
+print(model.hidden_size)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+TransformerModel
+128
+\end{dhkzsh}
+
+\zsh{from_default}는 \zsh{Model}에서 정의되었지만
+
+\zsh{TransformerModel.from_default()}로 호출했으므로 \zsh{cls}는
+
+\zsh{TransformerModel}을 참조한다.
+
+따라서 다음 표현식은
+
+\begin{dhkcode}
+cls(128)
+\end{dhkcode}
+
+\zsh{TransformerModel(128)}을 호출하는 효과를 가진다.
+
+다만 하위 클래스가 생성자 인수 구조를 변경했다면 \zsh{cls(128)}이 반드시 성공하는 것은 아니다.
+
+\subsubsection{\zsh{staticmethod} - 자동 바인딩을 수행하지 않는 디스크립터}
+
+이번에는 정적 메서드를 살펴보자.
+
+\begin{dhkcode}
+class Calculator:
+
+    @staticmethod
+    def add(a, b):
+        return a + b
+
+
+obj = Calculator()
+\end{dhkcode}
+
+클래스 본문의 다음 부분은
+
+\begin{dhkcode}
+@staticmethod
+def add(a, b):
+    return a + b
+\end{dhkcode}
+
+개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+def add(a, b):
+    return a + b
+
+add = staticmethod(add)
+\end{dhkcode}
+
+클래스 네임스페이스에는 \zsh{staticmethod} 객체가 저장된다.
+
+\begin{dhkcode}
+raw = Calculator.__dict__["add"]
+
+print(type(raw))
+print(type(raw.__func__))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'staticmethod'>
+<class 'function'>
+\end{dhkzsh}
+
+하지만 클래스나 인스턴스를 통해 속성을 조회하면 감싸고 있던 함수 객체가 반환된다.
+
+\begin{dhkcode}
+print(Calculator.add is raw.__func__)
+print(obj.add is raw.__func__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+이것은 \zsh{staticmethod}가 속성 조회 시 원본 함수 객체를 반환하고, 인스턴스나 클래스를 자동 인수로 바인딩하지 않기 때문이다.
+
+따라서 다음 두 호출은 모두 정상적으로 실행된다.
+
+\begin{dhkcode}
+print(Calculator.add(10, 20))
+print(obj.add(10, 20))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+30
+30
+\end{dhkzsh}
+
+여기서 \zsh{obj.add(10, 20)}은 일반적인 인스턴스 메서드 호출과 다르다.
+
+인스턴스 \zsh{obj}가 첫 번째 인수로 자동 전달되지 않는다.
+
+결국 \zsh{staticmethod}의 정확한 의미는 다음과 같다.
+
+\begin{dhksmry}[centered]
+클래스 네임스페이스에 함수를 저장하되, 일반적인 인스턴스 
+
+메서드 바인딩을 적용하지 않도록 하는 디스크립터다.
+\end{dhksmry}
+
+\subsubsection{\zsh{property} - 속성 조회가 함수 호출을 유발하는 구조}
+
+이번에는 \zsh{property}를 살펴보자.
+
+\begin{dhkcode}
+class Account:
+
+    def __init__(self, balance):
+        self._balance = balance
+
+    @property
+    def balance(self):
+        return self._balance
+
+
+account = Account(100)
+\end{dhkcode}
+
+이 코드에서
+
+\begin{dhkcode}
+@property
+def balance(self):
+    return self._balance
+\end{dhkcode}
+
+는 개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+def balance(self):
+    return self._balance
+
+balance = property(balance)
+\end{dhkcode}
+
+따라서 클래스 네임스페이스에는 함수 객체가 아니라 \zsh{property} 객체가 저장된다.
+
+\begin{dhkcode}
+raw = Account.__dict__["balance"]
+
+print(type(raw))
+print(type(raw.fget))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'property'>
+<class 'function'>
+\end{dhkzsh}
+
+\zsh{raw.fget}은 getter 함수 객체를 참조한다.
+
+이제 다음 표현식을 평가한다고 하자.
+
+\begin{dhkcode}
+account.balance
+\end{dhkcode}
+
+일반적인 함수 디스크립터였다면 바운드 메서드가 반환되었겠지만, 
+
+\zsh{property}는 다르게 동작한다.
+
+\zsh{property.__get__}이 getter 함수를 호출하고, 그 함수의 반환값을 속성 조회 결과로 반환한다.
+
+따라서 다음 결과를 얻는다.
+
+\begin{dhkcode}
+print(account.balance)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+100
+\end{dhkzsh}
+
+핵심 실행 흐름은 다음과 같다.
+
+\begin{dhksmry}[centered]
+account.balance
+\da
+Account.__dict__["balance"]
+\da
+property 객체의 __get__
+\da
+getter(account)
+\da
+account._balance 조회
+\da
+100 반환
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+property는 데이터 디스크립터다
+\end{dhksmry}
+\end{dhknote}
+
+속성 탐색 우선순위를 생각해보자.
+
+일반적인 인스턴스 속성 조회에서는 데이터 디스크립터가 인스턴스의 
+
+\zsh{__dict__}보다 우선한다.
+
+\zsh{property}는 setter가 정의되지 않았더라도 데이터 디스크립터에 해당한다.
+
+다음 코드로 확인할 수 있다.
+
+\begin{dhkcode}
+account.__dict__["balance"] = 999
+
+print(account.__dict__["balance"])
+print(account.balance)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+999
+100
+\end{dhkzsh}
+
+인스턴스 딕셔너리에 \zsh{"balance"}라는 키가 존재하지만
+
+\zsh{account.balance}를 조회하면 \zsh{property}가 우선 적용된다.
+
+따라서 getter가 실행되어 \zsh{self._balance}의 값인 100이 반환되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+@balance.setter는 무엇을 반환할까?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Account:
+
+    def __init__(self, balance):
+        self._balance = balance
+
+    @property
+    def balance(self):
+        return self._balance
+
+    @balance.setter
+    def balance(self, value):
+        if value < 0:
+            raise ValueError("잔액은 음수일 수 없습니다.")
+
+        self._balance = value
+\end{dhkcode}
+
+여기서 \zsh{@balance.setter}는 기존 \zsh{property} 객체에 setter를 제자리에서 추가하는 것과는 다르다.
+
+\zsh{property.setter()}는 지정된 setter를 포함하는 새로운 \zsh{property} 객체를 반환한다.
+
+그 반환 객체가 다시 클래스 네임스페이스의 \zsh{balance} 이름에 바인딩된다.
+
+최종 객체를 확인해 보자.
+
+\begin{dhkcode}
+descriptor = Account.__dict__["balance"]
+
+print(type(descriptor.fget))
+print(type(descriptor.fset))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'function'>
+<class 'function'>
+\end{dhkzsh}
+
+이제 다음 표현식은
+
+\begin{dhkcode}
+account.balance = 200
+\end{dhkcode}
+
+일반적인 인스턴스 딕셔너리 할당이 아니라 \zsh{property.__set__}을 통한 setter 호출로 처리된다.
+
+따라서 \zsh{property}는 함수 호출을 속성 읽기·쓰기 연산에 연결하는 디스크립터라고 이해하면 된다.
+
+\subsubsection{사용자 정의 데코레이터를 인스턴스 메서드에 적용하기}
+
+이제 이번 학습의 핵심으로 들어가 본다.
+
+일반적인 함수 데코레이터를 인스턴스 메서드에 적용하면 어떤 일이 발생할까?
+
+\begin{dhkcode}
+from functools import wraps
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("TRACE:", func.__name__)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class Calculator:
+
+    def __init__(self, base):
+        self.base = base
+
+    @trace
+    def add(self, value):
+        return self.base + value
+
+
+obj = Calculator(10)
+
+print(obj.add(5))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+TRACE: add
+15
+\end{dhkzsh}
+
+이 코드는 세 단계로 분석해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 클래스 본문에서 데코레이터 적용
+\end{dhksmry}
+\end{dhknote}
+
+먼저 원본 \zsh{add} 함수 객체가 생성된다.
+
+그다음 \zsh{trace}에 원본 함수 객체가 전달된다.
+
+\begin{dhkcode}
+add = trace(add)
+\end{dhkcode}
+
+\zsh{trace}는 wrapper 함수 객체를 생성하고 반환한다.
+
+따라서 클래스 네임스페이스에 저장되는 객체는 원본 \zsh{add}가 아니라 wrapper다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 인스턴스에서 add 조회
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+obj.add
+\end{dhkcode}
+
+클래스 네임스페이스에서 발견되는 객체는 wrapper 함수 객체다.
+
+그런데 wrapper 역시 일반적인 Python 함수 객체이므로 \zsh{__get__}을 제공한다.
+
+따라서 인스턴스 속성 조회에서 wrapper가 \zsh{obj}에 바인딩된다.
+
+즉, \zsh{obj.add}는 wrapper를 감싸는 바운드 메서드 객체다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 바운드 메서드 호출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+obj.add(5)
+\end{dhkcode}
+
+바운듣 메서드는 다음과 같은 호출을 수행한다.
+
+\begin{dhkcode}
+wrapper(obj, 5)
+\end{dhkcode}
+
+따라서 wrapper 내부에서 다음 바인딩이 형성된다.
+
+\begin{dhkzsh}
+args = (obj, 5)
+kwargs = {}
+\end{dhkzsh}
+
+이후 wrapper는 클로저에 저장된 원본 \zsh{add} 함수 객체를 호출한다.
+
+\begin{dhkcode}
+func(*args, **kwargs)
+\end{dhkcode}
+
+결국 원본 함수는 다음 인수를 전달받아 실행된다.
+
+\begin{dhkcode}
+original_add(obj, 5)
+\end{dhkcode}
+
+원본 함수에서 \zsh{self}는 \zsh{obj}를 참조하고 \zsh{value}는 5를 참조한다.
+
+따라서 \zsh{obj.base + value}의 결과인 15를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+바인딩 구조를 검증해 보자
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+bound = obj.add
+
+wrapper_function = Calculator.__dict__["add"]
+original_function = wrapper_function.__wrapped__
+
+print(bound.__self__ is obj)
+print(bound.__func__ is wrapper_function)
+print(wrapper_function is original_function)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+True
+False
+\end{dhkzsh}
+
+이 결과는 다음 사실을 보여준다.
+
+\begin{dhksmry}[centered]
+인스턴스에 바인딩되는 함수는 원본 add가 아니라
+
+데코레이터가 반환한 wrapper 함수 객체다.
+\end{dhksmry}
+
+그리고 wrapper가 원본 함수에 \zsh{self}를 포함한 인수들을 전달하는 것이다.
+
+\subsubsection{\zsh{@classmethod}와 사용자 정의 데코레이터의 적용 순서}
+
+\zsh{A.10}에서 학습한 데코레이터 적용 순서는 클래스 메서드에서도 그대로 성립한다.
+
+그런데 \zsh{classmethod}가 반환하는 객체는 일반 함수 객체가 아니라 디스크립터이기 때문에, 적용 순서를 바꾸면 결과가 크게 달라질 수 있다.
+
+먼저 다음 코드를 보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("TRACE:", func.__name__)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class Service:
+
+    def __init__(self, value):
+        self.value = value
+
+    @classmethod
+    @trace
+    def create(cls, value):
+        return cls(value)
+
+
+service = Service.create(10)
+
+print(type(service).__name__)
+print(service.value)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+TRACE: create
+Service
+10
+\end{dhkzsh}
+
+여기서 데코레이터는 아래에서 위로 적용된다.
+
+따라서 다음 코드와 대응한다.
+
+\begin{dhkcode}
+create = classmethod(trace(create))
+\end{dhkcode}
+
+이 과정을 객체 생성 순서로 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 단계
+\end{dhksmry}
+\end{dhknote}
+
+원본 \zsh{create} 함수 개체가 생성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 단계
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{trace}가 원본 함수 객체를 전달받아 wrapper 함수 객체를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 번째 단계
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{classmethod}가 wrapper 함수 객체를 감싸는 디스크립터를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+네 번째 단계
+\end{dhksmry}
+\end{dhknote}
+
+클래스 네임스페이스의 \zsh{create} 이름에 \zsh{classmethod} 객체가 저장된다.
+
+이제 다음 표현식이 평가된다.
+
+\begin{dhkcode}
+Service.create
+\end{dhkcode}
+
+\zsh{classmethod}의 \zsh{__get__}이 wrapper를 \zsh{Service} 클래스에 바인딩한 메서드를 반환한다.
+
+따라서 다음 호출은
+
+\begin{dhkcode}
+Service.create(10)
+\end{dhkcode}
+
+개념적으로 다음과 같다.
+
+\begin{dhkcode}
+wrapper(Service, 10)
+\end{dhkcode}
+
+Wrapper는 클로저에 저장된 원본 함수 객체를 호출한다.
+
+\begin{dhkcode}
+func(Service, 10)
+\end{dhkcode}
+
+결국 원본 \zsh{create}의 \zsh{cls}는 \zsh{Service} 클래스 객체를 참조하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+내부 구조 검증
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+descriptor = Service.__dict__["create"]
+
+bound = Service.create
+
+wrapper_function = descriptor.__func__
+original_function = wrapper_function.__wrapped__
+
+print(type(descriptor))
+
+print(bound.__self__ is Service)
+print(bound.__func__ is wrapper_function)
+
+print(wrapper_function is original_function)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'classmethod'>
+True
+True
+False
+\end{dhkzsh}
+
+이 관계를 그림으로 나타내면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: Service.__dict__["create"] // classmethod 객체
+node n2 (2,1) :: trace의 wrapper 함수 객체 // 클로저의 func -> 원본 create
+node n3 (3,1) :: 원본 create 함수 객체 // cls(value)를 실행
+
+edge n1 -> n2 :: __func__
+edge n2 -> n3 :: __wrapped__
+
+explain :: Service.create -> wrapper가 클래스에 바인딩된 메서드
+\end{dhkgraph}
+
+여기서 \zsh{classmethod}는 원본 함수를 직접 감싸는 것이 아니라, \zsh{trace}가 반환한 wrapper를 감싸고 있다는 점이 중요하다.
+
+\subsubsection{\zsh{@trace @classmethod}로 순서를 바꾸면?}
+
+이번에는 데코레이터의 순서를 반대로 작성해 보자.
+
+\begin{dhkcode}
+class Service:
+
+    @trace
+    @classmethod
+    def create(cls, value):
+        return cls(value)
+\end{dhkcode}
+
+이 코드는 다음과 대응한다.
+
+\begin{dhkcode}
+create = trace(classmethod(create))
+\end{dhkcode}
+
+앞의 예제와 결정적인 차이가 있다.
+
+이번에는 \zsh{trace}에 전달되는 객체가 일반 함수가 아니라 \zsh{classmethod} 객체다.
+
+\zsh{trace}는 이를 \zsh{func}라는 이름으로 참조하고 ㅈrapper를 생성한다.
+
+최종적으로 클래스 네임스페이스에 저장되는 객체는 \zsh{classmethod}가 아니라 일반 wrapper 함수 객체다.
+
+따라서 \zsh{Service.create}를 조회할 때 \zsh{classmethod}의 클래스 바인딩이 적용되지 않는다.
+
+게다가 wrapper 내부에서 다음 코드를 실행하면
+
+\begin{dhkcode}
+return func(*args, **kwargs)
+\end{dhkcode}
+
+\zsh{func}가 참조하는 \zsh{classmethod} 객체를 직접 호출하려고 한다.
+
+일반적인 \zsh{classmethod} 객체는 직접 호출할 수 없으므로 \zsh{TypeError}가 발생한다.
+
+두 구조를 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+클래스 바인딩 유지
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@classmethod
+@trace
+def create(cls):
+    ...
+\end{dhkcode}
+
+\begin{dhksmry}
+    - 최종 저장 객체 : classmethod(wrapper)
+
+    - 속성 조회 : wrapper를 클래스에 바인딩
+\end{dhksmry}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+일반적인 trace에서는 문제 발생
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@trace
+@classmethod
+def create(cls):
+    ...
+\end{dhkcode}
+
+\begin{dhksmry}
+    - 최종 저장 객체 : 일반 wrapper 함수
+
+    - 속성 조회 : 클래스 메서드 바인딩이 유지되지 않음
+\end{dhksmry}
+
+따라서 일반적인 함수 ㅈrapper 데코레이터를 클래스 메서드에 적용할 때는 보통 다음 구조가 적절하다.
+
+\begin{dhkcode}
+@classmethod
+@trace
+def create(cls):
+    ...
+\end{dhkcode}
+
+다만 모든 데코레이터가 반드시 이 순서를 요구하는 것은 아니다.
+
+\zsh{classmethod} 디스크립터를 인식하고 별도로 처리하도록 설계한 데코레이터라면 다른 구조도 가능하다.
+
+판단 기준은 데코레이터가 어떤 타입의 객체를 전달받고 어떤 타입의 객체를 반환하는가이다.
+
+\subsubsection{\zsh{staticmethod}와 데코레이터의 적용 순서}
+
+정적 메서드에도 같은 원리를 적용할 수 있다.
+
+\begin{dhkcode}
+class Calculator:
+
+    @staticmethod
+    @trace
+    def multiply(a, b):
+        return a * b
+
+
+obj = Calculator()
+
+print(Calculator.multiply(3, 4))
+print(obj.multiply(3, 4))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+TRACE: multiply
+12
+TRACE: multiply
+12
+\end{dhkzsh}
+
+이 구조는 다음과 대응한다.
+
+\begin{dhkcode}
+multiply = staticmethod(trace(multiply))
+\end{dhkcode}
+
+먼저 원본 함수에 \zsh{trace}가 적용되어 wrapper가 생성되고, 
+
+그 wrapper를 \zsh{staticmethod}가 감싼다.
+
+따라서 클래스나 인스턴스를 통해 속성을 조회해도 wrapper 함수 객체가 그대로 반환된다.
+
+인스턴스가 첫 번째 인수로 자동 전달되지 않는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+순서를 반대로 작성하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+class Calculator:
+
+    @trace
+    @staticmethod
+    def multiply(a, b):
+        return a * b
+\end{dhkcode}
+
+이번에는 다음과 대응한다.
+
+\begin{dhkcode}
+multiply = trace(staticmethod(multiply))
+\end{dhkcode}
+
+\zsh{trace}가 \zsh{staticmethod} 객체를 전달받아 일반 함수 wrapper를 반환한다.
+
+여기서 \zsh{classmethod}와는 차이가 있다.
+
+Python 3.10부터 \zsh{staticmethod} 객체 자체도 직접 호출할 수 있다.
+
+따라서 다음과 같은 클래스 접근 호출은 동작할 수 있다.
+
+\begin{dhkcode}
+Calculator.multiply(3, 4)
+\end{dhkcode}
+
+하지만 인스턴스 접근은 문제가 달라진다.
+
+\begin{dhkcode}
+obj = Calculator()
+
+obj.multiply(3, 4)
+\end{dhkcode}
+
+최종 클래스 속성에 저장된 것은 일반 wrapper 함수 객체이므로 인스턴스 바인딩이 발생한다.
+
+Wrapper는 \zsh{obj}까지 포함하여 원본 쪽으로 인수를 전달하려고 한다.
+
+결국 원본 \zsh{multiply(a, b)}에 세 개의 위치 인수가 전달되어 \zsh{TypeError}가 발생할 수 있다.
+
+즉, \zsh{staticmethod} 객체가 호출 가능하다는 사실과 정적 메서드의 바인딩 규칙이 보존된다는 사실은 별개다.
+
+이 경우에도 일반적으로 다음 순서가 의도에 맞다.
+
+\begin{dhkcode}
+@staticmethod
+@trace
+def multiply(a, b):
+    ...
+\end{dhkcode}
+
+\subsubsection{\zsh{property}와 사용자 정의 데코레이터}
+
+\zsh{property}에도 함수 wrapper를 적용할 수 있다.
+
+\begin{dhkcode}
+from functools import wraps
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("TRACE:", func.__name__)
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class Account:
+
+    def __init__(self, balance):
+        self._balance = balance
+
+    @property
+    @trace
+    def balance(self):
+        return self._balance
+
+
+account = Account(100)
+
+print(account.balance)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+TRACE: balance
+100
+\end{dhkzsh}
+
+이 구조는 다음과 대응한다.
+
+\begin{dhkcode}
+balance = property(trace(balance))
+\end{dhkcode}
+
+먼저 원본 getter 함수에 \zsh{trace}가 적용되어 wrapper를 생성한다.
+
+그다음 \zsh{property}가 wrapper를 getter로 저장한다.
+
+따라서 \zsh{account.balance}를 조회하면 다음 호출 경로가 형성된다.
+
+\begin{dhksmry}[centered]
+account.balance
+\da
+property.__get__
+\da
+wrapper(account)
+\da
+원본 getter(account)
+\da
+100 반환
+\end{dhksmry}
+
+여기서 wrapper는 인스턴스에 바인딩된 메서드로 조회되는 것이 아니다.
+
+\zsh{property}가 getter로 저장된 wrapper 함수 객체를 인스턴스 인수와 함께 직접 호출하는 구조다.
+
+반대로 다음과 같이 작성하면
+
+\begin{dhkcode}
+@trace
+@property
+def balance(self):
+    ...
+\end{dhkcode}
+
+\zsh{trace}가 \zsh{property} 객체를 전달받게 된다.
+
+일반적인 \zsh{trace}는 전달받은 객체를 함수처럼 호출하도록 구현되어 있으므로 정상적인 getter 동작을 보장하지 못한다.
+
+더구나 최종적으로 클래스 네임스페이스에 일반 wrapper 함수가 저장되므로
+
+\zsh{property}의 데이터 디스크립터 동작도 유지되지 않는다.
+
+여기서도 데코레이터의 적용 순서가 최종 클래스 속성의 종류를 결정한다는 원리가 적용된다.
+
+\subsubsection{호출 가능한 객체와 메서드 바인딩은 같은 개념일까?}
+
+이번에는 한 단계 더 깊이 들어가 보자.
+
+\zsh{A.9}에서 클래스 인스턴스를 데코레이터로 사용할 수 있다는 사실을 학습했다.
+
+그렇다면 함수 wrapper 대신 호출 가능한 클래스 인스턴스를 반환하면 메서드 바인딩도 자동으로 이루어질까?
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+class Counter:
+
+    def __init__(self, func):
+        self.func = func
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        return self.func(*args, **kwargs)
+
+
+class Example:
+
+    @Counter
+    def calculate(self, x):
+        return x * 2
+
+
+obj = Example()
+\end{dhkcode}
+
+클래스 본문에서는 개념적으로 다음 변환이 수행된다.
+
+\begin{dhkcode}
+calculate = Counter(calculate)
+\end{dhkcode}
+
+따라서 클래스 네임스페이스에 저장되는 객체는 함수 객체가 아니라 \zsh{Counter} 인스턴스다.
+
+\begin{dhkcode}
+print(type(Example.__dict__["calculate"]))
+
+print(
+    obj.calculate
+    is Example.__dict__["calculate"]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class '__main__.Counter'>
+True
+\end{dhkzsh}
+
+두 번재 결과에 주목해 보자.
+
+\zsh{Counter}는 \zsh{__call__}을 구현했으므로 호출 가능한 객체다.
+
+하지만 \zsh{__get__}은 구현하지 않았다.
+
+따라서 일반적인 함수 객체처럼 인스턴스 바인딩을 수행하지 않는다.
+
+이제 다음 호출을 생각해 보자.
+
+\begin{dhkcode}
+obj.calculate(10)
+\end{dhkcode}
+
+\zsh{obj.calculate}는 클래스에 저장된 \zsh{Counter} 인스턴스 자체를 반환한다.
+
+그 객체의 \zsh{__call__}이 실행되고 다음 코드에 도달한다.
+
+\begin{dhkcode}
+return self.func(*args, **kwargs)
+\end{dhkcode}
+
+여기서 \zsh{self.func}은 원본 \zsh{calculate} 함수 객체를 참조한다.
+
+원본 함수는 두 개의 인수를 요구한다.
+
+\begin{dhkcode}
+def calculate(self, x):
+    ...
+\end{dhkcode}
+
+하지만 전달된 인수는 10 하나뿐이다.
+
+따라서 \zsh{TypeError}가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 일반 함수 wrapper는 정상적으로 동작했을까?
+\end{dhksmry}
+\end{dhknote}
+
+두 객체의 프로토콜이 다르기 때문이다.
+
+\begin{dhktable}
+|구분|	일반 함수 wrapper|	위 예제의 Counter 인스턴스|
+|:---|:---|:---|
+|호출 가능 여부|	가능|	가능|
+|__call__|	제공|	제공|
+|__get__|	제공|	제공하지 않음|
+|인스턴스 접근 결과|	바운드 메서드|	Counter 객체 자체|
+|인스턴스 자동 전달|	수행	|수행하지 않음|
+\end{dhktable}
+
+이것은 중요한 객체 모델의 구분이다.
+
+호출 가능한 객체(Callable)라는 사실만으로 디스크립터 바인딩까지 제공되는 것은 아니다.
+
+\zsh{__call__}은 호출 프로토콜에 관여하고, \zsh{__get__}은 속성 조회 및 바인딩 프로토콜에 관여한다.
+
+\subsubsection{클래스 기반 데코레이터에 \zsh{__get__}구현하기}
+
+그렇다면 앞의 \zsh{Counter}를 어떻게 수정해야 할까?
+
+가장 직접적인 방법은 \zsh{__get__}을 구현하는 것이다.
+
+\begin{dhkcode}
+class Counter:
+
+    def __init__(self, func):
+        self.func = func
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        return self.func(*args, **kwargs)
+
+    def __get__(self, instance, owner=None):
+
+        if instance is None:
+            return self
+
+        def bound(*args, **kwargs):
+            return self(instance, *args, **kwargs)
+
+        return bound
+
+
+class Example:
+
+    @Counter
+    def calculate(self, x):
+        return x * 2
+
+
+a = Example()
+b = Example()
+
+print(a.calculate(10))
+print(b.calculate(20))
+
+print(Example.__dict__["calculate"].calls)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+20
+40
+2
+\end{dhkzsh}
+
+이번에는 왜 정상적으로 동작할까?
+
+\zsh{a.calculate}를 조회하면 \zsh{Counter} 인스턴스의 \zsh{__get__}이 호출된다.
+
+\begin{dhkcode}
+counter.__get__(a, Example)
+\end{dhkcode}
+
+이 함수는 \zsh{bound}라는 새로운 함수 객체를 생성하고 반환한다.
+
+\zsh{bound}는 클로저를 통해 \zsh{instance}와 \zsh{self}를 참조한다.
+
+여기서 \zsh{instance}는 \zsh{a}를, \zsh{self}는 \zsh{Counter} 인스턴스를 참조한다.
+
+따라서 다음 호출은
+
+\begin{dhkcode}
+a.calculate(10)
+\end{dhkcode}
+
+다음 순서로 실행된다.
+
+\begin{dhksmry}[centered]
+a.calculate(10)
+\da
+bound(10)
+\da
+counter(a, 10)
+\da
+Counter.__call__(counter, a, 10)
+\da
+원본 calculate(a, 10)
+\da
+20 반환
+\end{dhksmry}
+
+여기서 한 가지 주의해야 한다.
+
+이 구현이 반환한 \zsh{bound}는 일반적인 \zsh{method} 타입의 바운드 메서드가 아니다.
+
+인스턴스 참조를 클로저로 유지하는 일반 함수 객체다.
+
+따라서 일반적인 바운드 메서드의 \zsh{__self__}, \zsh{__func__} 구조와는 완전히 같지는 않다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+호출 횟수는 어디에 저장될까?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(Example.__dict__["calculate"].calls)
+\end{dhkcode}
+
+결과는 2다.
+
+\zsh{a}와 \zsh{b}는 서로 다른 인스턴스지만, 클래스 네임스페이스에 저장된 하나의 \zsh{Counter} 객체를 공유하기 때문이다.
+
+따라서 이 예제에서 \zsh{calls}는 인스턴스별 호출 횟수가 아니라 데코레이터 객체의 누적 호출 횟수다.
+
+이 차이는 실전에서 상태를 가진 클래스 기반 데코레이터를 설계할 때 중요하다.
+
+\subsubsection{디스크립터와 인스턴스 네임스페이스의 탐색 우선순위}
+
+이번에는 \zsh{A.11}의 내용을 기존 속성 탐색 규칙과 연결해 본다.
+
+일반적인 \zsh{object.__getattribute__} 기반의 인스턴스 속성 탐색에서는 다음 우선순위가 적용된다.
+
+\begin{dhktable}
+|우선순위|	탐색 대상|
+|:---|:---|
+|1|	클래스의 MRO에서 찾은 데이터 디스크립터|
+|2|	인스턴스의 __dict__|
+|3|	클래스의 MRO에서 찾은 비데이터 디스크립터 또는 일반 속성|
+|4|	일반 탐색 실패 시 적용될 수 있는 __getattr__|
+\end{dhktable}
+
+일반적인 함수 객체는 비데이터 디스크립터다.
+
+따라서 인스턴스의 \zsh{__dict__}에 같은 이름의 속성이 있으면 인스턴스 속성이 우선할 수 있다.
+
+\begin{dhkcode}
+class Example:
+
+    def method(self):
+        return "class method"
+
+
+obj = Example()
+
+obj.method = lambda: "instance attribute"
+
+print(obj.method())
+print(Example.method(obj))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+instance attribute
+class method
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\zsh{obj.method}를 조회할 때 인스턴스 딕셔너리에 \zsh{"method"}가 존재하므로 그 객체가 반환된다.
+
+이때 저장된 \zsh{lambda} 함수는 인스턴스 속성으로 직접 조회되는 것이므로 클래스 함수 디스크립터의 바인딩이 적용되지 않는다.
+
+반면 \zsh{Example.method}는 클래스 네임스페이스에 저장된 원본 함수 객체를 조회한다.
+
+따라서 \zsh{Example.method(obj)}는 원본 함수를 명시적으로 호출하는 형태다.
+
+이것은 일반적인 함수 객체가 비데이터 디스크립터라는 사실과 연결된다.
+
+반면 \zsh{property}는 데이터 디스크립터이므로 인스턴스 딕셔너리보다 우선한다.
+
+즉, 데코레이터가 반환하는 객체가 데이터 디스크립터인지, 비데이터 디스크립터인지, 일반 객체인지에 따라 속성 탐색 결과가 달라질 수 있다.
+
+\subsubsection{\zsh{inspect.signature()}와 바운드 메서드}
+
+\zsh{A.8}에서 학습한 함수 메타데이터를 메서드 바인딩과 연결해 보자.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class Calculator:
+
+    @trace
+    def add(self, x: int, y: int = 1) -> int:
+        return x + y
+
+
+obj = Calculator()
+
+print(inspect.signature(Calculator.add))
+print(inspect.signature(obj.add))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(self, x: int, y: int = 1) -> int
+(x: int, y: int = 1) -> int
+\end{dhkzsh}
+
+왜 결과가 다를까?
+
+\zsh{Calculator.add}는 클래스에서 조회한 wrapper 함수 객체다.
+
+\zsh{@wraps(func)}가 설정한 \zsh{__wrapped__}를 따라 원본 함수의 시그니처를 확인할 수 있다.
+
+따라서 첫 번째 결과에는 \zsh{self}가 포함된다.
+
+반면 \zsh{obj.add}는 인스턴스에 바인딩된 메서드 객체다.
+
+\zsh{inspect.signature()}는 바운드 메서드의 바인딩 상태를 고려해 이미 바인딩된 첫 번째 인수를 호출자에게 요구되는 인수 목록에서 제외한다.
+
+여기서 서로 다른 세 메커니즘이 결합된다.
+
+\begin{dhktable}
+|메커니즘	|역할|
+|:---|:---|
+|functools.wraps|	메타데이터와 __wrapped__ 참조 설정|
+|함수 디스크립터 __get__|	인스턴스 바운드 메서드 생성|
+|inspect.signature|	메타데이터와 바인딩 상태를 분석하여 시그니처 구성|
+\end{dhktable}
+
+이 셋을 같은 기능으로 이해하면 안 된다.
+
+특히 \zsh{wraps}가 \zsh{self}를 자동으로 전달하는 것은 아니다.
+
+실제 바인딩은 디스크립터 프로토콜이 담당한다.
+
+\subsubsection{PyTorch \zsh{nn.Module}과의 연결}
+
+이제 지금까지 학습한 객체 모델을 PyTorch에 연결해 보자.
+
+\begin{dhkcode}
+import torch
+from torch import nn
+from functools import wraps
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("FORWARD")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+class Model(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(2, 1)
+
+    @trace
+    def forward(self, x):
+        return self.linear(x)
+
+
+model = Model()
+
+x = torch.tensor([[1.0, 2.0]])
+
+y = model(x)
+
+print(y.shape)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+FORWARD
+torch.Size([1, 1])
+\end{dhkzsh}
+
+이 코드는 두 가지 호출 메커니즘을 결합한다.
+
+먼저 \zsh{Model} 클래스 네임스페이스에는 \zsh{trace}가 반환한 wrapper 함수 객체가 \zsh{forward}라는 이름으로 저장된다.
+
+따라서 \zsh{model.forward}를 조회하면 wrapper가 \zsh{model} 인스턴스에 바인딩된다.
+
+이것은 일반적인 Python 디스크립터 프로토콜의 동작이다.
+
+하지만 다음 표현식은
+
+\begin{dhkcode}
+model(x)
+\end{dhkcode}
+
+단순히 \zsh{model.forward(x)}로 치환되는 것은 아니다.
+
+\zsh{nn.Module}의 호출 메커니즘이 관여하며, 필요한 경우 등록된 훅(Hook) 등의 처리를 수행한다.
+
+그 과정에서 \zsh{forward}가 호출되면 wrapper가 실행되고, 
+
+wrapper는 원본 \zsh{forward}를 호출한다.
+
+따라서 다음 네 단계를 구별해야 한다.
+
+\begin{dhksmry}[centered]
+model(x)
+\da
+nn.Module의 호출 메커니즘
+\da
+model.forward 속성 조회 및 호출
+\da
+trace의 wrapper 실행
+\da
+원본 forward 실행
+\da
+self.linear(x)
+\da
+Tensor 반환
+\end{dhksmry}
+
+이 예제에서 \zsh{@trace}는 \zsh{nn.Module.__call__}을 대체하는 것이 아니다.
+
+클래스의 \zsh{forward} 속성에 저장되는 함수 객체를 wrapper로 변경하는 것이다.
+
+그리고 PyTorch는 Python의 일반적인 객체 모델 위에 자체적인 모듈 호출 및 훅 처리 기능을 추가한 것이다.
+
+\subsubsection{전체 개념 비교}
+
+이번 학습에서 다룬 객체들을 하나의 표로 정리해 보자.
+
+\begin{dhktable}
+|객체|	클래스 속성에 저장된 형태|	속성 조회 시 동작|	핵심 메커니즘|
+|:---|:---|:---|:---|
+|일반 함수|	function|	인스턴스 접근 시 바운드 메서드 생성|	함수의 __get__|
+|classmethod|	classmethod 객체	|클래스 바운드 메서드 생성|	classmethod.//*__get__|
+|staticmethod|	staticmethod 객체|	감싼 함수 객체 반환|	staticmethod.//*__get__|
+|property|	property 객체|	getter 실행 또는 setter 처리|	property.//*__get__, __set__|
+|일반 함수 wrapper|	function|	인스턴스 접근 시 wrapper 바인딩|	함수의 __get__|
+|__call__만 가진 데코레이터 인스턴스|	사용자 정의 객체|	자동 메서드 바인딩 없음|	호출 프로토콜만 제공|
+|__get__도 가진 데코레이터 인스턴스|	사용자 정의 디스크립터|	구현에 따라 바인딩 수행|	사용자 정의 __get__|
+\end{dhktable}
+
+이 표에서 가장 중요한 구분은 호출 가능 여부와 디스크립터 여부가 서로 다른 성질이라는 점이다.
+
+어떤 객체가 호출 가능하더라도 메서드 바인딩을 수행하지 않을 수 있다.
+
+반대로 \zsh{property}처럼 일반적인 함수 호출 방식으로 직접 사용하지 않는 객체도 속성 조회에 개입할 수 있다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습의 전체 실행 구조를 정리해 보자.
+
+\begin{dhksmry}
+클래스 메서드에 데코레이터가 적용되는 전체 흐름
+
+1. 클래스 본문 실행
+   def 문장이 원본 함수 객체를 생성한다.
+
+2. 데코레이터 적용
+   데코레이터가 원본 함수 또는 다른 데코레이터의 반환 객체를 전달받아
+   새로운 객체를 반환할 수 있다.
+
+3. 클래스 네임스페이스 바인딩
+   최종 반환 객체가 클래스 속성 이름에 바인딩된다.
+
+4. 클래스 또는 인스턴스 속성 조회
+   속성 탐색 규칙에 따라 객체를 찾고, 디스크립터라면 __get__ 등의
+   동작이 적용될 수 있다.
+
+5. 호출 또는 속성값 사용
+   반환된 객체가 바운드 메서드인지, 일반 함수인지, 계산된 속성값인지에
+   따라 이후 동작이 달라진다.
+\end{dhksmry}
+
+실제 코드를 분석할 때는 다음 다섯 가지를 판단하면 된다.
+
+\begin{dhksmry}
+1. 클래스 네임스페이스에 저장된 객체 타입이 무엇인가?
+   일반 함수인지, wrapper인지, classmethod인지, property인지에
+   따라 속성 조회가 달라진다.
+
+2. 그 객체는 어떤 디스크립터 메서드를 제공하는가?
+   __get__, __set__, __delete__의 존재 여부가 속성 탐색과
+   바인딩에 영향을 준다.
+
+3. 바운드 메서드가 반환되었다면 __self__와 __func__는 무엇을 참조하는가?
+   이를 확인하면 어떤 객체가 자동 인수로 전달되는지 추적할 수 있다.
+
+4. wrapper는 클로저를 통해 어떤 객체를 참조하는가?
+   원본 함수인지, 다른 wrapper인지, 디스크립터 객체인지 구별해야 한다.
+
+5. 데코레이터 적용 순서를 바꾸면 클래스에 저장되는 객체도 달라지는가?
+   객체가 달라진다면 이후 속성 조회와 호출 규칙도 달라질 수 있다.
+\end{dhksmry}
+
+이번 학습의 핵심 결론은 다음과 같다.
+
+\begin{dhksmry}[centered]
+데코레이터는 함수 정의 과정에서 객체를 변환하고,
+
+디스크립터는 이후 속성 조회 과정에서 그 객체의 접근 결과를 결정한다.
+\end{dhksmry}
+
+이 두 메커니즘을 분리하면 인스턴스 메서드, 클래스 메서드, 정적 메서드, 프로퍼티, 사용자 정의 클래스 기반 데코레이터를 모두 같은 Python 객체 모델로 설명할 수 있다.

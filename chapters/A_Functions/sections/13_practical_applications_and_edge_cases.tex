@@ -1,0 +1,1439 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.13. 실전 응용·예외·통합 정리
+% ==================================================
+
+\subsection{실전 응용·예외·통합 정리}
+
+Function Object · Name Binding · Closure · Decorator · Descriptor · Registration · Exception Handling · Async
+
+\subsubsection{이번 학습의 목표}
+
+\zsh{A.1}부터 \zsh{A.12}까지 Python의 함수 객체와 데코레이터를 여러 관점에서 분석하였다.
+
+처음에는 함수 저으이와 호출의 차이에서 출발했다.
+
+\begin{dhkcode}
+def calculate(x):
+    return x * 2
+\end{dhkcode}
+
+이후 중첩 함수와 클로저를 학습했고, 함수 객체를 다른 함수에 전달하여 새로운 함수를 반환하는 데코레이터를 다뤘다.
+
+\begin{dhkcode}
+@trace
+def calculate(x):
+    return x * 2
+\end{dhkcode}
+
+\zsh{A.11}에서는 클래스 네임스페이스에 저장된 함수 객체가 디스크립터 프로토콜을 통해 바운드 메서드로 변환되는 과정을 분석했다.
+
+마지막으로 \zsh{A.12}에서는 FastAPI의 등록형 데코레이터를 통해 함수 객체가 외부 시스템에 등록되고, 나중에 HTTP 요청을 통해 호출되는 구조까지 살펴보았다.
+
+이제 남은 과제는 이 개념들을 하나의 일관된 Python 실행 모델로 통합하는 것이다.
+
+이번 학습에서는 새로운 문법을 많이 추가하지 않을 것이다.
+
+대신 지금까지 배운 개념이 실제 프로그램에서 어떻게 상호작용하는지를 추적할 것이다.
+
+핵심 질문은 다음과 같다.
+
+\begin{dhksmry}[centered]
+여러 데코레이터가 적용된 클래스 메서드를 호출할 때,
+
+어떤 객체가 생성되고, 어떤 이름이 어디에 바인딩되며,
+
+어떤 디스크립터와 클로저를 거쳐 최종 함수가 실행될까?
+\end{dhksmry}
+
+그리고 정상적인 호출뿐 아니라 예외 발생, 상태 변경, 비동기 함수, 등록형 데코레이터의 경계 조건까지 분석할 것이다.
+
+\subsubsection{통합 분석을 위한 예제}
+
+이번에는 다음 기능을 가진 작은 시스템을 구현해 보자.
+
+\begin{dhksmry}
+- register: 함수 객체를 외부 레지스트리에 등록하는 데코레이터 팩토리
+
+- monitor: 함수 호출 횟수를 기록하는 데코레이터 팩토리
+
+- classmethod: 함수를 클래스 객체에 바인딩하는 디스크립터
+
+- Base, Derived: 상속과 MRO를 확인하기 위한 클래스
+\end{dhksmry}
+
+이 예제 하나로 \zsh{A.1}부터 \zsh{A.12}까지의 핵심 개념 대부분을 연결할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+전체 코드
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+from functools import wraps
+
+
+registry = {}
+
+
+def register(key):
+    print("evaluate register", key)
+
+    def decorator(func):
+        print("apply register", key)
+
+        registry[key] = func
+
+        return func
+
+    return decorator
+
+
+def monitor(tag):
+    print("evaluate monitor", tag)
+
+    def decorator(func):
+        print("apply monitor", tag)
+
+        calls = 0
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+
+            print("enter", tag, calls)
+
+            try:
+                return func(*args, **kwargs)
+            finally:
+                print("leave", tag)
+
+        wrapper.count = lambda: calls
+
+        return wrapper
+
+    return decorator
+
+
+class Base:
+    scale = 10
+
+    @classmethod
+    @register("predict")
+    @monitor("predict")
+    def predict(cls, value):
+        print("body", cls.__name__, value)
+        return cls.scale * value
+
+
+class Derived(Base):
+    scale = 20
+
+
+print("ready")
+
+print(
+    "identity",
+    registry["predict"]
+    is Base.__dict__["predict"].__func__
+)
+
+print(
+    "binding",
+    Derived.predict.__self__ is Derived
+)
+
+print("result", Derived.predict(3))
+
+try:
+    Derived.predict(None)
+except TypeError:
+    print("caught TypeError")
+
+print("calls", registry["predict"].count())
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 결과
+\end{dhksmry}
+\end{dhknote}
+
+다음 출력은 Python에서 실행하여 확인할 수 있는 결과다.
+
+\begin{dhkzsh}
+evaluate register predict
+evaluate monitor predict
+apply monitor predict
+apply register predict
+ready
+identity True
+binding True
+enter predict 1
+body Derived 3
+leave predict
+result 60
+enter predict 2
+body Derived None
+leave predict
+caught TypeError
+calls 2
+\end{dhkzsh}
+
+여기서 우리가 설명해야 할 현상은 여섯 가지다.
+
+\begin{dhksmry}
+왜 evaluate register가 evaluate monitor보다 먼저 출력될까?
+
+왜 적용 순서는 반대로 apply monitor가 먼저일까?
+
+왜 레지스트리에 저장된 함수와 classmethod.__func__가 동일할까?
+
+왜 Base에 정의된 함수의 cls가 Derived를 참조할까?
+
+왜 Derived.predict(None)에서 예외가 발생해도 leave가 출력될까?
+
+왜 정상 호출은 한 번인데 호출 횟수는 2일까?
+\end{dhksmry}
+
+\subsubsection{첫 번째 단계 - 데코레이터 표현식 평가}
+
+가장 먼저 다음 부분을 살펴보자.
+
+\begin{dhkcode}
+class Base:
+    scale = 10
+
+    @classmethod
+    @register("predict")
+    @monitor("predict")
+    def predict(cls, value):
+        ...
+\end{dhkcode}
+
+Python은 클래스 본문을 실행하는 과정에서 \zsh{predict} 함수 정의문을 처리한다.
+
+이때 데코레이터 표현식은 위에서 아래로 평가된다.
+
+따라서 다음 순서가 성립한다.
+
+\begin{dhksmry}
+    1. classmethod 평가
+
+    2. register("predict") 호출
+
+    3. monitor("predict") 호출
+
+    4. 원본 predict 함수 객체 생성
+\end{dhksmry}
+
+\zsh{classmethod}는 이미 존재하는 내장 객체를 참조하므로 별도의 출력이 없다.
+
+반면 \zsh{register("predict")}는 팩토리 함수를 호출하므로 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+evaluate register predict
+\end{dhkzsh}
+
+그리고 \zsh{monitor("predict")}를 호출하면서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+evaluate monitor predict
+\end{dhkzsh}
+
+여기서 중요한 사실이 있다.
+
+아직 원본 \zsh{predict} 함수 본문은 실행되지 않았다.
+
+\zsh{register}와 \zsh{monitor}는 데코레이터 팩토리로서 실행되었지만, \zsh{predict}는 호출된 것이 아니라 함수 객체로 생성되는 과정에 있다.
+
+따라서 \zsh{body}는 출력되지 않는다.
+
+이전 단원과 연결하면 다음과 같다.
+
+\begin{dhksmry}
+    A.1: 함수 객체와 함수 호출은 다르다.
+
+    A.2: 중첩 함수는 함수 객체를 반환할 수 있다.
+
+    A.9: 데코레이터 팩토리는 데코레이터 함수 객체를 반환한다.
+
+    A.10: 여러 데코레이터 표현식은 위에서 아래로 평가된다.
+\end{dhksmry}
+
+\subsubsection{두 번째 단계 - 데코레이터 적용과 클래스 네임스페이스}
+
+데코레이터 표현식의 평가가 끝나면 원본 \zsh{predict} 함수 객체가 생성되고, 데코레이터가 아래에서 위로 적용된다.
+
+개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+register_decorator = register("predict")
+monitor_decorator = monitor("predict")
+
+original = predict
+
+wrapper = monitor_decorator(original)
+
+registered = register_decorator(wrapper)
+
+descriptor = classmethod(registered)
+
+predict = descriptor
+\end{dhkcode}
+
+이 코드는 객체 관계를 이해하기 위한 개념적 변환식이다.
+
+실제 클래스 정의문의 내부 실행 절차를 문장 단위로 완전히 재현한 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. monitor 적용
+\end{dhksmry}
+\end{dhknote}
+
+먼저 다음 호출이 수행된다.
+
+\begin{dhkcode}
+wrapper = monitor_decorator(original)
+\end{dhkcode}
+
+\zsh{monitor_decorator}는 \zsh{calls = 0}을 초기화하고 새로운 wrapper 함수 객체를 생성한다.
+
+이 wrapper는 클로저를 토앻 다음 객체를 참조할 수 있다.
+
+\begin{dhkzsh}
+calls → 정수 객체 0
+func  → 원본 predict 함수 객체
+tag   → 문자열 "predict"
+\end{dhkzsh}
+
+그리고 wrapper 함수 객체를 반환한다.
+
+이 과정에서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+apply monitor predict
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. register ㅈ거용
+\end{dhksmry}
+\end{dhknote}
+
+다음 호출이 수행된다.
+
+\begin{dhkcode}
+registered = register_decorator(wrapper)
+\end{dhkcode}
+
+이때 \zsh{register}에 전달되는 것은 원본 함수가 아니다.
+
+이미 \zsh{monitor}가 반환한 wrapper 함수 객체다.
+
+따라서 다음 문장은
+
+\begin{dhkcode}
+registry[key] = func
+\end{dhkcode}
+
+개념적으로 다음과 같다.
+
+\begin{dhkcode}
+registry["predict"] = wrapper
+\end{dhkcode}
+
+그리고 \zsh{register}는 동일한 wrapper 객체를 반환한다.
+
+따라서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+apply register predict
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. classmethod 적용
+\end{dhksmry}
+\end{dhknote}
+
+마지막으로 다음 호출이 수행된다.
+
+\begin{dhkcode}
+descriptor = classmethod(wrapper)
+\end{dhkcode}
+
+이 호출은 wrapper 함수 객체를 감싸는 \zsh{classmethod} 디스크립터를 생성한다.
+
+따라서 \zsh{Base} 클래스 네임스페이스에는 원본 함수도, wrapper 함수도 직접 저장되지 않는다.
+
+최종적으로 \zsh{classmethod} 객체가 저장된다.
+
+전체 구조는 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: Base.__dict__["predict"] // classmethod 디스크립터
+node n2 (2,1) :: monitor의 wrapper 함수 객체 // 클로저: calls, func, tag // registry["predict"]도 이 객체 참조
+node n3 (3,1) :: 원본 predict 함수 객체 // cls.scale * value 실행
+
+edge n1 -> n2 :: __func__
+edge n2 -> n3 :: func / __wrapped__
+
+explain :: 등록·wrapper·디스크립터는 서로 다른 객체 관계
+\end{dhkgraph}
+
+이 구조를 정확히 이해하면 \zsh{A.11}과 \zsh{A.12}가 하나로 연결된다.
+
+\begin{dhksmry}
+    - monitor는 wrapper를 생성한다.
+
+    - register는 wrapper를 외부 레지스트리에 등록한다.
+
+    - classmethod는 wrapper의 클래스 바인딩을 담당한다.
+\end{dhksmry}
+
+세 데코레이터의 역할은 서로 다르다.
+
+\subsubsection{세 번째 단계 - 속성 탐색과 클래스 메서드 바인딩}
+
+클래스 정의가 완료되었으므로 이제 다음 표현식을 평가할 수 있다.
+
+\begin{dhkcode}
+Derived.predict
+\end{dhkcode}
+
+\zsh{Derived}는 \zsh{predict}를 직접 정의하지 않았다.
+
+따라서 클래스 속성 탐색은 MRO를 따라 \zsh{Base}에서 \zsh{predict}를 찾는다.
+
+\begin{dhkcode}
+print(Derived.__mro__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(<class '__main__.Derived'>, <class '__main__.Base'>, <class 'object'>)
+\end{dhkzsh}
+
+\zsh{Base}에서 발견되는 객체는 \zsh{classmethod} 디스크립터다.
+
+이 디스크립터는 자신이 감싸고 있는 wrapper 함수 객체를 접근한 클래스인 \zsh{Derived}에 바인딩한다.
+
+따라서 다음과 같은 바운드 메서드가 만들어진다.
+
+\begin{dhkdir}[in=6]
+Derived.predict
+|바운드 메서드
+> __self__ -> Derived 클래스 객체
+> __func__ -> monitor의 wrapper 함수 객체
+\end{dhkdir}
+
+이 관계는 다음 코드로 검증할 수 있다.
+
+\begin{dhkcode}
+method = Derived.predict
+
+print(method.__self__ is Derived)
+
+print(
+    method.__func__
+    is registry["predict"]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+여기서 중요한 점은 두 가지다.
+
+첫째, \zsh{predict}를 정의한 클래스와 실제 바인딩되는 클래스는 다를 수 있다.
+
+\zsh{predict}는 \zsh{Base}에서 정의되었지만, 
+
+\zsh{Derived.predict}를 조회했으므로 \zsh{__self__} 는 \zsh{Derived} 를 참조하다.
+
+둘째, 바인딩되는 함수는 원본 \zsh{predict}가 아니라 \zsh{monitor}가 반환한 wrapper다.
+
+\zsh{classmethod}는 자신이 전달받은 ㅈrapper를 클래스에 바인딩할 뿐, 그 wrapper가 클로저로 참조하는 원본 함수까지 별도로 바인딩하지는 않는다.
+
+원본 함수는 나중에 wrapper 내부에서 호출된다.
+
+\subsubsection{네 번째 단계 - 실제 함수 호출과 반환}
+
+이제 다음 표현식을 실행해 보자.
+
+\begin{dhkcode}
+Derived.predict(3)
+\end{dhkcode}
+
+이 호출은 개념적으로 다음과 같다.
+
+\begin{dhkcode}
+wrapper(Derived, 3)
+\end{dhkcode}
+
+바운드 메서드가 \zsh{Derived} 클래스 객체를 첫 번째 인수로 전달하기 때문이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. Wrapper 호출 프레임 생성
+\end{dhksmry}
+\end{dhknote}
+
+Wrapper의 매개변수는 다음과 같다.
+
+\begin{dhkcode}
+def wrapper(*args, **kwargs):
+    ...
+\end{dhkcode}
+
+따라서 다음 바인딩이 형성된다.
+
+\begin{dhkzsh}
+args = (Derived, 3)
+kwargs = {}
+\end{dhkzsh}
+
+여기서 \zsh{args}는 튜플 객체이고, \zsh{kwargs}는 딕셔너리 객체다.
+
+\zsh{Derived} 클래스 객체나 정수 3이 복사되어 새로운 객체가 만들어진다는 뜻은 아니다.
+
+이 객체들에 대한 참조가 인수 전달 구조에 포함되는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 클로저 상태 변경
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드가 실행된다.
+
+\begin{dhkcode}
+nonlocal calls
+calls += 1
+\end{dhkcode}
+
+\zsh{calls}는 wrapper 호출 프레임의 지역 변수가 아니다.
+
+바깥쪽 \zsh{decorator} 함수의 실행에서 생성된 클로저 셀에 연결된 이름이다.
+
+처음에는 \zsh{calls}가 정수 객체 0을 참조했다.
+
+\zsh{calls += 1}이 실행되면 새로운 정수 결과 객체에 \zsh{calls}가 재바인딩된다.
+
+\begin{dhksmry}
+호출 전
+
+calls 셀 \ra 0
+
+호출 후
+
+calls 셀 \ra 1
+\end{dhksmry}
+
+정수 객체 자체를 변경하는 것이 아니다.
+
+이후 다음 문장이 실행된다.
+
+\begin{dhkcode}
+print("enter", tag, calls)
+\end{dhkcode}
+
+따라서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+enter predict 1
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 원본 함수 호출
+\end{dhksmry}
+\end{dhknote}
+
+다음 문장이 실행된다.
+
+\begin{dhkcode}
+return func(*args, **kwargs)
+\end{dhkcode}
+
+\zsh{func}은 클로저를 통해 원본 \zsh{predict} 함수 객체를 참조한다.
+
+따라서 다음과 같은 호출이 수행된다.
+
+\begin{dhkcode}
+original_predict(Derived, 3)
+\end{dhkcode}
+
+원본 함수의 매개변수 바인딩은 다음과 같다.
+
+\begin{dhkzsh}
+cls = Derived
+value = 3
+\end{dhkzsh}
+
+이제 원본 함수 본문이 실행된다.
+
+\begin{dhkcode}
+print("body", cls.__name__, value)
+
+return cls.scale * value
+\end{dhkcode}
+
+먼저 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+body Derived 3
+\end{dhkzsh}
+
+그리고 다음 표현식이 평가된다.
+
+\begin{dhkcode}
+cls.scale
+\end{dhkcode}
+
+\zsh{cls}는 \zsh{Derived} 클래스 객체를 참조한다.
+
+\zsh{Dervied}의 클래스 네임스페이스에는 \zsh{scale = 20}이 정의되어 있으므로 그 값을 사용한다.
+
+따라서 계산 결과는 다음과 같다.
+
+\[
+20 \times 3 = 60
+\]
+
+원본 함수는 정수 객체 60을 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. finally 실행과 반환
+\end{dhksmry}
+\end{dhknote}
+
+Wrapper의 코드를 다시 보자.
+
+\begin{dhkcode}
+try:
+    return func(*args, **kwargs)
+finally:
+    print("leave", tag)
+\end{dhkcode}
+
+\zsh{return} 문장이 실행되더라도 함수가 즉시 종료되는 것은 아니다.
+
+\zsh{try}블록에서 반환값이 결정된 뒤, 해당 \zsh{finally} 블록이 실행된다.
+
+따라서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+leave predict
+\end{dhkzsh}
+
+이후 반환값 60이 호출자에게 전달된다.
+
+마지막으로 바깥쪽 \zsh{print}가 실행되면서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+result 60
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+전체 호출 흐름
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: Derived.predict(3) // 바운드 메서드 호출
+node n2 (2,1) :: wrapper(Derived, 3) // calls:0 -> 1
+node n3 (3,1) :: original_predict(Derived, 3) // cls.scale = 20
+node n4 (4,1) :: 60 반환 // finally 실행: leave predict
+node n5 (5,1) :: 최종 결과: 60
+
+edge n1 -> n2
+edge n2 -> n3
+edge n3 -> n4
+
+explain :: Derived.predict(3)의 호출 및 반환 경로
+
+caption :: 메서드 바인딩은 wrapper 호출 이전에, 클로저 탐색은 wrapper 실행 중에 발생한다.
+\end{dhkgraph}
+
+이 과정에서 우리가 학습한 객체 모델이 모두 연결된다.
+
+\begin{dhksmry}
+    __get__: 클래스 바인딩
+
+    __self__: 바인딩된 Derived
+
+    __func__: wrapper 함수 객체
+
+    *args, **kwargs: 인수 전달
+
+    __closure__: 원본 함수와 상태 참조
+
+    nonlocal: 클로저 셀의 이름 재바인딩
+
+    return: 원본 함수의 반환값 전달
+
+    finally: 반환 전 정리 코드 실행
+\end{dhksmry}
+
+\subsubsection{다섯 번째 단계 - 예외가 발생하면 무엇이 달라질까?}
+
+이제 다음 코드를 실행한다고 하자.
+
+\begin{dhkcode}
+try:
+    Derived.predict(None)
+except TypeError:
+    print("caught TypeError")
+\end{dhkcode}
+
+앞의 정상 호출과 같은 경로를 따라 실행되지만, 원본 함수의 연산에서 예외가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. Wrapper 실행
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{erived.predict(None)}을 조회하고 호출하면 wrapper는 다음 인수를 전달받는다.
+
+\begin{dhkzsh}
+args = (Derived, None)
+\end{dhkzsh}
+
+이후 \zsh{calls += 1}이 실행된다.
+
+첫 번째 호출에서 \zsh{calls}가 1이 되었으므로 이번에는 2가 된다.
+
+\begin{dhkzsh}
+enter predict 2
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 원본 함수 실행
+\end{dhksmry}
+\end{dhknote}
+
+원본 함수는 다음 바인딩으로 실행된다.
+
+\begin{dhkzsh}
+cls = Derived
+value = None
+\end{dhkzsh}
+
+따라서 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+body Derived None
+\end{dhkzsh}
+
+이후 다음 표현식이 평가된다.
+
+\begin{dhkcode}
+cls.scale * value
+\end{dhkcode}
+
+이는 다음과 같다.
+
+\begin{dhkcode}
+20 * None
+\end{dhkcode}
+
+정수와 \zsh{None} 사이에는 이 곱셈을 수행하는 연산이 정의되어 있지 않으므로 \zsh{TypeError}가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 예외 전파와 finally
+\end{dhksmry}
+\end{dhknote}
+
+원본 함수가 정상적으로 반환하지 못했으므로 wrapper의 \zsh{return}도 정상적으로 완료되지 못한다.
+
+하지만 \zsh{finally} 블록은 실행된다.
+
+\begin{dhkzsh}
+leave predict
+\end{dhkzsh}
+
+Wrapper는 예외를 처리하는 \zsh{except} 블록을 갖고 있지 않으므로 \zsh{TypeError}는 호출자에게 전파된다.
+
+바깥쪽 \zsh{except TypeError}가 이를 처리하고 다음 내용을 출력한다.
+
+\begin{dhkzsh}
+caught TypeError
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 클로저의 상태는 어떻게 될까?
+\end{dhksmry}
+\end{dhknote}
+
+여기서 중요한 점이 있다.
+
+함수 호출은 실패했지만 다음 코드는 이미 실행되었다.
+
+\begin{dhkcode}
+calls += 1
+\end{dhkcode}
+
+따라서 클로저 상태는 이전 값으로 자동 복구되지 않는다.
+
+\begin{dhkcode}
+print(registry["predict"].count())
+\end{dhkcode}
+
+결과는 다음과 같다.
+
+\begin{dhkzsh}
+2
+\end{dhkzsh}
+
+이것은 일반적인 Python 예외 처리의 중요한 성질이다.
+
+\begin{dhksmry}[centered]
+예외가 발생했다고 해서 예외 이전에 수행된 모든 상태 변경이
+
+자동으로 취소되는 것은 아니다.
+\end{dhksmry}
+
+이번 예제의 \zsh{calls}는 성공 횟수가 아니라 wrapper 진입 횟수를 나타낸다.
+
+성공한 호출만 세고 싶다면 상태를 변경하는 위치를 바꿔야 한다.
+
+예를 들어 다음과 같이 설계할 수 있다.
+
+\begin{dhkcode}
+result = func(*args, **kwargs)
+calls += 1
+return result
+\end{dhkcode}
+
+이 경우 원본 함수가 정상적으로 반환한 뒤에만 \zsh{calls}를 증가시킨다.
+
+다만 wrapper에서 이후 수행하는 처리까지 모두 성공해야 성공으로 볼 것인지에 따라 더 세밀한 설계가 필요할 수 있다.
+
+\subsubsection{클로저 셀과 함수 메타데이터를 직접 검증하기}
+
+이제 앞의 통합 예제를 객체 내부 구조 관점에서 검증해 보자.
+
+먼저 클래스 네임스페이스에 저장된 \zsh{classmethod} 객체를 가져온다.
+
+\begin{dhkcode}
+descriptor = Base.__dict__["predict"]
+\end{dhkcode}
+
+그 객체가 감싸고 있는 wrapper를 가져온다.
+
+\begin{dhkcode}
+wrapper = descriptor.__func__
+\end{dhkcode}
+
+그리고 \zsh{functools.wraps}가 설정한 \zsh{__wrapped__}를 이용하여 원본 함수 객체를 확인한다.
+
+\begin{dhkcode}
+original = wrapper.__wrapped__
+\end{dhkcode}
+
+다음 코드를 실행해 보자.
+
+\begin{dhkcode}
+print(type(descriptor).__name__)
+print(type(wrapper).__name__)
+
+print(wrapper is registry["predict"])
+
+print(
+    original is wrapper.__wrapped__
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+classmethod
+function
+True
+True
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+__closure__와 __wrapped__는 다르다
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{__wrapped__}는 \zsh{functools.wraps}가 설정한 함수 메타데이터 참조다.
+
+반면 \zsh{__closure__}는 함수 객체가 참조하는 클로저 셀들의 튜플이다.
+
+두 구조는 서로 다른 목적을 가진다.
+
+\begin{dhkcode}
+def closure_map(func):
+    names = func.__code__.co_freevars
+    cells = func.__closure__ or ()
+
+    return dict(zip(names, cells))
+
+
+cells = closure_map(wrapper)
+
+print(wrapper.__code__.co_freevars)
+
+print(cells["calls"].cell_contents)
+
+print(
+    cells["func"].cell_contents
+    is original
+)
+\end{dhkcode}
+
+앞의 통합 예제를 모두 실행한 뒤라면 결과는 다음과 같다.
+
+\begin{dhkzsh}
+('calls', 'func', 'tag')
+2
+True
+\end{dhkzsh}
+
+여기서 \zsh{co_freevars}는 함수 코드 객체가 사용하는 자유 변수 이름들을 보여준다.
+
+\zsh{__closure__}는 그 이름에 대응하는 셀 객체들을 제공한다.
+
+따라서 \zsh{closure_map}을 이용하면 이름과 셀을 연결해서 확인할 수 있다.
+
+이 예제에서는 다음 관계가 형성된다.
+
+\begin{dhkdir}[in=6]
+wrapper 함수 객체
+> __code__
+>> co_freevars
+>>> ("calls", "func", "tag")
+> __closure__
+>> calls 셀 -> 2
+>> func 셀 -> 원본 predict 함수
+>> tag 셀 -> "predict"
+> __wrapped__ -> 원본 predict 함수
+\end{dhkdir}
+
+\zsh{func} 셀과 \zsh{__wrapped__}는 이 예제에서 같은 원본 함수 객체를 참조한다.
+
+하지만 둘이 같은 개념인 것은 아니다.
+
+\zsh{func} 셀은 wrapper가 실행될 때 원본 함수를 호출하기 위해 사용하고,
+
+\zsh{__wrapped__}는 도구가 원본 함수를 추적할 수 있도록 제공되는 메타데이터다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+wrapper.count는 어떻게 같은 상태를 읽을까?
+\end{dhksmry}
+\end{dhknote}
+
+다음 문장을 기억해 보자.
+
+\begin{dhkcode}
+wrapper.count = lambda: calls
+\end{dhkcode}
+
+이 코드는 wrapper 함수 객체의 \zsh{__dict__}에 \zsh{"count"} 라는 속성을 추가한다.
+
+그 속성값은 \zsh{lambda}로 생성한 별도의 함수 객체다.
+
+그런데 이 함수 역시 같은 \zsh{calls} 셀을 참조한다.
+
+다음과 같이 확인할 수 있다.
+
+\begin{dhkcode}
+wrapper_cells = closure_map(wrapper)
+count_cells = closure_map(wrapper.count)
+
+print(
+    wrapper_cells["calls"]
+    is count_cells["calls"]
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+즉, 두 함수 객체는 서로 다른 코드와 호출 동작을 갖지만 같은 클로저 셀을 공유한다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: wrapper 함수
+node n2 (3,1) :: count 함수
+node n3 (2,2) :: calls 셀 -> 2
+
+edge n1 -> n3 :: HV
+edge n2 -> n3 :: HV
+\end{dhkdiagram}
+
+따라서 wrapper에서 \zsh{nonlocal calls}로 상태를 변경하면
+
+\zsh{wrapper.count()}가 그 변경된 값을 읽을 수 있다.
+
+여기서도 핵심은 함수 객체의 동일성이 아니라 공유하는 클로저 셀의 동일성이다.
+
+\subsubsection{\zsh{inspect.signature()}는 무엇을 보여줄까?}
+
+\zsh{A.8}과 \zsh{A.11}의 내용을 연결해 보자.
+
+앞의 통합 예제에 다음 코드를 추가한다.
+
+\begin{dhkcode}
+import inspect
+
+
+print(inspect.signature(wrapper))
+
+print(
+    inspect.signature(
+        wrapper,
+        follow_wrapped=False
+    )
+)
+
+print(inspect.signature(Derived.predict))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(cls, value)
+(*args, **kwargs)
+(value)
+\end{dhkzsh}
+
+세 결과가 다른 이유를 분석해 보자.
+
+\begin{dhktable}
+|표현식|	결과|	원인|
+|:---|:---|:---|
+|inspect.signature(//*wrapper)|	(cls, value)|	__wrapped__를 따라 원본 함수의 시그니처 분석|
+|inspect.signature(//*wrapper,//*follow_wrapped=False)|	(*args, **kwargs)|	실제 wrapper의 매개변수 구조 확인|
+|inspect.signature(//*Derived.predict)|	(value)	|원본 시그니처와 클래스 바인딩 상태를 함께 고려|
+\end{dhktable}
+
+여기서 중요한 구별이 있다.
+
+\zsh{@wraps}가 실제 wrapper의 매개변수를 \zsh{(cls, value)} 로 변경한 것은 아니다.
+
+실제 wrapper의 매개변수는 여전히 \zsh{*args}, \zsh{**kwargs}다.
+
+\zsh{inspect.signature}가 원본 함수의 메타데이터르 ㄹ추적하여 외부에 보여주는 시그니처를 구성하는 것이다.
+
+그리고 \zsh{Derived.predict}는 클래스에 바인딩된 메서드이므로 호출자가 직접 전달할 필요가 없는 \zsh{cls}가 표시되지 않는다.
+
+따라서 실제 함수 호출 규칙, 함수 메타데이터, 바운드 메서드의 시그니처 표현은 구별해야 한다.
+
+\subsubsection{레지스트리에 저장된 함수는 자동으로 클래스에 바인딩될까?}
+
+앞의 통합 예제에서 다음 관계가 성립했다.
+
+\begin{dhkcode}
+registry["predict"] is Base.__dict__["predict"].__func__
+\end{dhkcode}
+
+두 표현식은 동일한 wrapper 함수 객체를 참조한다.
+
+그렇다면 다음 두 호출도 동일할까?
+
+\begin{dhkcode}
+Derived.predict(3)
+
+registry["predict"](3)
+\end{dhkcode}
+
+그렇지 않다.
+
+첫 번째는 \zsh{classmethod} 디스크립터를 통해 생성된 바운드 메서드의 호출이다.
+
+따라서 \zsh{Derived} 클래스 객체가 자동으로 첫 번재 인수에 전달된다.
+
+반면 두 번째는 딕셔너리에서 꺼낸 일반 함수 객체를 직접 호출하는 것이다.
+
+딕셔너리 조회는 \zsh{classmethod} 바인딩을 수행하지 않는다.
+
+따라서 wrapper에 전달되는 인수는 3 하나뿐이다.
+
+Wrapper가 원본 함수에 그 인수를 전달하면
+
+원본 \zsh{predict(cls, value)}에서 \zsh{value}에 
+
+해당하는 인수가 부족하여 \zsh{TypeError} 가 발생한다.
+
+레지스트리를 통해 정상적으로 호출하려면 다음처럼 클래스를 명시적으로 전달해야 한다.
+
+\begin{dhkcode}
+registry["predict"](Derived, 3)
+\end{dhkcode}
+
+이 호출에서는 wrapper가 다음 인수를 전달 받는다.
+
+\begin{dhkzsh}
+args = (Derived, 3)
+\end{dhkzsh}
+
+따라서 원본 함수도 정상적으로 실행할 수 있다.
+
+이 차이는 중요한 판단 기준이다.
+
+같은 함수 객체를 참조하더라도 어떤 경로로 접근했는지에 따라 디스크립터 바인딩이 적용될 수도 있고 적용되지 않을 수도 있다.
+
+\zsh{A.11}에서 학습한 속성 탐색과 \zsh{A.12}에서 학습한 등록형 데코레이터가 만나는 지점이다.
+
+\subsubsection{예외 처리에서 주의해야 할 \zsh{return}과 \zsh{finally}}
+
+앞의 \zsh{monitor}는 다음과 같이 구현했다.
+
+\begin{dhkcode}
+try:
+    return func(*args, **kwargs)
+finally:
+    print("leave", tag)
+\end{dhkcode}
+
+이 구조는 원본 함수가 정상 반환하든 예외를 발생시키든 정리 코드를 실행한다.
+
+하지만 \zsh{finally} 블록에서 직접 \zsh{return}을 수행하면 의미가 달라진다.
+
+\begin{dhkcode}
+from functools import wraps
+
+
+def unsafe(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+
+        try:
+            return func(*args, **kwargs)
+        finally:
+            return "forced"
+
+    return wrapper
+
+
+@unsafe
+def fail():
+    raise ValueError("failed")
+
+
+print(fail())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+forced
+\end{dhkzsh}
+
+원본 함수에서 \zsh{ValueError}가 발생했지만 호출자에게 전달되지 않는다.
+
+왜 그럴까?
+
+\zsh{finally} 블록의 \zsh{return}이 이전에 진행 중이던 예외 전파를 중단하고 새로운 반환값을 결정했기 때문이다.
+
+따라서 wrapper를 구현할 때는 다음 세 가지를 구별해야 한다.
+
+\begin{dhktable}
+|구현	|정상 반환|	예외 발생|
+|:---|:---|:---|
+|return func(...)|	원본 반환값 전달	|예외 전파|
+|try: return func(...) + finally에서 로깅|	정리 코드 실행 후 반환	|정리 코드 실행 후 예외 전파|
+|finally에서 직접 return|	finally의 값으로 반환	|예외가 억제될 수 있음|
+\end{dhktable}
+
+여기서 두 번재 경우에도 \zsh{finally} 내부에서 새로운 예외가 발생하면 기존 예외를 대체하는 등 결과가 달라질 수 있다.
+
+따라서 로깅이나 리소스 정리를 위한 데코레이터에서는 예외 전파 규칙을 명확하게 설계해야 한다.
+
+\subsubsection{비동기 함수와 제네레이터는 호출 시점이 다르다}
+
+지금까지의 통합 예제는 일반적인 동기 함수를 대상으로 했다.
+
+하지만 데코레이터를 비동기 함수나 제네레이터 함수에 적용할 때는 호출 결과와 실행 시점을 추가로 고려해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+비동기 함수
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+from functools import wraps
+import inspect
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("wrapper")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@trace
+async def calculate(x):
+    print("body")
+    return x * 2
+
+
+print(inspect.iscoroutinefunction(calculate))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+원본 \zsh{calculate}는 코루틴 함수지만, 데코레이터가 반환한 객체는 일반적인 동기 wrapper 함수다.
+
+\zsh{@wraps}는 wrapper를 코루틴 함수로 변환하지 않는다.
+
+따라서 \zsh{calculate(5)}를 호출하면 동기 wrapper가 실행되고, 원본 코루틴 함수의 호출 결과인 코루틴 객체가 반환된다.
+
+코루틴 본문은 그 객체가 실제로 실행될 때 진행된다.
+
+FastAPI같은 프레임워크에서는 최종 등록된 함수가 동기 함수인지 비동기 함수인지가 실행 방식에 영향을 주기 때문에 중요하다.
+
+일반적인 코루틴 함수와 동기 함수를 모두 지원하려면 다음처럼 wrapper를 구분할 수 있다.
+
+\begin{dhkcode}
+import asyncio
+import inspect
+from functools import wraps
+
+
+def trace(func):
+
+    if inspect.iscoroutinefunction(func):
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            print("enter async")
+            return await func(*args, **kwargs)
+
+        return async_wrapper
+
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        print("enter sync")
+        return func(*args, **kwargs)
+
+    return sync_wrapper
+
+
+@trace
+async def calculate(x):
+    return x * 2
+
+
+print(inspect.iscoroutinefunction(calculate))
+print(asyncio.run(calculate(5)))
+\end{dhkcode}
+
+일반 Python 스크립트에서의 예상 출력은 다음과 같다.
+
+\begin{dhkzsh}
+True
+enter async
+10
+\end{dhkzsh}
+
+이 코드를 이미 이벤트 루프가 실행 중인 Jupyter 환경에서 실행한다면
+
+\zsh{asyncio.run()} 대신 다음과 같이 호출해야 한다.
+
+\begin{dhkcode}
+result = await calculate(5)
+print(result)
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+제네레이터 함수
+\end{dhksmry}
+\end{dhknote}
+
+제네레이터 함수도 비슷하게 실행 시점을 구별해야 한다.
+
+\begin{dhkcode}
+def trace(func):
+
+    def wrapper(*args, **kwargs):
+        print("wrapper called")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@trace
+def numbers():
+    print("generator body")
+    yield 10
+    yield 20
+
+
+iterator = numbers()
+
+print(next(iterator))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+wrapper called
+generator body
+10
+\end{dhkzsh}
+
+왜 출력 순서가 이렇게 될까?
+
+\zsh{numbers()}는 실제로 일반 wrapper 함수 객체를 호출한다.
+
+따라서 \zsh{"wrapper called"}가 먼저 출력된다.
+
+그다음 wrapper가 원본 제네레이터 함수를 호출하여 제네레이터 객체를 반환한다.
+
+하지만 이 시점에는 원본 제너레이터 본문이 아직 실행되지 않았다.
+
+\zsh{next(iterator)}가 호출될 때 비로소 제너레이터 본문이 실행을 시작한다.
+
+따라서 함수 객체의 종류뿐 아니라 데코레이터가 반환한 객체의 종류와 실제 호출 결과도 구별해야 한다.
+
+\subsubsection{실전 데코레이터 설계에서 발생하는 경계 조건}
+
+지금가지의 내용을 바탕으로 실전에서 자주 발생하는 문제를 정리해 보자.
+
+\begin{dhktable}
+|문제 상황|	발생 원인|	설계 시 확인할 사항|
+|:---|:---|:---|
+|원본 함수의 반환값이 사라짐|	wrapper에서 return 누락|	return func(*args, **kwargs)가 필요한가?|
+|원본 함수가 너무 일찍 실행됨	|func 대신 func()를 데코레이션 시점에 호출|	함수 객체와 호출 결과를 구별했는가?|
+|여러 호출의 상태가 공유됨|	wrapper들이 같은 클로저 셀 참조|	상태를 호출별·인스턴스별·함수별 중 어디에 저장할 것인가?|
+|예외가 사라짐	|except 또는 finally에서 예외 억제	|예외를 전파할 것인가, 변환할 것인가?|
+|클래스 메서드 바인딩 실패|	데코레이터가 classmethod 객체를 직접 감쌈|	최종 클래스 속성의 타입은 무엇인가?|
+|클래스 기반 데코레이터에서 self 누락|	반환 객체가 __get__을 제공하지 않음|	호출 가능성과 디스크립터 여부를 구별했는가?|
+|FastAPI에서 매개변수 검증 실패	|wrapper 시그니처와 메타데이터 문제|	__wrapped__, 실제 인수 전달이 적절한가?|
+|비동기 엔드포인트 실행 오류	|코루틴 함수를 동기 wrapper로 감쌈|	최종 함수가 코루틴 함수인가?|
+|등록된 함수와 이름이 달라짐|	등록 이후 다른 wrapper 적용 또는 이름 재바인딩|	레지스트리는 어느 객체를 참조하는가?|
+|호출 횟수 집계가 부정확함|	공유 상태 또는 동시 실행|	상태 변경의 원자성·동기화가 필요한가?|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+공유 상태와 동시 실행
+\end{dhksmry}
+\end{dhknote}
+
+앞의 \zsh{monitor}에서 \zsh{calls}는 클로저 셀을 통해 유지된다.
+
+이 상태는 동일한 wrapper를 호출하는 모든 호출자가 공유한다.
+
+예를 들어 \zsh{Base.preidct(...)}와 \zsh{Derived.predict(...)}는 같은 wrapper 함수 객체를 사용하므로 호출 횟수도 공유한다.
+
+그런데 여러 스레드에서 동시에 호출하는 환경이라면 다음 연산의 동기화까지 고려해야 한다.
+
+\begin{dhkcode}
+calls += 1
+\end{dhkcode}
+
+이 표현식을 모든 Python 구현과 실행 환경에서 안전한 원자적 카운터 연산이라고 가정하면 안 된다.
+
+정확한 동시 호출 횟수 집계가 필요하다면 잠김(Lock) 등 적절한 동기화 수단을 사용해야 한다.
+
+또한 호출 횟수가 인스턴스별로 분리되어야 한다면 하나의 공유 클로저 셀에 저장하는 방식이 요구사항에 맞지 않을 수 있다.
+
+결국 클로저는 상태를 유지할 수 있는 메커니즘을 제공하지만, 그 상태의 공유 범위와 동시성 정책은 프로그램 설계자가 결정해야 한다.
+
+\subsubsection{데코레이터를 분석하는 최종 절차}
+
+이제 처음 보는 데코레이터 코드도 다음 순서로 분석하면 된다.
+
+\begin{dhksmry}
+Python 데코레이터 실행 분석 절차
+1. 정의가 실행되는 위치를 확인한다.
+   모듈 본문인지, 클래스 본문인지, 함수 내부인지 확인한다. 
+   그 위치에 따라 이름이 바인딩되는 네임스페이스가 달라진다.
+
+2. 데코레이터 표현식의 평가 순서를 추적한다.
+   데코레이터 팩토리가 있다면 언제 호출되고 무엇을 반환하는지 확인한다.
+
+3. 원본 함수 객체의 생성과 데코레이터 적용을 구별한다.
+   함수 본문이 실행된 것인지, 함수 객체만 생성된 것인지 구별해야 한다.
+
+4. 각 데코레이터의 입력 객체와 반환 객체를 기록한다.
+   함수 객체, wrapper, 디스크립터, 호출 가능한 인스턴스 중 무엇이 
+   전달되고 반환되는지 확인한다.
+
+5. 최종 이름 바인딩과 외부 등록 참조를 확인한다.
+   함수 이름이 어떤 객체를 참조하는지, 레지스트리는 어떤 객체를 
+   참조하는지 구별한다.
+
+6. 속성 조회와 메서드 바인딩을 분석한다.
+   클래스 또는 인스턴스를 통해 접근한다면 __get__, __self__, 
+   __func__를 확인한다.
+
+7. 실제 호출에서 인수와 클로저를 추적한다.
+   args, kwargs, 자유 변수, 클로저 셀, nonlocal에 의한 
+   상태 변화를 분석한다.
+
+8. 반환·예외·최종 상태를 확인한다.
+   반환값이 그대로 전달되는지, 예외가 전파되는지, 상태 변경이 남는지,
+   비동기 실행이 필요한지 확인한다.
+\end{dhksmry}
+
+이 절차는 데코레이터뿐 아니라 콜백(Callback), 이벤트 핸들러(Event Handler), 의존성 주입(Dependency Injection), 클래스 기반 프레임워크의 실행 흐름을 분석할 때도 활용할 수 있다.
+
+\subsubsection{전체 개념 통합}
+
+지금까지 학습한 내용을 객체 모델 관점에서 다시 연결해 보자.
+
+\begin{dhktable}
+|단원|	핵심 개념|	최종적으로 설명할 수 있어야 하는 것|
+|:---|:---|:---|
+|A.1|	함수 객체와 이름 바인딩|	func와 func()의 차이|
+|A.2|	중첩 함수와 렉시컬 스코프|	함수가 정의된 위치와 외부 이름 참조|
+|A.3|	LEGB|	이름 탐색이 이루어지는 네임스페이스|
+|A.4|	클로저와 자유 변수|	외부 함수 종료 후에도 참조가 유지되는 이유|
+|A.5|	nonlocal, __closure__|	클로저 셀을 통한 상태 재바인딩|
+|A.6|	데코레이터 변환식|	@decorator의 함수 객체 변환|
+|A.7|	Wrapper와 인수 전달|	호출 중개, 반환값, 예외 처리|
+|A.8|	functools.wraps|	메타데이터와 실제 함수 동작의 구별|
+|A.9|	데코레이터 팩토리|	설정값을 클로저로 유지하는 구조|
+|A.10|	다중 데코레이터|	평가·적용·호출 순서의 차이|
+|A.11|	메서드 바인딩과 디스크립터|	클래스 속성 조회와 바운드 메서드 생성|
+|A.12|	등록형 데코레이터|	함수 객체와 외부 레지스트리의 참조 관계|
+|A.13|	실행 모델 통합|	전체 객체 생성·바인딩·탐색·호출·반환·상태 변화 추적|
+\end{dhktable}
+
+이번 학습 범위를 하나의 문장으로 정리하면 다음과 같다.
+
+데코레이터는 함수 객체를 전달받아 어떤 처리를 수행하고b객체를 반환하는 Python의 일반적인 호출 구조이며, 그 결과는 이름 바인딩·클로저·디스크립터·외부 레지스트리·실제 호출 환경에 따라 서로 다른 실행동작으로 연결된다.
+
+이 원리를 이해했다면 새로운 데코레이터를 만났을 때 단순히 문법을 암기할 필요가 없다.
+
+어떤 객체가 어디에 저장되어 있고, 어떤 시점에 조회되고 호출되는지를 추적하면 동작을 설명할 수 있기 때문이다.

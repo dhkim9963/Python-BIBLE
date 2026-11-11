@@ -1,0 +1,1729 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% A.12. 등록형 데코레이터와 FastAPI
+% ==================================================
+
+\subsection{등록형 데코레이터와 FastAPI}
+
+Registration Decorator · Decorator Factory · Route Registry · Endpoint · Dependency Injection · Function Introspection
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{A.11}에서는 클래스 내부에 정의된 함수에 데코레이터를 적용할 때 두 가지 메커니즘을 구별했다.
+
+첫째, 데코레이터 적용은 함수 정의문이 실행되는 과정에서 원본 함수 객체를 다른 객체로 변환할 수 있다.
+
+둘째, 디스크립터 바인딩은 이후 클래스나 인스턴스를 통해 속성을 조회할 때 그 객체의 접근 결과를 결정한다.
+
+이번에는 데코레이터의 또 다른 활용 방식인 등록형 데코레이터(Registration Decorator)를 학습할 것이다.
+
+지금까지 우리가 주로 사용한 데코레이터는 다음과 같은 구조였다.
+
+\begin{dhkcode}
+@trace
+def calculate(x):
+    return x * 2
+\end{dhkcode}
+
+\zsh{trace}는 원본 함수 객체를 전달받아 새로운 wrapper 함수 객체를 반환하였다.
+
+그런데 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+@app.get("/items/{item_id}")
+def get_item(item_id: int):
+    return {"item_id": item_id}
+\end{dhkcode}
+
+이것은 FastAPI에서 사용하는 경로 처리 데코레이터(Path Operation Decorator)다.
+
+겉으로 보면 지금까지 학습한 데코레이터와 같지만, 목적이 다르다.
+
+\zsh{@app.get(...)}은 원본 함수에 로깅이나 성능 측정 기능을 덧붙이기 위해 wrapper를 생성하는 것이 아니다.
+
+특정 HTTP 요청을 처리할 함수 객체를 FastAPI 애플리케이션에 등록하는 것이 주된 목적이다.
+
+이 차이를 이해하면 데코레이터를 단순한 함수 변환 도구가 아니라, 프로그램의 구성 정보를 선언하고 연결하는 수단으로 바라볼 수 있다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서는 다음 질문을 해결할 것이다.
+
+\begin{dhksmry}
+1. 등록형 데코레이터는 일반적인 wrapper 데코레이터와 무엇이 다를까?
+
+2. @app.get("/tiems")에서 app.get(...)은 어떤 객체를 반환할까?
+
+3. 함수 객체는 언제 생성되고, 언제 FastAPI에 등록될까?
+
+4. 등록 이후 함수 이름과 FastAPI 내부의 엔드포인트 참조는 어떤 관계일까?
+
+5. HTTP 요청이 들어오면 Python 함수 객체는 어떤 과정을 거쳐 호출될까?
+
+6. FastAPI는 함수의 매개변수와 타입 힌트를 어떻게 분석할까?
+
+7. @app.get과 @trace의 적용 순서를 바꾸면 어떤 차이가 발생할까?
+
+8. 동기 함수와 비동기 함수에 데코레이터를 적용할 때 무엇을 주의해야 할까?
+\end{dhksmry}
+
+핵심은 등록 시점(Registration Time)과 요청 처리 시점(Request Time)을 명확히 구별하는 것이다.
+
+\subsubsection{등록형 데코레이터의 정확한 정의}
+
+등록형 데코레이터는 전달받은 객체를 레지스트리(Registry)와 같은 외부 관리 구조에 등록하는 부작용을 수행하는 데코레이터다.
+
+등록 과정이 끝나면 원본 객체를 그대로 반환할 수도 있고, 다른 객체를 반환할 수도 있다.
+
+따라서 등록형 데코레이터의 본질은 wrapper를 생성하지 않는다는 데 있지 않다.
+
+전달받은 객체와 외부 관리 구조 사이에 등록 관계를 형성한다는 데 있다.
+
+다음 두 구현을 비교해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Wrapper 데코레이터
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+def trace(func):
+    def wrapper(*args, **kwargs):
+        print("TRACE")
+        return func(*args, **kwargs)
+
+    return wrapper
+\end{dhkcode}
+
+함수 호출을 중개하는 새 함수 객체를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+등록형 데코레이터
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+registry = {}
+
+def register(func):
+    registry[func.__name__] = func
+    return func
+\end{dhkcode}
+
+함수 객체를 외부 자료구조에 저장하고 원본을 반환한다.
+
+두 번째 예제에서 중요한 문장은 다음이다.
+
+\begin{dhkcode}
+registry[func.__name__] = func
+\end{dhkcode}
+
+이 문장은 새로운 wrapper를 생성하지 않는다.
+
+대신 \zsh{registry} 딕셔너리에 함수 객체에 대한 참조를 저장한다.
+
+그리고 다음 문장은
+
+\begin{dhkcode}
+return func
+\end{dhkcode}
+
+원본 함수 객체를 그대로 반환한다.
+
+따라서 데코레이션 이후 함수 이름이 참조하는 객체의 동일성은 유지된다.
+
+하지만 외부 레지스트리에는 새로운 등록 정보가 추가된다.
+
+이것이 등록형 데코레이터의 가장 기본적인 형태다.
+
+\subsubsection{가장 단순한 등록형 데코레이터 구현}
+
+먼저 FastAPI없이 Python만으로 등록형 데코레이터를 만들어 보자.
+
+\begin{dhkcode}
+registry = {}
+
+
+def register(func):
+    print("register:", func.__name__)
+
+    registry[func.__name__] = func
+
+    return func
+
+
+@register
+def greet(name):
+    print("Hello", name)
+    return name.upper()
+
+
+print("definition complete")
+
+print(registry["greet"] is greet)
+
+result = registry["greet"]("Kim")
+
+print("result:", result)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+register: greet
+definition complete
+True
+Hello Kim
+result: KIM
+\end{dhkzsh}
+
+이 결과를 객체 생성과 바인딩 순서에 따라 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 함수 정의문 실행
+\end{dhksmry}
+\end{dhknote}
+
+Python이 다음 함수 정의문에 도달한다.
+
+\begin{dhkcode}
+@register
+def greet(name):
+    print("Hello", name)
+    return name.upper()
+\end{dhkcode}
+
+원본 \zsh{greet} 함수 객체가 생성된다.
+
+여기서 중요한 점은 함수 객체가 생성되었다고 함수 본문이 실행되는 것은 아니라는 사실이다.
+
+따라서 아직 \zsh{"Hello Kim"}은 출력되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 데코레이터 적용
+\end{dhksmry}
+\end{dhknote}
+
+생성된 함수 객체가 \zsh{register}에 전달된다.
+
+\begin{dhkcode}
+register(original_greet)
+\end{dhkcode}
+
+\zsh{register} 내부에서는 다음 문장이 실행된다.
+
+\begin{dhkcode}
+registry[func.__name__] = func
+\end{dhkcode}
+
+\zsh{func.__name__}은 \zsh{"greet"}이므로 레지스트리에 다음 관계가 형성된다.
+
+\begin{dhkdir}[in=6]
+registry
+> "greet" -> 원본 greet 함수 객체
+\end{dhkdir}
+
+그리고 \zsh{register}는 같은 함수 객체를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 최종 이름 바인딩
+\end{dhksmry}
+\end{dhknote}
+
+데코레이터의 반환값이 모듈 네임스페이스의 \zsh{greet} 이름에 바인딩된다.
+
+따라서 다음 두 표현식은 동일한 함수 객체를 참조한다.
+
+\begin{dhkcode}
+greet
+registry["greet"]
+\end{dhkcode}
+
+이것이 다음 결과가 \zsh{True}인 이유다.
+
+\begin{dhkcode}
+registry["greet"] is greet
+\end{dhkcode}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 레지스트리를 통한 호출
+\end{dhksmry}
+\end{dhknote}
+
+마지막으로 다음 표현식이 실행된다.
+
+\begin{dhkcode}
+registry["greet"]("Kim")
+\end{dhkcode}
+
+딕셔너리 조회 결과는 함수 객체다.
+
+따라서 일반적인 함수 호출 규칙이 적용된다.
+
+이때 비로소 원본 함수 본문이 실행되고 \zsh{"Hello Kim"}이 출력된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+여기서 발생한 상태 변화
+\end{dhksmry}
+\end{dhknote}
+
+이 예제에서는 원본 함수 객체를 수정한 것이 아니다.
+
+변경된 것은 외부 딕셔너리의 상태다.
+
+\begin{dhktable}
+|대상	|실행 전	|실행 후|
+|:---|:---|:---|
+|원본 greet 함수 객체|	생성 전|	생성됨|
+|registry 딕셔너리|	빈 딕셔너리|	"greet" → 함수 객체|
+|모듈 이름 greet|	정의 전|	원본 함수 객체 참조|
+|원본 함수 본문|	미실행|	레지스트리에서 호출할 때 실행|
+\end{dhktable}
+
+이것이 wrapper 데코레이터와 등록형 데코레이터를 구별하는 첫 번째 기준이다.
+
+\subsubsection{등록형 데코레이터에도 인수를 전달할 수 있다}
+
+\zsh{A.9}에서는 데코레이터 팩토리를 학습했다.
+
+등록형 데코레이터도 같은 구조로 확장할 수 있다.
+
+\begin{dhkcode}
+registry = {}
+
+
+def register(name):
+    print("factory:", name)
+
+    def decorator(func):
+        print("register:", func.__name__)
+
+        registry[name] = func
+
+        return func
+
+    return decorator
+
+
+@register("hello")
+def greet(name):
+    return f"Hello, {name}"
+
+
+print("definition complete")
+
+print(registry["hello"] is greet)
+print(registry["hello"]("Kim"))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+factory: hello
+register: greet
+definition complete
+True
+Hello, Kim
+\end{dhkzsh}
+
+이제 데코레이터의 실행 과정을 세 단계로 구분할 수 있다.
+
+\begin{dhksmry}
+데코레이터 팩토리 \ra 등록 \ra 호출
+
+1. 팩토리 호출
+   register("hello")가 실행되어 "hello"를 클로저로 유지하는
+   decorator 함수 객체를 반환한다.
+
+2. 등록 수행
+   원본 greet 함수 객체가 생성된 뒤 decorator(greet)이 호출되고,
+   registry["hello"]에 함수 객체가 저장된다.
+
+3. 실제 함수 호출
+   이후 registry["hello"]("Kim")을 실행할 때 비로소 원본 함수
+   본문이 실행된다.
+\end{dhksmry}
+
+여기서 \zsh{register("hello")}의 반환값은 데코레이터 함수 객체다.
+
+반면 그 데코레이터의 반환값은 원본 \zsh{greet} 함수 객체다.
+
+따라서 다음 두 \zsh{return}은 의미가 다르다.
+
+\begin{dhkcode}
+return decorator
+\end{dhkcode}
+
+이것은 설정이 완료된 데코레이터 함수 객체를 반환하는 단계다.
+
+\begin{dhkcode}
+return func
+\end{dhkcode}
+
+이것은 등록된 원본 함수 객체를 반환하는 단계다.
+
+이 구분을 이해했다면 FastAPI의 \zsh{@app.get(...)} 구조도 같은 원리로 분석할 수 있다.
+
+\subsubsection{FastAPI의 \zsh{@app.get(...)}은 어떤 구조일까?}
+
+이제 실제 FastAPI를 살펴보자.
+
+\begin{dhkcode}
+from fastapi import FastAPI
+
+app = FastAPI()
+
+
+@app.get("/items/{item_id}")
+def get_item(item_id: int):
+    return {"item_id": item_id}
+\end{dhkcode}
+
+여기서 가장 먼저 구별해야 할 객체는 세 가지다.
+
+\begin{dhktable}
+|표현식|	객체의 역할|
+|:---|:---|
+|app|	FastAPI 애플리케이션 인스턴스|
+|app.get|	app에 바인딩된 메서드|
+|app.get("/items/{item_id}")|	경로 등록을 수행할 데코레이터 함수|
+\end{dhktable}
+
+\zsh{A.11}에서 학습한 메서드 바인딩을 연결해 보자.
+
+\begin{dhkcode}
+print(app.get.__self__ is app)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+\end{dhkzsh}
+
+\zsh{app.get}은 FastAPI 클래스에 정의된 메서드가 \zsh{app} 인스턴스에 바인딩된 결과다.
+
+따라서 다음 표현식은
+
+\begin{dhkcode}
+app.get("/items/{item_id}")
+\end{dhkcode}
+
+FastAPI 인스턴스의 \zsh{get} 메서드를 호출하는 것이다.
+
+그 호출 결과로 데코레이터 함수 객체가 반환된다.
+
+여기서 \zsh{get} 메서드 호출과 엔드포인트 함수 호출은 완전히 다른 사건이다.
+
+\zsh{app.get(...)}을 실행한다고 \zsh{get_item} 함수의 본문이 실행되는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실제 변환식
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드는
+
+\begin{dhkcode}
+@app.get("/items/{item_id}")
+def get_item(item_id: int):
+    return {"item_id": item_id}
+\end{dhkcode}
+
+개념적으로 다음과 대응한다.
+
+\begin{dhkcode}
+decorator = app.get("/items/{item_id}")
+
+
+def get_item(item_id: int):
+    return {"item_id": item_id}
+
+
+get_item = decorator(get_item)
+\end{dhkcode}
+
+FastAPI의 일반적인 경로 등록 데코레이터는 전달받은 엔드포인트 함수 객체를 라우터에 등록한 뒤 그 함수 객체를 그대로 반환한다.
+
+따라서 데코레이션 과정에서 별도의 사용자 정의 wrapper가 반드시 생성되는 것은 아니다.
+
+다만 FastAPI는 등록된 엔드포인트를 HTTP 요청으로 실행하기 위한 내부 요청 처리 함수를 별도로 구성한다.
+
+등록 데코레이터가 원본 함수를 반환한다는 사실과 프레임워크 내부에 요청 처리 계층이 존재한다는 사실은 양립한다.
+
+\subsubsection{등록 시점과 HTTP 요청 처리 시점}
+
+FastAPI의 실행 과정을 두 시점으로 나누어 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 등록 시점 - Python 모듈 실행
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: app = FastAPI()
+group g1(n1) :: 애플리케이션 인스턴스 생성
+node n2 (2,1) :: app.get("/items/{item_id}")
+group g2(n2) :: 등록 데코레이터 함수 생성
+node n3 (3,1) :: def get_item(...)
+group g3(n3) :: 엔드포인트 함수 객체 생성
+node n4 (4,1) :: 데코레이터 적용 -> 라우터 등록
+group g4(n4) :: 경로, HTTP 메서드, 엔드포인트 참조 저장
+
+edge g1 -> g2
+edge g2 -> g3
+edge g3 -> g4
+\end{dhkgraph}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 요청 처리 시점 - HTTP GET 요청 도착
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: 요청 경로와 HTTP 메서드에 맞는 라우트 탐색
+group g1(n1) :: GET /items/7 
+node n2 (2,1) :: 경로의 "7"을 정수 7로 변환
+group g2(n2) :: 매개변수 추출·검증·의존성 해결 
+node n3 (3,1) :: 등록된 함수 객체를 실제로 호출
+group g3(n3) :: get_item(item_id=7)
+node n4 (4,1) :: 반환값을 응답 데이터로 직렬화
+group g4(n4) :: HTTP 응답 생성
+
+edge g1 -> g2
+edge g2 -> g3
+edge g3 -> g4
+\end{dhkgraph}
+
+여기서 중요한 것은 등록과 호출 사이에 시간적 간격이 존재한다는 사실이다.
+
+보통 Python 모듈이 실행되어 경로가 등록된 뒤, 나중에 HTTP 요청이 도착했을 때 엔드포인트가 호출된다.
+
+같은 애플리케이션 프로세스에서 요청이 여러 번 발생한다고 해서 매번 함수 정의문이나 \zsh{@app.get(...)}이 다시 실행되는 것은 아니다.
+
+\subsubsection{실제 FastAPI의 등록 객체를 확인하기}
+
+이번에는 FastAPI 내부에 어떤 객체가 저장되는지 확인해 보자.
+
+다음 예제는 \zsh{fastapi}와 \zsh{httpx}가 설치된 환경에서 독립적으로 실행할 수 있다.
+
+\zsh{TestClient}는 별도의 웹 서버를 실행하지 않고 애플리케이션에 테스트 요청을 전달하는 도구다.
+
+\begin{dhkcode}
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+
+@app.get("/items/{item_id}")
+def get_item(item_id: int):
+    print("endpoint called:", item_id)
+    return {"item_id": item_id}
+
+route = next(
+    route
+    for route in app.routes
+    if isinstance(route, APIRoute)
+    and route.path == "/items/{item_id}"
+)
+
+print(route.endpoint is get_item)
+
+client = TestClient(app)
+
+response = client.get("/items/7")
+
+print(response.status_code)
+print(response.json())
+
+invalid = client.get("/items/abc")
+
+print(invalid.status_code)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+endpoint called: 7
+200
+{'item_id': 7}
+422
+\end{dhkzsh}
+
+이 예제에는 서로 다른 두 종류의 함수 호출이 등장한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 등록된 엔드포인트의 동일성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+route.endpoint is get_item
+\end{dhkcode}
+
+결과는 \zsh{True}다.
+
+\zsh{route}는 FastAPI의 \zsh{APIRoute} 객체이고, \zsh{route.endpoint}는 등록된 엔드포인트 함수 객체를 참조한다.
+
+현재 예제에서는 \zsh{@app.get(...)}이 원본 함수 객체를 반환했으므로 모듈 이름 \zsh{get_item}도 같은 객체를 참조한다.
+
+따라서 다음 구조가 형성된다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: 모듈 네임스페이스
+node n2 (2,1) :: get_item
+node n3 (3,2) :: 함수 객체
+node n4 (4,1) :: FastAPI 애플리케이션
+node n5 (5,1) :: APIRoute 객체
+node n6 (6,1) :: endpoint
+
+edge n1 -- n2
+edge n2 -> n3 :: HV
+edge n4 -- n5
+edge n5 -- n6
+edge n6 -> n3 :: HV
+\end{dhkdiagram}
+
+여기서 함수 객체가 복사된 것은 아니다.
+
+서로 다른 두 위치에서 동일한 함수 객체를 참조하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 실제 HTTP 요청
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+response = client.get("/items/7")
+\end{dhkcode}
+
+이 코드는 등록된 함수 객체를 직접 호출하는 코드가 아니다.
+
+HTTP 요청을 모사하여 FastAPI 애플리케이션의 요청 처리 경로로 전달한다.
+
+FastAPI는 요청 경로에서 \zsh{"7"}을 추출하고, 엔드포인트의 타입 힌트를 근거로 정수 7을 준비한다.
+
+그다음 엔드포인트 함수를 호출한다.
+
+이때 비로소 다음 출력이 발생한다.
+
+\begin{dhkzsh}
+endpoint called: 7
+\end{dhkzsh}
+
+반면 다음 요청은
+
+\begin{dhkcode}
+client.get("/items/abc")
+\end{dhkcode}
+
+\zsh{"abc"}를 정수로 변환할 수 없으므로 요청 매개변수 검증 단계에서 실패한다.
+
+따라서 HTTP 상태 코드 422가 반환되고, 해당 요청에서는 \zsh{get_item} 함수 본문이 실행되지 않는다.
+
+이것이 함수 객체의 등록과 함수 본ㅁ누의 실행이 서로 다른 시점에 발생한다는 사실을 보여주는 예제다.
+
+\subsubsection{직접 함수 호출과 HTTP 요청은 같지 않다}
+
+앞의 예제에서 다음 두 표현식을 비교해 보자.
+
+\begin{dhkcode}
+get_item("7")
+
+client.get("/items/7")
+\end{dhkcode}
+
+첫 번째는 일반적인 Python 함수 호출이다.
+
+두 번째는 FastAPI의 HTTP 요청 처리 과정이다.
+
+따라서 동작이 다르다.
+
+\begin{dhkcode}
+print(get_item("7"))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+endpoint called: 7
+{'item_id': '7'}
+\end{dhkzsh}
+
+여기서는 \zsh{item_id}에 문자열 \zsh{"7"}이 그대로 전달된다.
+
+Python의 타입 힌트 \zsh{item_id: int} 자체는 일반적인 함수 호출에서 자동 형 변환을 수행하지 않는다.
+
+반면 HTTP 요청에서는 FastAPI가 엔드포인트 시그니처를 분석하여 입력값을 검증하고 변환한다.
+
+\begin{dhktable}
+|구분	|직접 함수 호출|	FastAPI HTTP 요청|
+|:---|:---|:---|
+|함수 호출 주체|	Python 코드|	FastAPI 요청 처리 계층|
+|경로 매개변수 추출|	없음|	있음|
+|타입 힌트 기반 입력 검증|	자동 수행되지 않음|	수행|
+|의존성 주입|	자동 수행되지 않음|	수행|
+|HTTP 응답 생성|	없음	|수행|
+|원본 함수 본문|	직접 실행|	검증·의존성 처리 후 실행|
+\end{dhktable}
+
+여기서 중요한 점은 FastAPI가 Python 함수 호출 규칙을 변경한 것이 아니라는 사실이다.
+
+FastAPI는 함수를 호출하기 전에 HTTP 요청을 분석하고, 필요한 인수들을 구성하는 별도의 계층을 제공하는 것이다.
+
+\subsubsection{FastAPI는 함수 시그니처를 어떻게 활용할까?}
+
+이제 \zsh{A.8}에서 학습한 \zsh{inspect.signature()}와 연결해 보자.
+
+FastAPI는 등록된 함수 매개변수, 타입 힌트, 기본값 등을 분석하여 HTTP 요청에서 어떤 값을 추출하고 어떤 의존성을 해결해야 하는지 결정한다.
+
+다음 예제를 보자.
+
+\begin{dhkcode}
+import inspect
+from fastapi import FastAPI, Depends
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+
+def get_multiplier() -> int:
+    return 3
+
+@app.get("/scores/{score}")
+def calculate_score(
+    score: int,
+    offset: int = 0,
+    multiplier: int = Depends(get_multiplier),
+):
+    return {
+        "result": (score + offset) * multiplier
+    }
+
+signature = inspect.signature(calculate_score)
+
+print(signature.parameters["score"].annotation)
+print(signature.parameters["offset"].default)
+
+print(
+    type(
+        signature.parameters["multiplier"].default
+    ).__name__
+)
+
+client = TestClient(app)
+
+response = client.get("/scores/4?offset=2")
+
+print(response.json())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'int'>
+0
+Depends
+{'result': 18}
+\end{dhkzsh}
+
+이 코드에서 세 매개변수는 서로 다른 방식으로 처리된다.
+
+\begin{dhktable}
+|매개변수|	선언|	FastAPI에서의 역할|
+|:---|:---|:---|
+|score|	score: int|	URL 경로에서 추출|
+|offset|	offset: int = 0|	쿼리 매개변수에서 추출, 생략 시 기본값 사용|
+|multiplier|	multiplier: int = Depends(//*get_multiplier)|	의존성 함수의 반환값을 전달|
+\end{dhktable}
+
+요청은 다음과 같다.
+
+\begin{dhkzsh}
+GET /scores/4?offset=2
+\end{dhkzsh}
+
+FastAPI는 등록된 경로와 함수 시그니처를 근거로 인수를 준비한다.
+
+\begin{dhkzsh}
+score = 4
+offset = 2
+multiplier = 3
+\end{dhkzsh}
+
+여기서 \zsh{multiplier}의 값은 \zsh{get_multiplier()}를 호출하여 얻는다.
+
+따라서 엔드포인트 호출은 개념적으로 다음과 같다.
+
+\begin{dhkcode}
+calculate_score(
+    score=4,
+    offset=2,
+    multiplier=3,
+)
+\end{dhkcode}
+
+그 결과는 다음과 같다.
+
+\[
+(4+2)\times3=18
+\]
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Depends(...)는 실제 의존성의 반환값이 아니다
+\end{dhksmry}
+\end{dhknote}
+
+여기서 중요한 점이 있다.
+
+다음 선언을 보자.
+
+\begin{dhkcode}
+multiplier: int = Depends(get_multiplier)
+\end{dhkcode}
+
+일반적인 Python 함수 정의 관점에서는 \zsh{Depends(get_multiplier)}의 호출 결과인 \zsh{Depends} 객체가 기본값으로 저장된다.
+
+이 객체 자체가 정수 3인 것은 아니다.
+
+FastAPI는 이 기본값을 의존성 해결을 위한 선언 정보로 해석한다.
+
+따라서 다음처럼 직접 호출하면
+
+\begin{dhkcode}
+calculate_score(4, offset=2)
+\end{dhkcode}
+
+FastAPI의 의존성 주입 과정이 실행되지 않는다.
+
+\zsh{multiplier}에는 기본값인 \zsh{Depends} 객체가 바인딩되므로, 이 예제에서는 정수와 \zsh{Depends} 객체를 곱하려는 연산때문에 \zsh{TypeError}가 발생한다.
+
+반면 다음 직접 호출은 가능하다.
+
+\begin{dhkcode}
+calculate_score(
+    4,
+    offset=2,
+    multiplier=3,
+)
+\end{dhkcode}
+
+이처럼 FastAPI의 의존성 주입은 Python의 함수 호출 규칙 자체가 아니라 프레임워크가 함수 호출 전에 수행하는 별도의 인수 구성 과정이다.
+
+\subsubsection{\zsh{@app.get}과 \zsh{@trace}의 적용 순서를 바꾸면?}
+
+이번 학습에서 가장 중요한 실전 문제다.
+
+\zsh{A.10}에서는 여러 데코레이터의 적용 순서가 최종 객체 구조를 결정한다는 사실을 학습했다.
+
+FastAPI에서도 같은 원리가 적용된다.
+
+먼저 일반적인 로깅 데코레이터를 정의해 보자.
+
+\begin{dhkcode}
+from functools import wraps
+
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+
+
+app = FastAPI()
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("TRACE:", func.__name__)
+        return func(*args, **kwargs)
+
+    return wrapper
+\end{dhkcode}
+
+이제 적용 순서를 다르게 하여 두 엔드포인트를 등록해 보자.
+
+\begin{dhkcode}
+@app.get("/logged")
+@trace
+def logged():
+    return {"name": "logged"}
+
+
+@trace
+@app.get("/unlogged")
+def unlogged():
+    return {"name": "unlogged"}
+\end{dhkcode}
+
+겉으로는 두 함수 모두 \zsh{@app.get}과 \zsh{@trace}를 사용했다.
+
+하지만 FastAPI에 등록되는 함수 객체는 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 - @app.get이 바깥쪽
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@app.get("/logged")
+@trace
+def logged():
+    ...
+\end{dhkcode}
+
+데코레이터의 적용 순서는 아래에서 위다.
+
+따라서 개념적으로 다음과 같다.
+
+\begin{dhkcode}
+logged = app.get("/logged")(trace(original_logged))
+\end{dhkcode}
+
+실행 과정을 추적해 보자.
+
+먼저 원본 \zsh{logged} 함수 객체가 생성된다.
+
+그다음 \zsh{trace}가 원본 함수를 전달받아 wrapper를 반환한다.
+
+이제 \zsh{app.get("/logged")}가 반환한 등록 데코레이터가 wrapper 함수 객체를 엔드포인트로 등록한다.
+
+마지막으로 wrapper 함수 객체가 모듈 이름 \zsh{logged}에 바인딩된다.
+
+따라서 다음 관계가 성립한다.
+
+\begin{dhkdiagram}[in=2]
+node n1 (1,1) :: 모듈 이름 logged
+node n2 (3,1) :: trace wrapper
+node n3 (3,2) :: FastAPI route.endpoint
+node n4 (5,1) :: 원본 logged 함수
+
+edge n1 -> n2
+edge n3 -> n2
+edge n2 -> n4 :: 클로저의 func
+\end{dhkdiagram}
+
+HTTP 요청이 들어오면 FastAPI가 wrapper를 호출한다.
+
+Wrapper는 \zsh{"TRACE: logged"}를 출력한 뒤 원본 함수를 호출한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 - @trace가 바깥쪽
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@trace
+@app.get("/unlogged")
+def unlogged():
+    ...
+\end{dhkcode}
+
+이번에는 다음과 대응한다.
+
+\begin{dhkcode}
+unlogged = trace(
+    app.get("/unlogged")(original_unlogged)
+)
+\end{dhkcode}
+
+먼저 원본 함수 객체가 생성된다.
+
+그다음 \zsh{@app.get}이 원본 함수 객체를 FastAPI에 등록하고 그대로 반환한다.
+
+이후 \zsh{trace}가 그 원본 함수 객체를 감싸 새로운 wrapper를 반환한다.
+
+마지막으로 모듈 이름 \zsh{unlogged}가 wrapper에 바인딩된다.
+
+따라서 구조는 다음과 같다.
+
+\begin{dhkdiagram}[in=2]
+node n1 (1,1) :: 모듈 이름 unlogged
+node n2 (3,1) :: trace wrapper
+node n3 (5,2) :: FastAPI route.endpoint
+node n4 (5,1) :: 원본 unlogged 함수
+
+edge n1 -> n2
+edge n3 -> n4
+edge n2 -> n4 :: 클로저의 func
+\end{dhkdiagram}
+
+이번에는 FastAPI가 원본 함수 객체를 등록했다.
+
+따라서 HTTP 요청을 처리할 때 wrapper를 거치지 않는다.
+
+하지만 Python 코드에서 \zsh{unlogged()}를 직접 호출하면 wrapper가 실행된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실제 객체 동일성 검증
+\end{dhksmry}
+\end{dhknote}
+
+앞의 코드에 이어 다음을 실행해 보자.
+
+\begin{dhkcode}
+def endpoint_for(path):
+    return next(
+        route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == path
+    )
+
+
+print(endpoint_for("/logged") is logged)
+
+print(endpoint_for("/unlogged") is unlogged)
+
+print(
+    endpoint_for("/unlogged")
+    is unlogged.__wrapped__
+)
+
+
+client = TestClient(app)
+
+client.get("/logged")
+client.get("/unlogged")
+
+unlogged()
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+False
+True
+TRACE: logged
+TRACE: unlogged
+\end{dhkzsh}
+
+출력에서 \zsh{"TRACE: logged"}는 HTTP 요청에 의해 발생한다.
+
+반면 \zsh{"TRACE: unlogged"}는 마지막의 직접 함수 호출에 의해 발생한다.
+
+\zsh{client.get("/unlogged")} 자체는 로그를 출력하지 않는다.
+
+이 결과는 단순한 실행 순서 차이가 아니다.
+
+FastAPI가 참조하는 함수 객체와 모듈 이름이 참조하는 함수 객체가 서로 달라진 결과다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 순서의 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|구분|	@app.get 바깥쪽|	@trace 바깥쪽|
+|:---|:---|:---|
+|등록되는 함수 객체|	trace wrapper|	원본 함수|
+|최종 함수 이름|	trace wrapper|	trace wrapper|
+|HTTP 요청에서 trace 실행|	실행됨|	실행되지 않음|
+|직접 함수 호출에서 trace 실행|	실행됨	|실행됨|
+|route.endpoint is 함수이름|	True|	False|
+\end{dhktable}
+
+이것이 \zsh{A.10}에서 학습한 데코레이터 적용 순서가 실제 웹 프레임워크의 동작에 영향을 주는 대표적인 사례다.
+
+\subsubsection{\zsh{functools.wraps}가 FastAPI에서 중요한 이유}
+
+앞의 \zsh{trace} 구현에는 다음 코드가 있었다.
+
+\begin{dhkcode}
+@wraps(func)
+def wrapper(*args, **kwargs):
+    ...
+\end{dhkcode}
+
+왜 \zsh{@wraps(func)}를 사용했을까?
+
+\zsh{A.8}에서 학습했듯 \zsh{functools.wraps}는 wrapper의 메타데이터를 설정하고 \zsh{__wrapped__}를 통해 원본 함수 객체를 추적할 수 있도록 한다.
+
+FastAPI는 엔드포인트의 시그니처를 분석하므로 이 정보가 중요하다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@trace
+def calculate(x: int, y: int = 1) -> int:
+    return x + y
+
+
+print(inspect.signature(calculate))
+
+print(
+    inspect.signature(
+        calculate,
+        follow_wrapped=False
+    )
+)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(x: int, y: int = 1) -> int
+(*args, **kwargs)
+\end{dhkzsh}
+
+두 결과가 다른 이유는 다음과 같다.
+
+\zsh{inspect.signature(calculate)}는 기본적으로 \zsh{__wrapped__} 체인을 따라 원본 함수의 시그니처를 분석한다.
+
+반면 \zsh{follow_wrapped=False}를 지정하면 실제 wrapper 함수 객체의 시그니처를 확인한다.
+
+이 차이가 FastAPI에서 중요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+@wraps가 없으면 어떤 문제가 발생할까?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+
+app = FastAPI()
+
+
+def bad_trace(func):
+
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@app.get("/broken/{item_id}")
+@bad_trace
+def broken(item_id: int):
+    return {"item_id": item_id}
+
+
+client = TestClient(app)
+
+response = client.get("/broken/5")
+
+print(response.status_code)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+422
+\end{dhkzsh}
+
+왜 정상적으로 실행되지 않을까?
+
+FastAPI에 등록된 함수 객체는 \zsh{bad_trace}가 반환한 wrapper다.
+
+그런데 이 wrapper의 시그니처는 다음과 같다.
+
+\begin{dhkcode}
+(*args, **kwargs)
+\end{dhkcode}
+
+\zsh{__wrapped__} 참조도 설정되어 있지 않다.
+
+따라서 FastAPI는 원본 함수의 \zsh{item_id: int} 매개변수를 정상적으로 추적하지 못하고, wrapper의 \zsh{args}, \zsh{kwargs}를 요청 매개변수로 분석할 수 있다.
+
+이 예제에서는 필요한 쿼리 매개변수가 제공되지 않았다고 판단하여 422 응답이 발생한다.
+
+\zsh{@wraps(func)}를 사용하면 원본 함수의 시그니처를 추적할 수 있으므로 이런 문제를 방지하는 데 도움이 된다.
+
+하지만 한 가지 주의해야 한다.
+
+\zsh{@wraps}는 메타데이터를 설정하는 기능이지, wrapper의 실제 호출 동작을 원본 함수와 동일하게 만들어 주는 기능은 아니다.
+
+예를 들어 원본 함수의 시그니처를 노출하더라도 wrapper가 전달받은 인수를 올바르게 처리하지 않으면 실행 시 오류가 발생할 수 있다.
+
+따라서 FastAPI용 데코레이터는 메타데이터와 실제 인수 전달 규칙을 모두 고려해야 한다.
+
+\subsubsection{비동기 엔드포인트와 데코레이터}
+
+이제 FastAPI에서 특히 중요한 문제를 살펴보자.
+
+FastAPI는 다음 두 종류의 엔드포인트를 지원한다.
+
+\begin{dhkcode}
+def sync_endpoint():
+    ...
+
+async def async_endpoint():
+    ...
+\end{dhkcode}
+
+두 함수는 호출 결과와 실행 방식이 다르다.
+
+일반적인 \zsh{def} 함수는 호출하면 본문을 실행하고 반환값을 돌려준다.
+
+반면 \zsh{async def}로 정의한 코루틴 함수(Coroutine Function)를 호출하면 코루틴 객체가 반환된다.
+
+함수 본문의 실행을 진행하려면 해당 코루틴을 \zsh{await}하는 등의 과정이 필요하다.
+
+이 차이는 데코레이터에도 영향을 준다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+비동기 함수를 동기 wrapper로 감싸면?
+\end{dhksmry}
+\end{dhknote}
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from functools import wraps
+import inspect
+
+
+def trace(func):
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print("TRACE")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@trace
+async def calculate(x):
+    return x * 2
+
+
+print(inspect.iscoroutinefunction(calculate))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+왜 \zsh{False}일까?
+
+원본 \zsh{calculate}는 코루틴 함수다.
+
+하지만 데코레이션 이후 \zsh{calculate} 이름은 일반적인 \zsh{def wrapper} 함수 객체를 참조한다.
+
+\zsh{@wraps(func)}가 \zsh{__wrapped__}를 설정했다고 해서 wrapper 자체가 \zsh{async def} 함수로 변환되는 것은 아니다.
+
+이제 다음 표현식을 생각해 보자.
+
+\begin{dhkcode}
+result = calculate(10)
+\end{dhkcode}
+
+일반 wrapper가 실행되면서 원본 코루틴 함수를 호출한다.
+
+원본 함수 호출 결과는 코루틴 객체다.
+
+Wrapper는 그 코루틴 객체를 그대로 반환한다.
+
+따라서 \zsh{result}는 정수 20이 아니라 코루틴 객체다.
+
+이 코루틴을 실행하여 결과를 얻으려면 별도로 \zsh{await} 해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+FastAPI에서는 왜 문제가 될까?
+\end{dhksmry}
+\end{dhknote}
+
+FastAPI는 엔드포인트가 동기 함수인지 비동기 함수인지에 따라 실행 방식을 달리한다.
+
+일반적인 동기 엔드포인트는 스레드풀에서 실행하고, 비동기 엔드포인트는 비동기 실행 경로에서 \zsh{await}한다.
+
+그런데 코루틴 함수를 동기 wrapper로 감싸면 FastAPI가 최종 등록된 wrapper를 동기 함수로 판단할 수 있다.
+
+이 경우 wrapper 호출 결과로 코루틴 객체가 반환되지만, 그 객체가 정상적으로 \zsh{await} 되지 않은 채 응답 직렬화 단계에 전달되어 오류가 발생할 수 있다.
+
+따라서 \zsh{@wraps}만 사용했다고 해서 비동기 엔드포인트에 안전한 데코레이터가 되는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+동기·비동기 함수를 구별하는 데코레이터
+\end{dhksmry}
+\end{dhknote}
+
+다음처럼 두 종류의 wrapper를 구별할 수 있다.
+
+\begin{dhkcode}
+import inspect
+from functools import wraps
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+
+def trace(func):
+
+    if inspect.iscoroutinefunction(func):
+
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            print("TRACE async:", func.__name__)
+
+            result = await func(*args, **kwargs)
+
+            return result
+
+        return async_wrapper
+
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        print("TRACE sync:", func.__name__)
+
+        result = func(*args, **kwargs)
+
+        return result
+
+    return sync_wrapper
+
+
+app = FastAPI()
+
+
+@app.get("/sync")
+@trace
+def sync_endpoint():
+    return {"mode": "sync"}
+
+
+@app.get("/async")
+@trace
+async def async_endpoint():
+    return {"mode": "async"}
+
+
+client = TestClient(app)
+
+print(client.get("/sync").json())
+print(client.get("/async").json())
+\end{dhkcode}
+
+여기서 두 wrapper는 서로 다른 함수 객체다.
+
+동기 엔드포인트에 적용된 wrapper는 일반 함수 객체이고, 비도익 엔드포인트에 적용된 wrapper는 코루틴 함수 객체다.
+
+따라서 FastAPI는 각 엔드포인트의 실행 방식을 적절하게 구별할 수 있다.
+
+다만 이 구현은 직접 전달받은 일반적인 동기 함수와 코루틴 함수를 처리하는 예제다.
+
+이미 다른 데코레이터로 감싸진 함수, 비동기 제네레이터, 복잡한 호출 가능 객체까지 모두 처리하는 범용 구현은 아니다.
+
+여기서 핵심은 다음과 같다.
+
+\begin{dhksmry}[centered]
+함수 객체의 메타데이터, 실제 호출 결과, 
+
+동기·비동기 실행 방식은 각각 구별해서 분석해야 한다.
+\end{dhksmry}
+
+\subsubsection{\zsh{APIRouter} - 등록 정보를 모듈 단위로 분리하기}
+
+FastAPI 애플리케이션이 커지면 모든 엔드포인트를 하나의 파일에 정의하기 어려워진다.
+
+이때 \zsh{APIRouter}를 사용할 수 있다.
+
+\begin{dhkcode}
+from fastapi import FastAPI, APIRouter
+from fastapi.testclient import TestClient
+
+
+router = APIRouter(prefix="/v1")
+
+
+@router.get("/items/{item_id}")
+def get_item(item_id: int):
+    return {"item_id": item_id}
+
+
+app = FastAPI()
+
+app.include_router(router)
+
+
+client = TestClient(app)
+
+response = client.get("/v1/items/10")
+
+print(response.status_code)
+print(response.json())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+200
+{'item_id': 10}
+\end{dhkzsh}
+
+이 구조에서 다음 두 과정은 구별해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫째, @router.get(...)에 의한 등록
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+@router.get("/items/{item_id}")
+\end{dhkcode}
+
+이 데코레이터는 엔드포인트 함수를 \zsh{router}에 등록한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+둘째, app.include_router(router)에 의한 애플리케이션 구성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+app.include_router(router)
+\end{dhkcode}
+
+이 호출은 해당 라우터에 정의된 경로들을 FastAPI 애플리케이션에 포함시킨다.
+
+따라서 전체 경로는 다음과 같이 구성된다.
+
+\begin{dhksmry}[centered]
+APIRouter prefix "/v1"
++
+등록된 경로 "/items/{item_id}"
+\da
+"/v1/items/{item_id}"
+\end{dhksmry}
+
+이 구조를 객체 참조 관점에서 생각해 보자.
+
+\zsh{router}와 \zsh{app}은 서로 다른 객체다.
+
+\zsh{@router.get(...)}은 먼저 \zsh{router}에 경로 정보를 등록한다.
+
+그다음 \zsh{app.include_router(router)}가 라우터의 등록 정보를 애플리케이션에 반영한다.
+
+FastAPI의 일반적인 \zsh{include_router} 구현에서는 포함 시점에 라우터의 경로들을 애플리케이션 쪽 라우터에 등록하는 방식으로 처리한다.
+
+따라서 이미 \zsh{include_router}를 실행한 뒤 원래 \zsh{router}에 새로운 경로를 추가했다고 해서 그 경로가 기존 애플리케이션에 자동 반영된다고 가정하면 안 된다.
+
+이것이 모듈을 나누어 FastAPI 애플리케이션을 구성할 때 등록 시점을 고려해야 하는 이유다.
+
+\subsubsection{하나의 함수 객체를 여러 경로에 등록할 수 있을까?}
+
+가능하다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+
+
+app = FastAPI()
+
+
+@app.get("/first")
+@app.get("/second")
+def greet():
+    return {"message": "Hello"}
+
+
+routes = [
+    route
+    for route in app.routes
+    if isinstance(route, APIRoute)
+]
+
+for route in routes:
+    print(route.path, route.endpoint is greet)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+/second True
+/first True
+\end{dhkzsh}
+
+왜 \zsh{/second}가 먼저 등록될까?
+
+\zsh{A.10}에서 학습한 데코레이터 적용 순서 때문이다.
+
+데코레이ㅓㅌ 표현식은 위에서 아래로 평가되지만, 함수 객체에 대한 적용은 아래에서 위로 진행된다.
+
+따라서 개념적으로 다음과 같다.
+
+\begin{dhkcode}
+greet = app.get("/first")(
+    app.get("/second")(greet)
+)
+\end{dhkcode}
+
+먼저 \zsh{/second}가 등록되고, 그다음 \zsh{/first}가 등록된다.
+
+그리고 두 등록 데코레이터 모두 원본 함수 객체를 그대로 반환한다.
+
+따라서 두 라우트의 \zsh{endpoint}는 동일한 함수 객체를 참조한다.
+
+\begin{dhkdiagram}[in=6]
+node n1 (1,1) :: GET /first
+node n2 (3,1) :: GET /second
+node n3 (2,2) :: greet 함수 객체
+
+edge n1 -> n3 :: HV
+edge n2 -> n3 :: HV
+\end{dhkdiagram}
+
+이 구조는 하나의 함수를 여러 URL에 연결할 때 활용할 수 있다.
+
+다만 라우트 등록 순서는 실제 요청 매칭에도 영향을 줄 수 있다.
+
+예를 들어 고정 경로와 동적 경로가 서로 겹치는 경우에는 어떤 경로를 먼저 등록했는지 고려해야 한다.
+
+\subsubsection{등록 이후 함수 이름을 재바인딩하면 어떻게 될까?}
+
+등록형 데코레이터의 가장 중요한 특징 중 하나는 외부 레지스트리가 함수 객체에 대한 참조를 보유한다는 점이다.
+
+다음 코드를 보자.
+
+\begin{dhkcode}
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+
+
+app = FastAPI()
+
+
+@app.get("/hello")
+def greet():
+    return {"message": "Original"}
+
+
+route = next(
+    route
+    for route in app.routes
+    if isinstance(route, APIRoute)
+    and route.path == "/hello"
+)
+
+
+registered = route.endpoint
+
+
+def replacement():
+    return {"message": "Replacement"}
+
+
+greet = replacement
+
+
+print(route.endpoint is registered)
+print(route.endpoint is greet)
+
+print(route.endpoint())
+print(greet())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+False
+{'message': 'Original'}
+{'message': 'Replacement'}
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+처음 \zsh{@app.get("/hello")}가 적용될 때 FastAPI는 원본 \zsh{greet} 함수 객체를 등록한다.
+
+그 이후 다음 문장이 실행된다.
+
+\begin{dhkcode}
+greet = replacement
+\end{dhkcode}
+
+이 문장은 모듈 이름 \zsh{greet}을 다른 함수 객체에 재바인딩한다.
+
+하지만 이미 등록된 \zsh{route.endpoint}의 참조는 변경되지 않ㄴ흔다.
+
+따라서 \zsh{FastAPI}가 등록한 엔드포인트와 모듈 이름 \zsh{greet}이 서로 다른 객체를 참조하게 된다.
+
+이것은 \zsh{A.1}에서 학습한 이름 바인딩과 객체 동일성의 원리가 그대로 적용된 결과다.
+
+여기서 한 가지 예외적인 상황도 고려해야 한다.
+
+등록된 원본 함수의 본문에서 모듈 전역 이름을 다시 조회한다면, 그 전역 이름의 재바인딩이 함수 실행에 영향을 줄 수 있다.
+
+즉, 등록된 함수 객체의 동일성이 유지된다는 사실이 함수가 사용하는 모든 외부 상태까지 고정된다는 뜻은 아니다.
+
+\subsubsection{등록형 데코레이터의 경계 조건}
+
+등록형 데코레이터는 함수 정의 시점에 외부 상태를 변경하므로 몇 가지 경계 조건이 존재한다.
+
+\begin{dhktable}
+|상황|	발생할 수 있는 결과|	판단 기준|
+|:---|:---|:---|
+|엔드포인트가 정의된 모듈이 실행되지 않음|	등록 데코레이터도 실행되지 않음	|모듈 실행 여부|
+|같은 경로와 HTTP 메서드를 중복 등록|	중복 라우트가 생성될 수 있음|	경로 등록 상태와 매칭 순서|
+|등록 후 함수 이름 재바인딩|	등록된 엔드포인트 참조는 그대로 유지	|객체 동일성|
+|등록 전에 wrapper 적용	|wrapper가 엔드포인트로 등록됨	|데코레이터 적용 순서|
+|등록 후 wrapper 적용	|원본 함수가 등록될 수 있음|	데코레이터 적용 순서|
+|@wraps 없이 wrapper 등록|	시그니처 분석이 잘못될 수 있음|	__wrapped__와 실제 시그니처|
+|비동기 함수를 동기 wrapper로 감쌈	|코루틴 객체가 정상적으로 처리되지 않을 수 있음|	실제 wrapper의 실행 방식|
+\end{dhktable}
+
+특히 Python 모듈을 import하면 해당 모듈의 최상위 코드가 실행될 수 있다는 사실을 기억해야 한다.
+
+엔드포인트 정의문도 모듈 최상위 코드에 있다면 그 과정에서 실행된다.
+
+따라서 FastAPI의 경로 등록은 일반적인 Python 모듈 실행 및 함수 정의 규칙 위에서 이루어지는 작업이다.
+
+\subsubsection{지금까지의 Python 개념과 연결하기}
+
+이번 학습은 새로운 문법을 학습했다기보다 이미 학습한 객체 모델을 실제 프레임워크에 적용하였다.
+
+\begin{dhktable}
+|이전 개념|	FastAPI에서의 연결|
+|:---|:---|
+|함수 객체와 이름 바인딩 — A.1	|엔드포인트 함수 객체 생성과 최종 이름 바인딩|
+|렉시컬 스코프 — A.2~A.3	|등록 데코레이터가 경로 설정을 참조|
+|클로저 — A.4~A.5|	app.get(...)이 반환하는 데코레이터의 설정 유지|
+|데코레이터 변환식 — A.6	|func = decorator(func)|
+|Wrapper와 반환 — A.7	|HTTP 처리에 wrapper를 적용하는 경우|
+|functools.wraps — A.8|	엔드포인트 시그니처 추적|
+|데코레이터 팩토리 — A.9	|@app.get("/path")|
+|다중 데코레이터 순서 — A.10|	등록되는 함수 객체의 결정|
+|메서드 바인딩 — A.11	|app.get이 FastAPI 인스턴스에 바인딩된 메서드|
+|함수 호출과 인수 전달|	요청 데이터로부터 엔드포인트 호출 인수 구성|
+\end{dhktable}
+
+여기서 FastAPI가 Python의 기본 규칙에 추가한 기능도 구별해야 한다.
+
+Python 자체는 함수 객체를 생성하고 호출하는 기능을 제공한다.
+
+FastAPI는 그 함수 객체를 HTTP 경로에 등록하고, 요청을 분석하고, 의존성을 해결하고, 응답을 생성하는 기능을 제공한다.
+
+즉, FastAPI는 Python의 함수 객체 모델을 변경하는 것이 아니라, 그 모델을 이용하여 HTTP 요청 처리 시스템을 구성하는 프레임워크다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습의 전체 실행 구조를 정리해 보자.
+
+\begin{dhksmry}[centered]
+Python 모듈 실행
+\da
+FastAPI 인스턴스 생성
+\da   
+app.get("/path") 평가
+\da   
+등록 데코레이터 함수 객체 반환
+\da   
+엔드포인트 함수 객체 생성
+\da   
+데코레이터 적용
+\da   
+FastAPI 라우터에 함수 객체 등록
+\da   
+등록 데코레이터의 반환값을 이름에 바인딩
+\da
+이후 HTTP 요청 발생
+\da   
+요청 경로 및 HTTP 메서드 매칭
+\da   
+매개변수 검증·변환·의존성 해결
+\da   
+등록된 엔드포인트 함수 호출
+\da   
+반환값을 HTTP 응답으로 구성
+\end{dhksmry}
+
+이 구조를 분석할 때는 다음 다섯 가지를 확인하면 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫째, \zsh{@app.get(...)}은 언제 평가되는가? 
+\end{dhksmry}
+\end{dhknote}
+
+함수 정의문이 실행되는 과정에서 평가된다. 
+
+HTTP 요청이 들어올 때마다 평가되는 것이 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+둘째, 무엇이 FastAPI에 등록되는가?
+\end{dhksmry}
+\end{dhknote}
+데코레이터가 적용되는 시점에 전달받은 함수 객체가 등록된다. 
+
+다른 데코레이터의 적용 순서에 따라 원본 함수일 수도 있고 wrapper일 수도 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+셋째, 등록 이후 함수 이름과 엔드포인트 참조는 같은 객체인가?
+\end{dhksmry}
+\end{dhknote}
+
+기본적인 \zsh{@app.get}만 사용하면 동일하지만, 추가 데코레이터나 이름 재바인딩이 있으면 달라질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+넷째, HTTP 요청에서 누가 함수를 호출하는가? 
+\end{dhksmry}
+\end{dhknote}
+FastAPI의 요청 처리 계층이 매개변수를 준비하고 엔드포인트를 호출한다. 
+
+따라서 직접 함수 호출과 동작이 다를 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+다섯째, wrapper의 실제 시그니처와 실행 방식은 무엇인가?
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{@wraps}가 메타데이터를 제공하더라도 인수 전달과 동기·비동기 호출 방식까지 자동으로 보장하지는 않는다.
+
+이번 단원의 가장 중요한 결론은 다음과 같다.
+
+등록형 데코레이터는 함수 객체를 다른 객체로 변환하는 것보다, 함수 객체와 외부 실행 시스템 사이에 참조 관계를 형성하는 데 목적이 있다.
+
+FastAPI의 \zsh{@app.get(...)}은 이 원리를 HTTP 라우팅에 적용한 대표적인 사례다.
