@@ -3846,5 +3846,479 @@
   \dhkgraphrender%
 }
 
+% ================================================================
+% 11. dhkmatrix v1 -- list-based colored cells and matrix delimiters
+% Append AFTER Section 10 of mynotes.sty. Requires XeLaTeX.
+%
+% Syntax examples:
+%   \begin{dhkmatrix}[delim=none,style=cards,indices=on]
+%   title :: NumPy array -- positional indexing
+%   data :: [[12,1],[green:30,0],[8,blue:1]]
+%   explain :: data[1,0] selects 30
+%   caption :: Rows and columns use zero-based indices.
+%   \end{dhkmatrix}
+%
+% Or write data as a multiline list:
+%   data :: [
+%     [12,1],
+%     [green:30,0],
+%     [8,1]
+%   ]
+% Rows may also be written as standalone lines [12,1].
+% Optional: rows :: [0,1,2]; cols :: [0,1]
+% Options: delim=none|bar|square|round; style=cards|grid|plain;
+%          indices=on|off; in=number
+% Cell colors: green:, blue:, orange: (unprefixed cells are neutral).
+% ================================================================
+\RequirePackage{tikz}
+\RequirePackage{adjustbox}
+\RequirePackage{fancyvrb}
+\RequirePackage{tcolorbox}
+\usetikzlibrary{calc}
+\definecolor{dhkmatrixgreen}{RGB}{18,131,125}
+\definecolor{dhkmatrixblue}{RGB}{54,107,180}
+\definecolor{dhkmatrixorange}{RGB}{196,116,37}
+\tikzset{
+  dhkmatrix-card/.style={draw=black!14,fill=black!4,rounded corners=1.6mm,line width=.45pt},
+  dhkmatrix-grid/.style={draw=black!28,fill=white,rounded corners=0pt,line width=.45pt},
+  dhkmatrix-plain/.style={draw=none,fill=white,rounded corners=0pt},
+  dhkmatrix-green/.style={draw=dhkmatrixgreen,fill=dhkmatrixgreen!11,line width=.9pt},
+  dhkmatrix-blue/.style={draw=dhkmatrixblue,fill=dhkmatrixblue!11,line width=.9pt},
+  dhkmatrix-orange/.style={draw=dhkmatrixorange,fill=dhkmatrixorange!13,line width=.9pt}
+}
+\ExplSyntaxOn
+\ior_new:N \g_dhkmatrix_ior
+\tl_new:N \g_dhkmatrix_option_tl
+\tl_new:N \l_dhkmatrix_delim_tl
+\tl_new:N \l_dhkmatrix_style_tl
+\tl_new:N \l_dhkmatrix_title_tl
+\tl_new:N \l_dhkmatrix_explain_tl
+\tl_new:N \l_dhkmatrix_caption_tl
+\tl_new:N \l_dhkmatrix_line_tl
+\tl_new:N \l_dhkmatrix_cell_tl
+\tl_new:N \l_dhkmatrix_color_tl
+\tl_new:N \l_dhkmatrix_key_tl
+\tl_new:N \l_dhkmatrix_tikz_style_tl
+\tl_new:N \l_dhkmatrix_label_tl
+\tl_new:N \l_dhkmatrix_options_item_tl
+\tl_new:N \l_dhkmatrix_col_caption_tl
+\seq_new:N \l_dhkmatrix_options_seq
+\seq_new:N \l_dhkmatrix_matches_seq
+\seq_new:N \l_dhkmatrix_rowmatches_seq
+\seq_new:N \l_dhkmatrix_cells_seq
+\seq_new:N \l_dhkmatrix_labels_rows_seq
+\seq_new:N \l_dhkmatrix_labels_cols_seq
+\seq_new:N \l_dhkmatrix_explain_lines_seq
+\prop_new:N \l_dhkmatrix_values_prop
+\prop_new:N \l_dhkmatrix_colors_prop
+\int_new:N \l_dhkmatrix_rows_int
+\int_new:N \l_dhkmatrix_cols_int
+\int_new:N \l_dhkmatrix_curr_col_int
+\int_new:N \l_dhkmatrix_r_int
+\int_new:N \l_dhkmatrix_c_int
+\bool_new:N \l_dhkmatrix_indices_bool
+\dim_new:N \l_dhkmatrix_indent_dim
+\dim_new:N \l_dhkmatrix_cell_w_dim
+\dim_new:N \l_dhkmatrix_cell_h_dim
+\dim_new:N \l_dhkmatrix_xgap_dim
+\dim_new:N \l_dhkmatrix_ygap_dim
+\dim_new:N \l_dhkmatrix_x_dim
+\dim_new:N \l_dhkmatrix_y_dim
+\dim_new:N \l_dhkmatrix_start_dim
+\dim_new:N \l_dhkmatrix_bottom_dim
+\dim_new:N \l_dhkmatrix_right_dim
+\dim_new:N \l_dhkmatrix_label_w_dim
+\dim_new:N \l_dhkmatrix_candidate_dim
+\box_new:N \l_dhkmatrix_measure_box
+\cs_generate_variant:Nn \seq_set_split:Nnn {NnV}
+\cs_generate_variant:Nn \seq_put_right:Nn {NV}
+\cs_generate_variant:Nn \prop_put:Nnn {NVV,NVn,NnV}
+\cs_generate_variant:Nn \prop_get:NnNTF {NVNTF}
+\cs_generate_variant:Nn \regex_extract_once:nnNTF {nVNTF}
+\cs_generate_variant:Nn \regex_extract_all:nnN {nVN}
+\cs_generate_variant:Nn \tl_replace_all:Nnn {NVn}
+\cs_new_protected:Npn \dhkmatrix_set_option:n #1
+  {\tl_gset:Nn \g_dhkmatrix_option_tl {#1}}
+\cs_new_eq:NN \dhkmatrixsetoption \dhkmatrix_set_option:n
+
+\cs_new_protected:Npn \dhkmatrix_prepare:
+ {
+  \prop_clear:N \l_dhkmatrix_values_prop
+  \prop_clear:N \l_dhkmatrix_colors_prop
+  \seq_clear:N \l_dhkmatrix_labels_rows_seq
+  \seq_clear:N \l_dhkmatrix_labels_cols_seq
+  \int_zero:N \l_dhkmatrix_rows_int
+  \int_zero:N \l_dhkmatrix_cols_int
+  \bool_set_false:N \l_dhkmatrix_indices_bool
+  \tl_set:Nn \l_dhkmatrix_delim_tl {none}
+  \tl_set:Nn \l_dhkmatrix_style_tl {cards}
+  \tl_clear:N \l_dhkmatrix_title_tl
+  \tl_clear:N \l_dhkmatrix_explain_tl
+  \tl_clear:N \l_dhkmatrix_caption_tl
+  \dim_zero:N \l_dhkmatrix_indent_dim
+  \dim_set:Nn \l_dhkmatrix_cell_w_dim {19mm}
+  \dim_set:Nn \l_dhkmatrix_cell_h_dim {11mm}
+  \dim_set:Nn \l_dhkmatrix_xgap_dim {2mm}
+  \dim_set:Nn \l_dhkmatrix_ygap_dim {2mm}
+  \seq_set_split:NnV \l_dhkmatrix_options_seq {,} \g_dhkmatrix_option_tl
+  \seq_map_inline:Nn \l_dhkmatrix_options_seq
+   {
+    \tl_set:Nn \l_dhkmatrix_options_item_tl {##1}
+    \tl_trim_spaces:N \l_dhkmatrix_options_item_tl
+    \regex_extract_once:nVNTF
+     {\A delim \s*=\s* (none|bar|square|round) \Z}
+     \l_dhkmatrix_options_item_tl \l_dhkmatrix_matches_seq
+      {\tl_set:Nx \l_dhkmatrix_delim_tl {\seq_item:Nn \l_dhkmatrix_matches_seq {2}}}
+      {
+       \regex_extract_once:nVNTF
+        {\A style \s*=\s* (cards|grid|plain) \Z}
+        \l_dhkmatrix_options_item_tl \l_dhkmatrix_matches_seq
+        {\tl_set:Nx \l_dhkmatrix_style_tl {\seq_item:Nn \l_dhkmatrix_matches_seq {2}}}
+        {
+         \regex_extract_once:nVNTF
+          {\A indices \s*=\s* (on|off) \Z}
+          \l_dhkmatrix_options_item_tl \l_dhkmatrix_matches_seq
+          {\str_if_eq:eeTF {\seq_item:Nn \l_dhkmatrix_matches_seq {2}} {on}
+            {\bool_set_true:N \l_dhkmatrix_indices_bool}
+            {\bool_set_false:N \l_dhkmatrix_indices_bool}}
+          {
+           \regex_extract_once:nVNTF
+            {\A in \s*=\s* ([0-9]+(?:\.[0-9]+)?) \Z}
+            \l_dhkmatrix_options_item_tl \l_dhkmatrix_matches_seq
+            {\dim_set:Nn \l_dhkmatrix_indent_dim
+              {\seq_item:Nn \l_dhkmatrix_matches_seq {2} em}}
+            {\tl_if_blank:VF \l_dhkmatrix_options_item_tl
+              {\PackageWarning{mynotes}{Unknown~dhkmatrix~option}}}
+          }
+        }
+       }
+   }
+  \str_if_eq:VnT \l_dhkmatrix_style_tl {plain}
+    {\dim_set:Nn \l_dhkmatrix_xgap_dim {5mm}}
+  \str_if_eq:VnT \l_dhkmatrix_style_tl {grid}
+    {\dim_zero:N \l_dhkmatrix_xgap_dim
+     \dim_zero:N \l_dhkmatrix_ygap_dim}
+ }
+
+% Make an input cell, whose optional color prefix belongs to the DATA.
+\cs_new_protected:Npn \dhkmatrix_add_cell:n #1
+ {
+  \int_incr:N \l_dhkmatrix_curr_col_int
+  \tl_set:Nn \l_dhkmatrix_cell_tl {#1}
+  \tl_trim_spaces:N \l_dhkmatrix_cell_tl
+  \tl_clear:N \l_dhkmatrix_color_tl
+  \regex_extract_once:nVNTF
+    {\A (green|blue|orange) \s* : \s* (.*) \Z}
+    \l_dhkmatrix_cell_tl \l_dhkmatrix_matches_seq
+   {
+    \tl_set:Nx \l_dhkmatrix_color_tl
+      {\seq_item:Nn \l_dhkmatrix_matches_seq {2}}
+    \tl_set:Nx \l_dhkmatrix_cell_tl
+      {\seq_item:Nn \l_dhkmatrix_matches_seq {3}}
+   }{}
+  \tl_set:Nx \l_dhkmatrix_key_tl
+    {\int_use:N \l_dhkmatrix_rows_int / \int_use:N \l_dhkmatrix_curr_col_int}
+  \prop_put:NVV \l_dhkmatrix_values_prop \l_dhkmatrix_key_tl \l_dhkmatrix_cell_tl
+  \prop_put:NVV \l_dhkmatrix_colors_prop \l_dhkmatrix_key_tl \l_dhkmatrix_color_tl
+  \hbox_set:Nn \l_dhkmatrix_measure_box
+   {\ttfamily\small\tl_use:N \l_dhkmatrix_cell_tl}
+  \dim_set:Nn \l_dhkmatrix_candidate_dim
+   {\box_wd:N \l_dhkmatrix_measure_box + 10mm}
+  \dim_set:Nn \l_dhkmatrix_cell_w_dim
+   {\dim_max:nn {\l_dhkmatrix_cell_w_dim}{\l_dhkmatrix_candidate_dim}}
+ }
+
+% A row is a single [comma,separated,list] (not a node per cell).
+\cs_new_protected:Npn \dhkmatrix_add_row:n #1
+ {
+  \int_incr:N \l_dhkmatrix_rows_int
+  \int_zero:N \l_dhkmatrix_curr_col_int
+  \tl_set:Nn \l_dhkmatrix_line_tl {#1}
+  \regex_replace_once:nnN {\A\[} {} \l_dhkmatrix_line_tl
+  \regex_replace_once:nnN {\]\Z} {} \l_dhkmatrix_line_tl
+  \seq_set_split:NnV \l_dhkmatrix_cells_seq {,} \l_dhkmatrix_line_tl
+  \seq_map_inline:Nn \l_dhkmatrix_cells_seq {\dhkmatrix_add_cell:n {##1}}
+  \int_set:Nn \l_dhkmatrix_cols_int
+   {\int_max:nn {\l_dhkmatrix_cols_int}{\l_dhkmatrix_curr_col_int}}
+ }
+
+% Extract [a,b] tokens from entire data :: [[...],[...]] OR multiline rows.
+\cs_new_protected:Npn \dhkmatrix_extract_rows:n #1
+ {
+  \tl_set:Nn \l_dhkmatrix_line_tl {#1}
+  \regex_extract_all:nVN {\[ [^\[\]]* \]}
+     \l_dhkmatrix_line_tl \l_dhkmatrix_rowmatches_seq
+  \seq_map_inline:Nn \l_dhkmatrix_rowmatches_seq
+    {\dhkmatrix_add_row:n {##1}}
+ }
+
+\cs_new_protected:Npn \dhkmatrix_read_line:n #1
+ {
+  \tl_set:Nn \l_dhkmatrix_line_tl {#1}
+  \tl_trim_spaces:N \l_dhkmatrix_line_tl
+  \tl_if_blank:VF \l_dhkmatrix_line_tl
+   {
+    \regex_extract_once:nVNTF
+      {\A title \s* :: \s* (.*) \Z}
+      \l_dhkmatrix_line_tl \l_dhkmatrix_matches_seq
+      {\tl_set:Nx \l_dhkmatrix_title_tl {\seq_item:Nn \l_dhkmatrix_matches_seq {2}}}
+      {
+       \regex_extract_once:nVNTF
+        {\A (explain|description) \s* :: \s* (.*) \Z}
+        \l_dhkmatrix_line_tl \l_dhkmatrix_matches_seq
+        {\tl_set:Nx \l_dhkmatrix_explain_tl {\seq_item:Nn \l_dhkmatrix_matches_seq {3}}}
+        {
+         \regex_extract_once:nVNTF
+          {\A caption \s* :: \s* (.*) \Z}
+          \l_dhkmatrix_line_tl \l_dhkmatrix_matches_seq
+          {\tl_set:Nx \l_dhkmatrix_caption_tl {\seq_item:Nn \l_dhkmatrix_matches_seq {2}}}
+          {
+           \regex_extract_once:nVNTF
+            {\A (rows|cols|columns) \s* :: \s* \[? ([^\[\]]*) \]? \Z}
+            \l_dhkmatrix_line_tl \l_dhkmatrix_matches_seq
+            {
+             \tl_set:Nx \l_dhkmatrix_label_tl
+              {\seq_item:Nn \l_dhkmatrix_matches_seq {3}}
+             \str_if_eq:eeTF {\seq_item:Nn \l_dhkmatrix_matches_seq {2}} {rows}
+              {\seq_set_split:NnV \l_dhkmatrix_labels_rows_seq {,} \l_dhkmatrix_label_tl}
+              {\seq_set_split:NnV \l_dhkmatrix_labels_cols_seq {,} \l_dhkmatrix_label_tl}
+            }
+            {\dhkmatrix_extract_rows:n {#1}}
+          }
+        }
+      }
+    }
+ }
+
+\cs_new_protected:Npn \dhkmatrix_measure_labels:
+ {
+  \dim_set:Nn \l_dhkmatrix_label_w_dim {10mm}
+  \seq_map_inline:Nn \l_dhkmatrix_labels_rows_seq
+   {
+     \hbox_set:Nn \l_dhkmatrix_measure_box
+      {\sffamily\small ##1}
+     \dim_set:Nn \l_dhkmatrix_label_w_dim
+      {\dim_max:nn {\l_dhkmatrix_label_w_dim}
+       {\box_wd:N \l_dhkmatrix_measure_box + 3mm}}
+   }
+  \seq_map_inline:Nn \l_dhkmatrix_labels_cols_seq
+   {
+    \hbox_set:Nn \l_dhkmatrix_measure_box {\sffamily\small ##1}
+    \dim_set:Nn \l_dhkmatrix_cell_w_dim
+       {\dim_max:nn {\l_dhkmatrix_cell_w_dim}{\box_wd:N\l_dhkmatrix_measure_box + 10mm}}
+   }
+  \bool_if:NT \l_dhkmatrix_indices_bool
+    {\dim_set:Nn \l_dhkmatrix_label_w_dim
+      {\dim_max:nn {\l_dhkmatrix_label_w_dim}{10mm}}}
+  \bool_if:nTF
+   {\l_dhkmatrix_indices_bool ||
+    !\seq_if_empty_p:N \l_dhkmatrix_labels_rows_seq}
+   {\dim_set:Nn \l_dhkmatrix_start_dim {\l_dhkmatrix_label_w_dim + 5mm}}
+   {\dim_zero:N \l_dhkmatrix_start_dim}
+ }
+
+\cs_new_protected:Npn \dhkmatrix_draw_cell:nn #1#2
+ {
+  \tl_set:Nx \l_dhkmatrix_key_tl {#1/#2}
+  \prop_get:NVNTF \l_dhkmatrix_values_prop \l_dhkmatrix_key_tl \l_dhkmatrix_cell_tl
+   {}{\tl_clear:N \l_dhkmatrix_cell_tl}
+  \prop_get:NVNTF \l_dhkmatrix_colors_prop \l_dhkmatrix_key_tl \l_dhkmatrix_color_tl
+   {}{\tl_clear:N \l_dhkmatrix_color_tl}
+  \str_case:VnF \l_dhkmatrix_style_tl
+   {
+    {cards}{\tikzset{dhkmatrix-current/.style={dhkmatrix-card}}}
+    {grid}{\tikzset{dhkmatrix-current/.style={dhkmatrix-grid}}}
+    {plain}{\tikzset{dhkmatrix-current/.style={dhkmatrix-plain}}}
+   }
+   {\tikzset{dhkmatrix-current/.style={dhkmatrix-card}}}
+  \str_case:Vn \l_dhkmatrix_color_tl
+   {
+    {green}{\tikzset{dhkmatrix-current/.append~style={dhkmatrix-green}}}
+    {blue}{\tikzset{dhkmatrix-current/.append~style={dhkmatrix-blue}}}
+    {orange}{\tikzset{dhkmatrix-current/.append~style={dhkmatrix-orange}}}
+   }
+  \dim_set:Nn \l_dhkmatrix_x_dim
+    {\l_dhkmatrix_start_dim +
+      \l_dhkmatrix_cell_w_dim * \int_eval:n{#2-1} + \l_dhkmatrix_xgap_dim * \int_eval:n{#2-1}}
+  \dim_set:Nn \l_dhkmatrix_y_dim
+    {-\l_dhkmatrix_cell_h_dim * \int_eval:n{#1-1} - \l_dhkmatrix_ygap_dim * \int_eval:n{#1-1}}
+  \node[anchor=north~west,outer~sep=0pt,
+        minimum~width=\l_dhkmatrix_cell_w_dim,
+        minimum~height=\l_dhkmatrix_cell_h_dim,
+        inner~xsep=2mm,inner~ysep=1mm,
+        font=\ttfamily\small,align=center,
+        dhkmatrix-current]
+    at (\dim_use:N \l_dhkmatrix_x_dim,\dim_use:N\l_dhkmatrix_y_dim)
+    {\tl_use:N \l_dhkmatrix_cell_tl};
+ }
+
+\cs_new_protected:Npn \dhkmatrix_draw_row_label:n #1
+ {
+  \tl_set:Nn \l_dhkmatrix_label_tl {}
+  \int_compare:nNnTF {\seq_count:N \l_dhkmatrix_labels_rows_seq} > {\int_eval:n{#1-1}}
+    {\tl_set:Nx \l_dhkmatrix_label_tl
+      {\seq_item:Nn \l_dhkmatrix_labels_rows_seq {#1}}}
+    {\bool_if:NT \l_dhkmatrix_indices_bool
+       {\tl_set:Nx \l_dhkmatrix_label_tl {\int_eval:n {#1-1}}}}
+  \tl_trim_spaces:N \l_dhkmatrix_label_tl
+  \tl_if_blank:VF \l_dhkmatrix_label_tl
+   {
+    \dim_set:Nn \l_dhkmatrix_y_dim
+      {-\l_dhkmatrix_cell_h_dim * \int_eval:n{#1-1} - \l_dhkmatrix_ygap_dim * \int_eval:n{#1-1}
+         - .5\l_dhkmatrix_cell_h_dim}
+    \node[font=\sffamily\small,text=black!55,anchor=east,inner~sep=0pt]
+      at (\dim_eval:n{\l_dhkmatrix_start_dim-5mm},\dim_use:N\l_dhkmatrix_y_dim)
+      {\tl_use:N \l_dhkmatrix_label_tl};
+   }
+ }
+\cs_new_protected:Npn \dhkmatrix_draw_col_label:n #1
+ {
+  \tl_clear:N \l_dhkmatrix_label_tl
+  \int_compare:nNnTF {\seq_count:N \l_dhkmatrix_labels_cols_seq} > {\int_eval:n{#1-1}}
+    {\tl_set:Nx \l_dhkmatrix_label_tl
+      {\seq_item:Nn \l_dhkmatrix_labels_cols_seq {#1}}}
+    {\bool_if:NT \l_dhkmatrix_indices_bool
+       {\tl_set:Nx \l_dhkmatrix_label_tl {\int_eval:n {#1-1}}}}
+  \tl_trim_spaces:N \l_dhkmatrix_label_tl
+  \tl_if_blank:VF \l_dhkmatrix_label_tl
+   {
+    \dim_set:Nn \l_dhkmatrix_x_dim
+      {\l_dhkmatrix_start_dim +
+       \l_dhkmatrix_cell_w_dim * \int_eval:n{#1-1} + \l_dhkmatrix_xgap_dim * \int_eval:n{#1-1}
+        + .5\l_dhkmatrix_cell_w_dim}
+    \node[font=\sffamily\small,text=black!55,anchor=south,inner~sep=0pt]
+      at (\dim_use:N\l_dhkmatrix_x_dim,4mm)
+      {\tl_use:N\l_dhkmatrix_label_tl};
+   }
+ }
+
+\cs_new_protected:Npn \dhkmatrix_draw_delimiter:
+ {
+  \dim_set:Nn \l_dhkmatrix_bottom_dim
+    {-\l_dhkmatrix_cell_h_dim * \int_eval:n{\l_dhkmatrix_rows_int-1}
+      -\l_dhkmatrix_ygap_dim * \int_eval:n{\l_dhkmatrix_rows_int-1}-\l_dhkmatrix_cell_h_dim}
+  \dim_set:Nn \l_dhkmatrix_right_dim
+    {\l_dhkmatrix_start_dim +
+      \l_dhkmatrix_cell_w_dim * \int_eval:n{\l_dhkmatrix_cols_int-1}
+      +\l_dhkmatrix_xgap_dim * \int_eval:n{\l_dhkmatrix_cols_int-1}+\l_dhkmatrix_cell_w_dim}
+  \str_if_eq:VnF \l_dhkmatrix_delim_tl {none}
+   {
+    \str_case:VnF \l_dhkmatrix_delim_tl
+     {
+      {bar}
+       {
+        \draw[black!65,line~width=.7pt]
+          (\dim_eval:n{\l_dhkmatrix_start_dim-3mm},0)
+           -- (\dim_eval:n{\l_dhkmatrix_start_dim-3mm},\dim_use:N\l_dhkmatrix_bottom_dim);
+        \draw[black!65,line~width=.7pt]
+          (\dim_eval:n{\l_dhkmatrix_right_dim+3mm},0)
+           -- (\dim_eval:n{\l_dhkmatrix_right_dim+3mm},\dim_use:N\l_dhkmatrix_bottom_dim);
+       }
+      {square}
+       {
+        \draw[black!65,line~width=.7pt]
+          (\dim_eval:n{\l_dhkmatrix_start_dim-1mm},1mm)
+          -- (\dim_eval:n{\l_dhkmatrix_start_dim-4mm},1mm)
+          -- (\dim_eval:n{\l_dhkmatrix_start_dim-4mm},\dim_eval:n{\l_dhkmatrix_bottom_dim-1mm})
+          -- (\dim_eval:n{\l_dhkmatrix_start_dim-1mm},\dim_eval:n{\l_dhkmatrix_bottom_dim-1mm});
+        \draw[black!65,line~width=.7pt]
+          (\dim_eval:n{\l_dhkmatrix_right_dim+1mm},1mm)
+          -- (\dim_eval:n{\l_dhkmatrix_right_dim+4mm},1mm)
+          -- (\dim_eval:n{\l_dhkmatrix_right_dim+4mm},\dim_eval:n{\l_dhkmatrix_bottom_dim-1mm})
+          -- (\dim_eval:n{\l_dhkmatrix_right_dim+1mm},\dim_eval:n{\l_dhkmatrix_bottom_dim-1mm});
+       }
+      {round}
+       {
+        \draw[black!65,line~width=.8pt]
+         (\dim_eval:n{\l_dhkmatrix_start_dim-1mm},1mm)
+         .. controls (\dim_eval:n{\l_dhkmatrix_start_dim-7mm},\dim_eval:n{\l_dhkmatrix_bottom_dim/3})
+                  and (\dim_eval:n{\l_dhkmatrix_start_dim-7mm},\dim_eval:n{\l_dhkmatrix_bottom_dim*2/3})
+         .. (\dim_eval:n{\l_dhkmatrix_start_dim-1mm},\dim_eval:n{\l_dhkmatrix_bottom_dim-1mm});
+        \draw[black!65,line~width=.8pt]
+         (\dim_eval:n{\l_dhkmatrix_right_dim+1mm},1mm)
+         .. controls (\dim_eval:n{\l_dhkmatrix_right_dim+7mm},\dim_eval:n{\l_dhkmatrix_bottom_dim/3})
+                  and (\dim_eval:n{\l_dhkmatrix_right_dim+7mm},\dim_eval:n{\l_dhkmatrix_bottom_dim*2/3})
+         .. (\dim_eval:n{\l_dhkmatrix_right_dim+1mm},\dim_eval:n{\l_dhkmatrix_bottom_dim-1mm});
+       }
+     }{}
+   }
+ }
+
+\cs_new_protected:Npn \dhkmatrix_picture:
+ {
+  \begin{tikzpicture}[baseline=(current~bounding~box.north)]
+   \int_step_inline:nn {\l_dhkmatrix_rows_int}
+    {
+      \int_set:Nn \l_dhkmatrix_r_int {##1}
+      \int_step_inline:nn {\l_dhkmatrix_cols_int}
+       {\dhkmatrix_draw_cell:nn {\int_use:N\l_dhkmatrix_r_int} {####1}}
+      \dhkmatrix_draw_row_label:n {##1}
+    }
+   \int_step_inline:nn {\l_dhkmatrix_cols_int}
+     {\dhkmatrix_draw_col_label:n {##1}}
+   \dhkmatrix_draw_delimiter:
+  \end{tikzpicture}
+ }
+
+\cs_new_protected:Npn \dhkmatrix_print_prose:n #1
+ {
+  \seq_set_split:Nnn \l_dhkmatrix_explain_lines_seq {//} {#1}
+  \seq_map_indexed_inline:Nn \l_dhkmatrix_explain_lines_seq
+   {\int_compare:nNnT {##1} > {1} {\par\smallskip}
+     \tl_trim_spaces:n {##2}}
+ }
+
+\cs_new_protected:Npn \dhkmatrix_render:
+ {
+  \group_begin:
+  \dhkmatrix_prepare:
+  \ior_open:Nn \g_dhkmatrix_ior {\jobname-dhkmatrix.tmp}
+  \ior_str_map_inline:Nn \g_dhkmatrix_ior
+    {\dhkmatrix_read_line:n {##1}}
+  \ior_close:N \g_dhkmatrix_ior
+  \int_compare:nNnTF {\l_dhkmatrix_rows_int} > {0}
+   {
+    \dhkmatrix_measure_labels:
+    \par\smallskip\noindent
+    \hspace*{\l_dhkmatrix_indent_dim}%
+    \begin{minipage}{\dim_eval:n{\linewidth-\l_dhkmatrix_indent_dim}}
+      \parskip=0pt\parindent=0pt
+      \begin{tcolorbox}[
+        colback=white,colframe=black!19,boxrule=.5pt,
+        arc=2.1mm,boxsep=1mm,left=3mm,right=3mm,top=3mm,bottom=3mm,
+        before~skip=0pt,after~skip=0pt]
+       \tl_if_blank:VF \l_dhkmatrix_title_tl
+        {{\normalfont\sffamily\bfseries\large
+          \tl_use:N\l_dhkmatrix_title_tl\par}\smallskip}
+       \begin{center}
+        \begin{adjustbox}{max~width=\linewidth}
+         \dhkmatrix_picture:
+        \end{adjustbox}
+       \end{center}
+       \tl_if_blank:VF \l_dhkmatrix_explain_tl
+        {\par\smallskip\normalfont\small
+          \exp_args:NV \dhkmatrix_print_prose:n \l_dhkmatrix_explain_tl\par}
+       \tl_if_blank:VF \l_dhkmatrix_caption_tl
+        {\par\smallskip {\normalfont\footnotesize\color{black!55}
+           \exp_args:NV \dhkmatrix_print_prose:n \l_dhkmatrix_caption_tl\par}}
+      \end{tcolorbox}
+    \end{minipage}
+    \par\smallskip
+   }
+   {\PackageWarning{mynotes}{Empty~dhkmatrix~(no~[row]~lists)}}
+  \group_end:
+ }
+\cs_new_eq:NN \dhkmatrixrender \dhkmatrix_render:
+\ExplSyntaxOff
+\newenvironment{dhkmatrix}[1][]{%
+  \VerbatimEnvironment
+  \dhkmatrixsetoption{#1}%
+  \dhkvisualverbatimstart%
+  \begin{VerbatimOut}{\jobname-dhkmatrix.tmp}%
+}{%
+  \end{VerbatimOut}%
+  \dhkmatrixrender%
+}
+
 
 % END OF mynotes.sty
