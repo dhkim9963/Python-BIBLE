@@ -1,0 +1,259 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% D.4. 레이블과 위치 기반 선택
+% ==================================================
+
+\subsection{레이블과 위치 기반 선택}
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{D.2}에서는 Series, DataFrame, Index가 각각 독립적인 Python 객체이며, Index가 데이터의 레이블을 관리한다는 사실을 배웠다.
+
+\zsh{D.3}에서는 열을 선택하거나 원소를 조회했을 때 반환되는 값의 \zsh{dtype}과 결측 표현을 분석했다.
+
+이번에는 이 두 개념을 연결할 것이다.
+
+다음 Series를 생각해 보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series(
+    [10, 20, 30],
+    index=[2, 0, 1],
+)
+\end{dhkcode}
+
+여기서 \zsh{s[0]}은 무엇을 반환할까?
+
+\begin{dhksmry}
+    - 첫 번째 위치에 저장된 10일까?
+
+    - 레이블 0에 대응하는 20일까?
+\end{dhksmry}
+
+정답은 20이다.
+
+\begin{dhkcode}
+print(s[0])
+print(s.loc[0])
+print(s.iloc[0])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+20
+20
+10
+\end{dhkzsh}
+
+이 차이가 이번 학습의 출발점이다.
+
+Pandas에서 데이터를 선택하는 방법은 단순히 문법의 차이가 아니다.
+
+어떤 기준으로 데이터를 식별하고, 어떤 객체를 반환하며, 그 과정에서 레이블을 어떻게 해석하는가의 차이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 \zsh{D.4}에서는 다음 문제를 순서대로 해결할 것이다.
+
+\begin{dhksmry}
+1. 레이블(label)과 위치(position)는 정확히 무엇이 다른가?
+
+2. [], .loc, .iloc, .at, .iat은 각각 어떤 객체와 연산을 사용하는가?
+
+3. 하나의 행·열·원소를 선택할 때 반환 타입은 어떻게 결정되는가?
+
+4. 슬라이싱에서 종료 경계가 포함되는 경우와 제외되는 경우는 왜 다른가?
+
+5. 중복 레이블과 불리언 마스크는 선택 결과에 어떤 영향을 주는가?
+
+6. 선택과 할당은 원본 객체의 상태를 어떻게 변화시키는가?
+\end{dhksmry}
+
+특히 \zsh{D.4}는 단순한 API 암기가 아니라, Python의 \zsh{__getitem__}, 속성 탐색, 이름 바인딩, 객체 동일성, 슬라이스 객체를 Pandas에 연결하는 학습이다.
+
+\subsubsection{레이블과 위치는 서로 다른 좌표계다}
+
+먼저 앞으로 사용할 공통 에제를 정의한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 1 - 두 좌표계의 구성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "text": ["alpha", "beta", "gamma"],
+        "label": [1, 0, 1],
+        "token_length": [5, 3, 7],
+    },
+    index=pd.Index(
+        [2, 0, 1],
+        name="doc_id",
+    ),
+)
+
+print(df)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+         text  label  token_length
+doc_id
+2       alpha      1             5
+0        beta      0             3
+1       gamma      1             7
+\end{dhkzsh}
+
+이 DataFrame은 다음 두 체계로 행을 식별할 수 있다.
+
+\begin{dhkmatrix}[delim=none,style=cards]
+title:: 하나의 DataFrame, 서로 다른 행 식별 기준
+cols::위치, Index 레이블, text, label
+data::[[0,2,alpha,1],[1,0,beta,0],[2,1,gamma,1]]
+caption::위치는 현재 배열의 순서이고, Index 레이블은 각 행에 부여된 식별값이다.
+\end{dhkmatrix}
+
+첫 번째 행은 위치가 0이지만 레이블은 2다.
+
+두 번째 행은 위치가 1이지만 레이블은 0이다.
+
+따라서 다음 두 표현식은 서로 다른 행을 선택한다.
+
+\begin{dhkcode}
+print(df.loc[0, "text"])
+print(df.iloc[0, 0])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+beta
+alpha
+\end{dhkzsh}
+
+\zsh{df.loc[0, "text"]}는 레이블 0인 행과 레이블 \zsh{"text"}인 열의 교차점을 선택한다.
+
+반면 \zsh{df.iloc[0, 0]}은 첫 번째 행과 첫 번째 열의 교차점을 선택한다.
+
+여기서 중요한 점은 레이블이 정수라는 사실이 그 레이블을 위치로 만들어 주지는 않는다는 것이다.
+
+이 구분은 데이터가 정렬되거나 필터링된 이후 더욱 중요해진다.
+
+행의 위치는 달라질 수 있지만 Index 레이블은 별도의 변경이나 재설정이 없는 한 그대로 유지되기 때문이다.
+
+\subsubsection{\zsh{[]}는 Series와 DataFrame에서 같은 의미일까?}
+
+Python에서 다음 문법은 구독 연산(subscription)이다.
+
+\begin{dhkcode}
+obj[key]
+\end{dhkcode}
+
+객체 타입에 정의된 \zsh{__getitem__()} 메커니즘을 통해 처리된다.
+
+Pandas의 \zsh{Series}와 \zsh{DataFrame}도 이 문법을 사용하지만, 두 객체가 키를 해석하는 방식은 같지 않다.
+
+\zsh{D.4.3}의 \zsh{df}를 그대로 사용해 보자.
+
+\begin{dhkcode}
+s = df["label"]
+
+print(type(s).__name__)
+print(s.tolist())
+
+print(type(df[["label"]]).__name__)
+print(df[["label"]].shape)
+
+print(df[:2].index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Series
+[1, 0, 1]
+DataFrame
+(3, 1)
+[2, 0]
+\end{dhkzsh}
+
+다음 표에서 차이를 확인할 수 있다.
+
+\begin{dhktable}
+|표현식|	선택 기준|	반환 타입|
+|:---|:---|:---|
+|s[0]|	Series의 정수 레이블 0|	스칼라|
+|df["label"]|	DataFrame의 열 레이블|	일반적으로 Series|
+|df[["label"]]|	열 레이블 목록|	DataFrame|
+|df[:2]|	처음 두 행의 위치 범위|	DataFrame|
+\end{dhktable}
+
+특히 \zsh{df[:2]}가 행을 선택한다는 점에 주목해야 한다.
+
+\begin{dhkcode}
+df["label"]
+df[:2]
+\end{dhkcode}
+
+두 표현식 모두 \zsh{df[...]} 문법을 사용하지만, 전달된 키의 종류에 따라 선택 대상이 달라지는 것이다.
+
+이것은 \zsh{__getitem__()}이 키의 타입과 형태를 해석해 서로 다른 동작을 수행하기 때문이다.
+
+따라서 DataFrame의 \zsh{[]}를 단순히 열 선택 연산이라고 정의하면 불완전하다.
+
+일반적인 문자열 키는 열 선택에 사용되지만, 슬라이스는 행 선택에 사용될 수 있다.
+
+실전에서는 이 차이로 인한 혼동을 줄이기 위해 행을 선택할 때 \zsh{.loc} 또는 \zsh{.iloc}을 명시하는 편이 좋다.
+
+\subsubsection{\zsh{.loc}과 \zsh{iloc}은 메서드가 아니라 인덱서 객체다}
+
+이번 학습에서 Python 객체 모델과 가장 직접적으로 연결되는 부분이다.
+
+우리는 다음과 같은 문법을 사용한다.
+
+\begin{dhkcode}
+df.loc[0, "text"]
+df.iloc[0, 0]
+\end{dhkcode}
+
+그런데 \zsh{.loc}과 \zsh{.iloc}은 일반적인 메서드가 아니다.
+
+\begin{dhkcode}
+print(type(df.loc).__name__)
+print(type(df.iloc).__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+_LocIndexer
+_iLocIndexer
+\end{dhkzsh}
+
+\zsh{df.loc}은 DataFrame에 연결된 레이블 기반 인덱서(indexer) 객체를 제공하고,
+
+\zsh{df.iloc}은 위치 기반 인덱서 객체를 제공한다.
+
+실행 흐름을 단순화하면 다음과 같다.
+
+\begin{dhkgraph}[uniform]
+node n1 (2,1) :: DataFrame 객체 df
+node n2 (1,2) [accent] :: df.loc//레이블 인덱서
+node n3 (1,3) [accent]:: [0, "text"]//"beta"
+node n4 (3,2) :: df.iloc//위치 인덱서
+node n5 (3,3) :: [0, 0]//"alpha"
+
+split n1 -> n2, n4
+edge n2->n3
+edge n4->n5
+caption::속성 탐색으로 인덱서 객체를 얻고, 그 객체에 구독 연산을 적용하는 흐름이다.
+\end{dhkgraph}
