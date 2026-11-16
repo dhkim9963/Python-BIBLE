@@ -6,4 +6,1000 @@
 
 \subsection{Series·DataFrame·Index의 객체 모델}
 
-\zsh{D.1}에서는 NumPy의 \zsh{ndarray}가 차원과 
+\subsubsection{이전 학습과의 연결 및 핵심 질문}
+
+\zsh{D.1}에서는 NumPy의 \zsh{ndarray}가 차원과 위치를 중심으로 데이터를 관리하고, Pandas의 \zsh{Series}와 \zsh{DataFrame}은 레이블을 포함한 데이터 구조를 제공한다는 차이를 배웠다.
+
+이번에는 그 차이가 실제 Python 객체 모델에서 어떻게 구현되는지 살펴볼 것이다.
+
+다음 코드를 생각해 보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame({
+    "name": ["Kim", "Lee"],
+    "score": [90, 85],
+})
+
+s = df["score"]
+\end{dhkcode}
+
+우리가 이미 알고 있는 Python 객체 모델에 따르면, \zsh{df}는 DataFrame 인스턴스를 참조하는 이름이고 \zsh{df['score']}는 \zsh{__getitem__()}에 의한 연산이다.
+
+그런데 여기서 몇 가지 질문이 발생한다.
+
+\begin{dhksmry}
+1. DataFrame은 내부적으로 Series 객체들을 저장하고 있는 것인가?
+
+2. df.index와 df.columns는 단순한 리스트일까, 별도의 객체일까?
+
+3. df['score']로 반환된 Series는 원본 데이터와 어떤 관게를 가질까?
+
+4. shape, ndim, dtype, dtypes는 어디에 저장되고 어떻게 조회될까?
+
+5. DataFrame의 속성에 접근하는 것과 열을 선택하는 것은 동일한 연산인가?
+\end{dhksmry}
+
+이번 \zsh{D.2}의 목표는 Pandas 객체의 논리적 구조와 Python 객체로서의 실제 동작을 구분하는 것이다.
+
+\subsubsection{Pandas의 세 가지 핵심 객체}
+
+Pandas에서 이번 학습의 중심이 되는 클래스는 \zsh{Series}, \zsh{DataFrame}, \zsh{Index}다.
+
+\begin{dhktable}
+|클래스|객체의 역할|차원|
+|:---|:---|:---|
+|pd.Series|값과 행 레이블을 관리하는 1차원 데이터 구조|1|
+|pd.DataFrame|행·열 레이블과 열별 dtype을 관리하는 2차원 데이터 구조|2|
+|pd.Index|축에 대응하는 레이블의 순서와 조회·정렬 동작을 관리하는 객체|일반적으로 1차원|
+\end{dhktable}
+
+여기서 \zsh{Index}는 다른 두 객체와 역할이 조금 다르다.
+
+Series와 DataFrame은 실제 관측값을 다루는 데이터 컨테이너다.
+
+반면 Index는 어떤 값이 어느 축의 레이블에 대응하는지 관리하는 구조다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 1 - 클래스와 인스턴스
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+idx = pd.Index(["doc-A", "doc-B"])
+
+s = pd.Series(
+    [90, 85],
+    index=idx,
+    name="score",
+)
+
+df = pd.DataFrame({
+    "score": s,
+})
+
+print(type(pd.Series))
+print(type(s).__name__)
+print(type(df).__name__)
+print(type(idx).__name__)
+
+print(isinstance(s, pd.Series))
+print(isinstance(df, pd.DataFrame))
+print(isinstance(idx, pd.Index))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'type'>
+Series
+DataFrame
+Index
+True
+True
+True
+\end{dhkzsh}
+
+\zsh{pd.Series}는 클래스 객체다.
+
+\zsh{pd.Series(...)}는 클래스 객체를 호출하여 Series 인스턴스를 생성하는 표현식이다.
+
+동일하게 \zsh{pd.DataFrame(...)}과 \zsh{pd.Index(...)}도 각각 해당 클래스의 인스턴스를 생성한다.
+
+이 구조는 \zsh{class}, \zsh{type}, 인스턴스 생성 및 이름 바인딩 원칙과 동일하다.
+
+하지만 중요한 차이가 있다.
+
+Pandas가 제공하는 데이터 처리 규칙은 이 객체들의 메서드와 연산 프로토콜에 의해 결정된다는 점이다.
+
+\subsubsection{Series의 객체 구조 - 값, Index, dtype, name}
+
+Series는 1차원 데이터 구조지만 단순한 값의 나열만 관리하는 것은 아니다.
+
+논리적으로 다음 네 요소를 구분할 수 있다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,3) [accent] :: Series 인스턴스 // s
+node n2 (2,1) :: Values // 90, 85
+node n3 (2,2) :: Index // doc-A, doc-B
+node n4 (2,4) :: dtype // int 64
+node n5 (2,5) :: name // score
+
+split n1 -> n2,n3,n4,n5
+
+explain :: 하나의 Series 객체가 제공하는 논리적 구성 // 실제 메모리 레이아웃과 동일한 그림은 아님
+\end{dhkgraph}
+
+이 그림에서 \zsh{Values}, \zsh{Index}, \zsh{dtype}, \zsh{name}을 모두 같은 종류의 독립적인 저장 객체라고 생각하면 안 된다.
+
+값의 저장 표현은 NumPy 배열 또는 Pandas ExtensionArray 등일 수 있고, \zsh{dtype}은 그 값들의 자료형을 기술하는 객체다.
+
+\zsh{name}은 Series에 부여한 이름으로, 데이터 값과는 별개다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 2 - 속성과 객체 동일성
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+idx = pd.Index(["doc-A", "doc-B"])
+
+s = pd.Series(
+    [90, 85],
+    index=idx,
+    name="score",
+    dtype="int64",
+)
+
+print(s.shape)
+print(s.ndim)
+print(s.size)
+print(s.dtype)
+print(s.name)
+
+print(s.index.tolist())
+print(s.index is idx)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+(2,)
+1
+2
+int64
+score
+['doc-A', 'doc-B']
+True
+\end{dhkzsh}
+
+마지막마 \zsh{True}는 이 예제에서 생성자에게 전달한 \zsh{idx} 객체가 Series의 Index로 재사용되었음을 나타낸다.
+
+그러나 이것을 ㅁ도느 생성 경로에서 Pandas가 반드시 동일한 Index 객체를 재사용한다는 일반 규칙으로 확대하면 안 된다.
+
+생성자 옵션과 데이터 변환에 따라 다른 Index 객체가 만들어질 수도 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+shape와 size의 차이
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{shape}은 튜플이고, \zsh{size}는 원소 개수를 나타내는 정수다.
+
+\begin{dhkcode}
+print(type(s.shape))
+print(type(s.size))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'tuple'>
+<class 'int'>
+\end{dhkzsh}
+
+따라서 \zsh{shape}은 배열의 구조를, \zsh{size}는 원소의 수를 나타내는 서로 다른 개념이다.
+
+또한 \zsh{s.dtype}은 Series의 값에 대한 \zsh{dtype}을 반환한다.
+
+\zsh{s.index.dtype}은 Index 레이블의 dtype이므로 서로 같을 필요가 없다.
+
+\subsubsection{DataFrame의 객체 구조 - 두 개의 축과 열별 dtype}
+
+Series가 하나의 Index를 갖는다면, DataFrame은 두 개의 축을 가진다.
+
+\begin{dhksmry}
+    - index : 행 축의 레이블
+
+    - columns : 열 축의 레이블
+\end{dhksmry}
+
+그리고 DataFrame은 각 열마다 서로 다른 dtype을 가질 수 있다.
+
+다음 예제를 살펴보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "text": ["hello", "world"],
+        "label": [1, 0],
+        "score": [0.9, 0.7],
+    },
+    index=["doc-A", "doc-B"],
+).astype({
+    "text": "object",
+    "label": "int64",
+    "score": "float64",
+})
+
+print(df)
+print(df.shape)
+print(df.ndim)
+print(df.dtypes)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+        text  label  score
+doc-A  hello      1    0.9
+doc-B  world      0    0.7
+
+(2, 3)
+2
+text      object
+label      int64
+score    float64
+dtype: object
+\end{dhkzsh}
+
+여기서 \zsh{df.shape == (2, 3)}이라는 사실은 DataFrame에 두 개의 행과 세 개의 열이 있다는 뜻이다.
+
+그런데 \zsh{df.dtypes}는 왜 \zsh{Series}처럼 출력될까?
+
+실제로 반환 객체가 Series이기 때문이다.
+
+\begin{dhkcode}
+print(type(df.dtypes).__name__)
+print(df.dtypes.index.tolist())
+print(df.dtypes.name)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Series
+['text', 'label', 'score']
+None
+\end{dhkzsh}
+
+이것은 중요한 객체 관계를 보여준다.
+
+\zsh{df.dtypes}는 DataFrame의 각 열에 대응하는 dtype을 하나의 Series로 표현한다.
+
+즉, dtype 정보를 담은 Series의 Index가 원본 DataFrame의 열 레이블과 대응하는 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+DataFrame은 Series 객체를 저장하는 딕셔너리일까?
+\end{dhksmry}
+\end{dhknote}
+
+다음과 같은 개념적 표현은 유용하다.
+
+\begin{dhkdir}[in=6]
+DataFrame
+> "text" -> Series
+> "label" -> Series
+> "score" -> Series
+\end{dhkdir}
+
+하지만 이것을 실제 저장 구조라고 단정하면 잘못된 이해가 된다.
+
+DataFrame의 내부 데이터 관리 시스템은 여러 열의 데이터를 블록 단위로 관리하거나 확장 배열(ExtensionArray)을 활용할 수 있다.
+
+따라서 \zsh{df["label"]}이 Series를 반환한다는 사실만으로 DataFrame 내부에 해당 Series 인스턴스가 독립적으로 저장되어 있다고 결론 내릴 수 없다.
+
+이전 \zsh{nn.Module}과 비교해 보면 차이가 분명해진다.
+
+PyTorch에서는 \zsh{model._modules["linear"]}에 실제 하위 모듈 인스턴스가 등록되어 있었다.
+
+반면 Pandas의 DataFrame을 구성하는 열은 반드시 \zsh{_modules}와 같은 딕셔너리에 Series 인스턴스로 등록되는 구조가 아니다.
+
+열을 Series로 조회할 수 있다는 것과 열을 Series 인스턴스로 저장한다는 것은 다른 명제다.
+
+\subsubsection{Index}는 어떤 객체이며, 왜 중요한가?
+
+Index는 단순히 출력 화면 왼쪽에 표시되는 행 번호가 아니다.
+
+Pandas는 Index를 통해 축의 레이블을 관리하고, 레이블 기반 조회와 정렬 연산을 수행할 수 있다.
+
+Index 자체도 Python 객체이기 때문에 타입, dtype, 이름, 유일성 등을 확인할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 3 - Index 객체 분석
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+idx = pd.Index(
+    ["doc-A", "doc-B", "doc-C"],
+    name="doc_id",
+)
+
+print(type(idx).__name__)
+print(idx.ndim)
+print(idx.shape)
+print(idx.name)
+print(idx.is_unique)
+print(idx.has_duplicates)
+print(idx.get_loc("doc-B"))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Index
+1
+(3,)
+doc_id
+True
+False
+1
+\end{dhkzsh}
+
+여기서 \zsh{idx.get_loc("doc-B")}는 레이블을 기준으로 위치 정보를 찾는 메서드다.
+
+현재 Index에서는 \zsh{"doc-B"}가 한 번만 등장하므로 정수 위치 1을 반환한다.
+
+그런데 Index에 중복 레이블이 있다면 겨로가는 달라질 수 있다.
+
+\begin{dhkcode}
+import pandas as pd
+
+idx = pd.Index(
+    ["doc-A", "doc-B", "doc-B", "doc-C"]
+)
+
+print(idx.is_unique)
+print(idx.get_loc("doc-B"))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+slice(1, 3, None)
+\end{dhkzsh}
+
+중복된 레이블이 연속해서 등장하기 때문에 해당 위치 범위를 표현하는 \zsh{slice}가 반환된 것이다.
+
+여기서 중요한 점은 \zsh{get_loc()}이 언제나 정수를 반환하는 메서드가 아니라는 사실이다.
+
+Index의 유일성고 중복 레이블의 배치에 따라 정수, 슬라이스 또는 불리언 마스크를 반환할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Index의 불변성과 DataFrame의 변경 가능성
+\end{dhksmry}
+\end{dhknote}
+
+Index는 일반적인 리스트처럼 원소를 직접 변경하는 방식을 지원하지 않는다.
+
+\begin{dhkcode}
+import pandas as pd
+
+idx = pd.Index(["A", "B"])
+
+try:
+    idx[0] = "C"
+except TypeError as e:
+    print(type(e).__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+TypeError
+\end{dhkzsh}
+
+그렇다고 DataFrame의 Index를 교체할 수 없다는 뜻은 아니다.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"score": [90, 85]},
+    index=["A", "B"],
+)
+
+old_index = df.index
+
+df.index = ["C", "D"]
+
+print(df.index.tolist())
+print(old_index.tolist())
+print(df.index is old_index)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+['C', 'D']
+['A', 'B']
+False
+\end{dhkzsh}
+
+여기에서는 기존 Index 객체의 원소를 수정한 것이 아니다.
+
+DataFrame이 사용하는 행 레이블을 새 Index 구조로 교체한 것이다.
+
+이 차이를 객체 모델로 표현하면 다음과 같다.
+
+\begin{dhkmatrix}[delim=none,style=cards]
+cols :: 변경 전, 변경 후
+data :: [[df,df],[↓, ↓],[Index 객체 1 - "A" "B",green:Index 객체 2 - "C" "D"]]
+explain :: 기존 Index 객체의 원소를 변경한 것이 아니라 DataFrame이 참조하는 축 레이블 객체를 교체한 상황
+\end{dhkmatrix}
+
+Index의 불변성은 기본적인 원소 변경 인터페이스에 관한 것이다.
+
+내부에 변경 가능한 Python 객체가 들어 있는 특수한 경우까지 깊은 불변성(deep immutability)이 보장된다고 해석해서는 안 된다.
+
+\subsubsection{DataFrame}의 열 선택은 어떤 객체를 반환하는가?
+
+이제 Python의 특수 메서드와 연결해 보자.
+
+\begin{dhkcode}
+s = df["score"]
+\end{dhkcode}
+
+이 표현식은 DataFrame 객체에 문자열 키를 전달하는 구독(subscription) 연산이다.
+
+일반적인 Python 규칙에서 \zsh{obj[key]}는 
+
+객체 타입이 제공하는 \zsh{__getitem__()} 메커니즘으로 처리된다.
+
+Pandas는 여기에 열 레이블 조회라는 의미를 부여한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 4 - 반환 객체와 레이블
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "score": [90, 85],
+        "label": [1, 0],
+    },
+    index=["doc-A", "doc-B"],
+)
+
+a = df["score"]
+b = df[["score"]]
+
+print(type(a).__name__)
+print(a.shape)
+print(a.ndim)
+
+print(type(b).__name__)
+print(b.shape)
+print(b.ndim)
+
+print(a.index.tolist())
+print(b.columns.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Series
+(2,)
+1
+DataFrame
+(2, 1)
+2
+['doc-A', 'doc-B']
+['score']
+\end{dhkzsh}
+
+이 결과는 매우 중요하다.
+
+\zsh{df["score"]}와 \zsh{df[["score"]]}는 비슷한 데이터를 선택하지만 반환 객체의 타입이 다르다.
+
+\begin{dhktable}
+|표현식	|반환 타입|	shape|	ndim|
+|:---|:---|:---|:---|
+|df["score"]|	Series	|(2,)	|1|
+|df[["score"]]|	DataFrame|	(2, 1)|	2|
+\end{dhktable}
+
+왜 이런 차이가 생길까?
+
+첫 번째 표현식은 문자열 하나를 열 선택 키로 전달한다.
+
+일반적인 유일한 열 레이블을 가진 DataFrame에서는 Series가 반환된다.
+
+두 번째 표현식은 문자열 하나를 원소로 갖는 리스트를 전달한다.
+
+따라서 여러 열을 선택하는 인터페이스를 사용하고, 결과도 2차원 DataFrame으로 유지된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+경계 조건 - 중복 열 이름
+\end{dhksmry}
+\end{dhknote}
+
+여기에는 예외가 있다.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    [[90, 85]],
+    columns=["score", "score"],
+)
+
+result = df["score"]
+
+print(type(result).__name__)
+print(result.shape)
+\end{dhkcode}
+
+동일한 열 레이블이 두 번 존재하기 때문에 \zsh{df["score"]}는 두 열을 포함하는 DataFrame을 반환한다.
+
+따라서 \zsh{df["열이름"]}은 무조건 Series를 반환한다고 암기하면 안 된다.
+
+반환 타입을 판단할 때는 선택 키의 형태뿐 아니라 열 레이블의 유일성도 고려해야 한다.
+
+이부분은 \zsh{D.4}에서 \zsh{.loc}, \zsh{.iloc}과 비교하며 더 깊게 분석할 것이다.
+
+\subsubsection{속성 접근과 열 선택은 같은 연산인가?}
+
+다음 두 표현식은 같은 값을 반환할 수 있다.
+
+\begin{dhkcode}
+df.score
+df["score"]
+\end{dhkcode}
+
+하지만 내부적으로 동일한 문법은 아니다.
+
+첫 번재는 Python의 속성 접근(attribute access)이다.
+
+두 번째는 구독 연산(subscription)이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 5 - 이름 충돌
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame({
+    "score": [90, 85],
+    "shape": [10, 20],
+})
+
+print(type(df.score).__name__)
+print(df["score"].tolist())
+
+print(df.shape)
+print(df["shape"].tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Series
+[90, 85]
+(2, 2)
+[10, 20]
+\end{dhkzsh}
+
+왜 \zsh{df.shape}은 \zsh{"shape"} 열을 반환하지 않을까?
+
+\zsh{shape}은 이미 DataFrame이 제공하는 속성 이름이기 때문이다.
+
+일반적인 속성 탐색에서 shape이라는 속성을 찾을 수 있으므로 Pandas의 열 이름 접근 편의 기능이 적용되지 않는다.
+
+반면 \zsh{df["shape"]}은 열 레이블을 명시적으로 전달하는 표현식이기 때문에 해당 열을 반환한다.
+
+이것은 속성 탐색 원칙과 연결된다.
+
+Pandas의 점 표기법은 일반적인 Python 속성 탐색을 기반으로 하며, 일부 조건에서 열 레이블 접근을 편의 기능으로 지원한다.
+
+모든 열 이름을 속성처럼 사용할 수 있는 것은 아니다.
+
+따라서 분석 파이프라인에서는 열 선택에 \zsh{df["column"]} 형태를 기본으로 사용하는 것이 안전하다.
+
+특히 열 이름이 메서드나 속성 이름과 충돌하거나 Python 식별자로 적합하지 않은 경우에 차이가 분명해진다.
+
+\subsubsection{Series와 DataFrame의 객체 동일성 및 데이터 공유}
+
+지금까지는 \zsh{df["score"]}가 Series를 반환한다는 사실을 확인했다.
+
+그렇다면 반환된 Series는 DataFrame의 데이터를 복사한 새로운 객체일까, 아니면 기존 데이터를 공유하는 객체일까?
+
+이 질문에는 두 가지 개념이 포함되어 있다.
+
+\begin{dhksmry}
+    1. Python 객체의 동일성(Identity)
+
+    2. 내부 데이터 버퍼의 공유(memory sharing)
+\end{dhksmry}
+
+두 개념을 서로 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 6 - 객체 동일성과 원본 변경
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame({
+    "score": [90, 85],
+})
+
+s = df["score"]
+
+print(s is df)
+print(s.iloc[0])
+print(df.iloc[0, 0])
+
+s.iloc[0] = 100
+
+print(s.iloc[0])
+print(df.iloc[0, 0])
+\end{dhkcode}
+
+Pandas 3.x의 Copy-on-Write 동작을 기준으로 한 예상 출력은 다음과 같다.
+
+\begin{dhkzsh}
+False
+90
+90
+100
+90
+\end{dhkzsh}
+
+이 결과를 순서대로 분석해 보자.
+
+첫째, \zsh{s is df}는 \zsh{False}다.
+
+Series와 DataFrame은 서로 다른 Python 객체이기 때문이다.
+
+둘째, Series를 선택하는 과정에서 내부 데이터를 공유할 수 있다.
+
+\zsh{df["score"]}가 새로운 Series 객체를 반환한다고 해서 그 객체의 모든 데이터가 즉시 복사된다는 뜻은 아니다.
+
+셋째, Pandas 3.x의 Copy-on-Write는 공유 데이터의 변경을 격리한다.
+
+\zsh{s.iloc[0] = 100}을 수행할 때 필요한 경우 데이터 복사가 발생하여 원본 DataFrame의 값이 변경되지 않도록 한다.
+
+Pandas 2.x에서는 설정과 선택 경로에 따라 동작이 달라질 수 있다.
+
+따라서 이 예제의 변경 결과를 모든 버전에 적용해서는 안 된다.
+
+여기서 이전 Python 객체 모델과 연결되는 중요한 사실이 있다.
+
+\zsh{is} 연산자로 확인할 수 있는 것은 Python 객체의 동일성이지, 객체 내부의 메모리 버퍼 공유 여부가 아니다.
+
+서로 다른 Series 객체라도 같은 데이터를 공유할 수 있고, 동일한 Series 객체라도 변경 연산 이후 내부 데이터 저장 공간이 교체될 수 있다.
+
+이 문제는 \zsh{D.7}에서 다음 개념들과 함께 정식으로 분석할 것이다.
+
+\begin{dhksmry}
+    - 얕은 복사(shallow copy)와 깊은 복사(deep copy)
+
+    - Copy-on-Write
+
+    - 메서드 반환 객체와 원본 변경
+
+    - 체인 인덱싱(chained indexing)
+
+    - inplace 인수의 의미와 한계
+\end{dhksmry}
+
+\subsubsection{객체의 속성과 메서드를 구분하는 방법}
+
+함수 객체와 함수 호출 결과를 구분했던 것을 기억해 보자.
+
+Pandas에서도 이 구분이 중요하다.
+
+\begin{dhkcode}
+df.head
+df.head()
+\end{dhkcode}
+
+첫 번재는 메서드 객체를 조회하는 표현식이고, 두 번째는 메서드를 호출하는 표현식이다.
+
+반면 다음은 조금 다르다.
+
+\begin{dhkcode}
+df.shape
+df.dtypes
+\end{dhkcode}
+
+이들은 메서드가 아니라 속성으로 제공된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 7 - 속성, 메서드, 바인딩
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame({
+    "score": [90, 85],
+})
+
+method = df.head
+result = method(1)
+
+print(callable(method))
+print(method.__self__ is df)
+print(method.__func__ is pd.DataFrame.head)
+
+print(type(result).__name__)
+print(result.shape)
+
+print(callable(df.shape))
+print(type(df.shape).__name__)
+\end{dhkcode}
+
+\begin{dhkzsh}
+True
+True
+True
+DataFrame
+(1, 1)
+False
+tuple
+\end{dhkzsh}
+
+이 결과에서 확인할 수 있는 객체 관계는 다음과 같다.
+
+\zsh{df.head}는 DataFrame 인스턴스에 바인딩된 메서드(bound method)다.
+
+따라서 \zsh{method.__self__}는 \zsh{df}를 참조하고,
+
+\zsh{method.__func__}는 해당 메서드의 기반 함수 객체를 참조한다.
+
+반면 \zsh{df.shape}는 튜플을 반환하는 속성이므로 호출 가능한 메서드가 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+속성이라고 해서 단순히 __dict__에 저장된 값일까?
+\end{dhksmry}
+\end{dhknote}
+
+그렇지는 않다.
+
+Python의 속성은 클래스에 정의된 디스크립터(descriptor)를 통해 계산될 수도 있다.
+
+예를 들어 \zsh{shape}는 DataFrame의 현재 축 길이를 바탕으로 제공되는 속성이다.
+
+따라서 다음과 같은 등가 관계를 가정하면 안 된다.
+
+\begin{dhkcode}
+# 일반적으로 성립한다고 보장할 수 없는 표현
+df.shape == df.__dict__["shape"]
+\end{dhkcode}
+
+여기에서 중요한 판단 기준은 속성 접근 문법, 실제 저장 위치, 속성의 계산 방식은 서로 구분해야 한다는 것이다.
+
+이것은 \zsh{nn.Module}의 \zsh{_modules} 등록 구조를 분석할 때 사용했던 원칙과도 연결된다.
+
+\subsubsection{ML/Transofrmer 응용 - 샘플 ID를 유지하는 분석 테이블}
+
+이제 세 객체를 하나의 실제 분석 흐름으로 통합해 보자.
+
+Transformer를 이용해 문서 분류 모델을 학습했다고 가정한다.
+
+모델의 예측 결과를 분석하려면 최소한 다음 정보가 필요하다.
+
+\begin{dhksmry}
+    - 문서 식별자
+
+    - 원본 텍스트
+
+    - 정답 레이블
+
+    - 예측 레이블
+
+    - 토큰 길이
+\end{dhksmry}
+
+이 정보를 DataFrame으로 관리할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 8 - 오류 분석 테이블
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "text": [
+            "good movie",
+            "bad service",
+            "excellent product",
+        ],
+        "label": [1, 0, 1],
+        "prediction": [1, 1, 0],
+        "token_length": [2, 2, 2],
+    },
+    index=pd.Index(
+        ["doc-A", "doc-B", "doc-C"],
+        name="doc_id",
+    ),
+)
+
+df["correct"] = (
+    df["label"] == df["prediction"]
+)
+
+errors = df.loc[
+    ~df["correct"]
+]
+
+print(df["correct"].tolist())
+print(errors.index.tolist())
+print(errors.shape)
+print(errors["text"].tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[True, False, False]
+['doc-B', 'doc-C']
+(2, 5)
+['bad service', 'excellent product']
+\end{dhkzsh}
+
+객체 및 실행 과정 추적
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: df // DataFrame 3행 x 4열
+node n2 (2,1) :: df['label'] == df['prediction'] // 비교 연산 -> bool Series 반환
+node n3 (3,1) :: df['correct'] = ... // DataFrame에 열 추가 -> 3행 x 5열
+node n4 (4,1) [accent] :: df.loc[~df['correct']] // 불리언 선택 -> 새 DataFrame 반환
+node n5 (5,1) :: error.index // ["doc-B", "doc-C"]
+
+edge n1->n2
+edge n2 -> n3
+edge n3 -> n4
+\end{dhkgraph}
+
+이 코드에서는 다음과 같은 동작이 순서대로 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1단계 - DataFrame 생성
+\end{dhksmry}
+\end{dhknote}
+
+문서별 정보를 담은 DataFrame 인스턴스가 생성되고 \zsh{df}에 바인딩된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2단계 - 열 선택과 비교
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{df["label"]}과 \zsh{df["prediction"]}은 각각 Series를 반환한다.
+
+두 Series에 \zsh{==} 연산을 적용하면 각 행의 레이블이 대응되는 불리언 Series가 생성된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3단계 - 새 열 할당
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{df["correct"] = ...}는 DataFrame에 새로운 열을 추가한다.
+
+이때 \zsh{df}라는 이름이 다른 \zsh{DataFrame}에 재바인딩되는 것이 아니라, 기존 DataFrame 객체의 열 구성이 변경된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4단계 - 오류 행 선택
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{~df["correct"]}는 불리언 값을 반전한 Series를 반환한다.
+
+\zsh{.loc[...]}는 이 불리언 조건에 대응하는 행을 선택해 새로운 DataFrame을 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5단계 - 문서 ID 보존
+\end{dhksmry}
+\end{dhknote}
+
+선택 결과인 \zsh{errors}는 원본의 행 Index 레이블을 유지한다.
+
+따라서 어떤 문서에서 오류가 발생했는지 식별할 수 있다.
+
+이것은 단순히 행번호 1,2를 저장하는 것보다 유용하다.
+
+원본 데이터가 정렬되거나 필터링되어도 문서 ID를 기반으로 다른 데이터와 대응시킬 수 있기 때문이다.
+
+단, Index가 중복되어 있거나 다른 테이블과의 식별자 대응이 깨진 경우에는 별도의 정합성 검사가 필요하다.
+
+\subsubsection{비교 및 예외 - 이번 단원에서 반드시 구분할 개념}
+
+\begin{dhktable}
+|구분	|올바른 이해|
+|:---|:---|
+|Series와 ndarray|	둘 다 1차원 값을 표현할 수 있지만 Series에는 Index와 Pandas 연산 의미론이 있음|
+|DataFrame과 2차원 ndarray|	DataFrame은 두 축의 레이블과 열별 dtype을 관리|
+|Index와 Python list|	Index는 레이블 조회·정렬 기능을 제공하며 일반적인 원소 직접 변경을 허용하지 않음|
+|df["x"]와 df[["x"]]|	일반적으로 Series와 DataFrame을 반환하지만 중복 열 레이블 등 예외가 있음|
+|df.x와 df["x"]|	속성 접근과 열 선택은 서로 다른 연산|
+|df.shape와 df.dtypes|	각각 튜플과 Series를 반환하는 속성|
+|새로운 Series 객체와 데이터 복사|	객체가 새로 생성되었다고 내부 데이터가 반드시 복사되는 것은 아님|
+|Index 레이블과 기본키|	Index는 중복을 허용할 수 있으므로 자동으로 기본키가 되지 않음|
+\end{dhktable}
+
+특히 다음 세 가지를 이번 학습의 핵심 판단 기준으로 삼으면 된다.
+
+첫째, 속성 접근 결과가 어떤 타입의 객체인지 확인해야 한다.
+
+Series, DataFrame, Index, tuple, dtype 객체는 모두 서로 다른 의미를 가진다.
+
+둘째, 반환된 객체가 원본과 어떤 관계를 갖는지 구분해야 한다.
+
+반환 타입, 객체 동일성, 데이터 공유, 원본 변경 여부는 각각 별도로 판단해야 한다.
+
+셋째, 데이터의 위치와 레이블을 혼동해서는 안 된다.
+
+\zsh{Index}는 데이터의 의미를 연결하는 축이지만, 유일성과 정합성이 자동으로 보장되는 식별자 체계는 아니다.
+
+\subsubsection{학습 정리 및 다음 학습}
+
+\zsh{D.2}에서는 데이터 객체가 어떤 구조로 존재하는지 살펴보았다.
+
+하지만 아직 중요한 질문이 남아 있다.
+
+정수와 문자열, 실수와 결측값이 하나의 열에 섞이면 Pandas는 어떤 dtype을 선택할까?
+
+\zsh{None}, \zsh{np.nan}, \zsh{pd.NA}, \zsh{pd.NaT}는 모두 결측을 표현하지만 왜 서로 다른 객체이며, 비교 연산에서는 어떤 차이를 보일까?
+
+\zsh{D.3}에서는 이 질문을 시작으로 NumPy dtype, Pandas ExtensionDtype, Nullable 자료형, 결측값의 전파 규칙과 연산 예외까지 연결할 것이다.
+
+공식 참고자료는 다음과 같다.
+\begin{dhksmry}
+https://pandas.pydata.org/docs/user_guide/dsintro.html
+https://pandas.pydata.org/docs/user_guide/indexing.html
+https://pandas.pydata.org/docs/user_guide/migration.html
+\end{dhksmry}
