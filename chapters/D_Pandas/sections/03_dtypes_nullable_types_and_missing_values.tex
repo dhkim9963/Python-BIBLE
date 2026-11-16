@@ -1,0 +1,1292 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% D.3. 자료형·Nullable·결측 표현
+% ==================================================
+
+\subsection{자료형·Nullable·결측 표현}
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{D.2}에서는 Pandas의 세 가지 핵심 객체인 Series, DataFrame, Index를 분석했다.
+
+특히 다음과 같은 구조를 확인했다.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame({
+    "text": ["hello", "world"],
+    "label": [1, 0],
+})
+
+print(df.dtypes)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+text     object
+label     int64
+dtype: object
+\end{dhkzsh}
+
+여기서 \zsh{df.dtypes}는 각 열의 자료형을 나타내는 Series를 반환한다.
+
+그런데 데이터가 다음처럼 바뀌면 어떻게 될까?
+
+\begin{dhkcode}
+df = pd.DataFrame({
+    "text": ["hello", None],
+    "label": [1, None],
+})
+\end{dhkcode}
+
+문자열 열과 정수 열 모두에 \zsh{None}을 넣었지만, 두 열의 자료형은 같은 방식으로 결정되지 않을 수 있다.
+
+이유는 Pandas가 단순히 Python 객체를 나열하는 시스템이 아니라, 열의 값들을 특정 자료형과 저장 표현에 따라 관리하는 시스템이기 때문이다.
+
+이번 학습에서는 이 구조를 정확히 분석할 것이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 \zsh{D.3}에서는 다음 다섯 가지 질문에 답해야 한다.
+
+\begin{dhksmry}
+1. Python 객체의 type과 Pandas의 dtype은 어떻게 다른가?
+
+2. int64와 Int64, bool과 boolean, object와 string은 왜 구분되는가?
+
+3. None, np.nan, pd.NA, pd.NaT는 각각 무엇을 표현하는가?
+
+4. 결측값이 포함된 비교·논리·산술 연산은 어떤 결과를 반환하는가?
+
+5. ML/Transformer 데이터셋에서 결측을 잘못 처리하면 왜 정답 레이블과
+   평과 결과가 오염되는가?
+\end{dhksmry}
+
+이 질문들은 모두 하나의 원리로 연결된다.
+
+데이터 값의 의미, 그 값을 저장하는 자료형, 그리고 결측 상태를 표현하는 방법은 서로 구분해야 한다는 원리다.
+
+\subsubsection{\zsh{type}과 \zsh{dtype}은 서로 다른 계층의 정보다}
+
+Python에서 \zsh{type(obj)}는 객체의 타입을 반환한다.
+
+\begin{dhkcode}
+x = 10
+
+print(type(x))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<class 'int'>
+\end{dhkzsh}
+
+여기서 \zsh{x}는 Python의 \zsh{int} 객체를 참조한다.
+
+반면 Pandas의 \zsh{Series}는 여러 값을 관리하는 하나의 객체다.
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series([10, 20, 30], dtype="int64")
+
+print(type(s))
+print(s.dtype)
+print(type(s.iloc[0]))
+\end{dhkcode}
+
+일반적인 NumPy 기반 \zsh{int64} Series에서 예상되는 출력은 다음과 같다.
+
+\begin{dhkzsh}
+<class 'pandas.core.series.Series'>
+int64
+<class 'numpy.int64'>
+\end{dhkzsh}
+
+세 결과가 각각 다른 계층을 나타낸다는 점에 주목해야 한다.
+
+\begin{dhktable}
+|표현식|	확인하는 대상|	의미|
+|:---|:---|:---|
+|type(s)	|Series 객체|	어떤 Python 클래스의 인스턴스인가?|
+|s.dtype	|Series의 값 저장 자료형|	값들이 어떤 dtype으로 표현되는가?|
+|type(s.iloc[0])|	선택된 스칼라 객체|	조회 결과가 어떤 Python/NumPy 스칼라인가?|
+\end{dhktable}
+
+\zsh{dtype}은 Series 객체의 Python 클래스가 아니다.
+
+Series가 관리하는 데이터의 자료형을 기술하는 정보이다.
+
+또한 \zsh{dtype="int64"}라고 해서 각 원소가 Python의 내장 \zsh{int} 객체로 개별 저장된다는 뜻도 아니다.
+
+NumPy 기반 정수 배열에서는 정수들이 고정 폭의 데이터 표현으로 저장되고, 원소를 조회할 때 NumPy 스칼라 객체를 얻을 수 있다.
+
+객체 타입과 객체 내부 상태의 구분을 Pandas에 적용할 사례라고 볼 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Pandas 자료형의 두 가지 주요 계열
+\end{dhksmry}
+\end{dhknote}
+
+Pandas에서는 크게 다음 두 계열을 구분하는 것이 중요하다.
+
+\begin{dhktable}
+|계열|	예시|	특징|
+|:---|:---|:---|
+|NumPy 기반 dtype|	int64, float64, bool, datetime64[ns]|	NumPy 자료형 체계를 활용|
+|Pandas ExtensionDtype|	Int64, Float64, boolean, string, category|	Pandas가 확장한 자료형 및 연산 규칙 제공|
+\end{dhktable}
+
+여기서 주의할 점은 ExtensionDtype이라고 해서 항상 별도의 결측 마스크를 사용하는 것은 아니라는 사실이다.
+
+실제 저장 구조는 dtype과 배열 구현에 따라 달라진다.
+
+예를 들어 Nullable 정수 배열은 일반적으로 데이터 배열과 결측 여부를 나타내는 마스크를 함께 관리하지만, 범주형과 문자열 확장 배열의 내부 구현까지 같은 구조라고 가정할 수는 없다.
+
+이제 가장 중요한 Nullable 정수형부터 살펴본다.
+
+\subsubsection{정수 열에 결측값이 들어가면 왜 \zsh{float64}가 될까?}
+
+먼저 가장 기본적인 예제를 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 1 - NumPy 정수형과 Nullable 정수형
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series([1, None])
+b = pd.Series([1, None], dtype="Int64")
+
+print(a.dtype)
+print(a.tolist())
+
+print(b.dtype)
+print(b.tolist())
+
+print(type(a.iloc[0]).__name__)
+print(type(b.iloc[0]).__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+float64
+[1.0, nan]
+Int64
+[1, <NA>]
+float64
+int64
+\end{dhkzsh}
+
+같은 값을 전달했는데 결과가 달라졌다.
+
+왜 그럴까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. a의 생성 과정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+a = pd.Series([1, None])
+\end{dhkcode}
+
+생성자에 \zsh{dtype}을 지정하지 않았으므로 Pandas는 입력값으로부터 자료형을 추론한다.
+
+NumPy의 일반적인 \zsh{int64} 배열에는 \zsh{None}을 정수 결측값으로 표현하는 규칙이 없다.
+
+따라서 이 입력에 대해 Pandas는 \zsh{float64}로 변환하고, 결측 위치에 \zsh{NaN}을 사용한다.
+
+결과적으로 정수 1도 실수 1.0으로 표현된다.
+
+\begin{dhkbranch}[in=8]
+node main :: 입력 // [1, None]
+arrow main
+node main :: dtype 추론
+arrow main
+node main :: float64 Series // [1.0, NaN]
+\end{dhkbranch}
+
+여기서 중요한 사실은 정수 데이터에 결측값이 추가되면서 값의 표현 자료형이 변경되었다는 점이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. b의 생성 과정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+b = pd.Series([1, None], dtype="Int64")
+\end{dhkcode}
+
+이번에는 Pandas의 Nullable 정수형인 \zsh{Int64}를 명시했다.
+
+대문자 \zsh{I}에 주목해야 한다.
+
+\begin{dhksmry}
+    - int64 : 일반적인 NumPy 기반 정수 dtype
+
+    - Int64 : Pandas의 Nullable 정수 ExtensionDtype
+\end{dhksmry}
+
+\zsh{Int64}는 정수값과 결측 상태를 함께 표현할 수 있다.
+
+따라서 정수 1을 실수로 변환하지 않고도 두 번째 위치가 결측이라는 사실을 표현한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Int64의 내부 구조
+\end{dhksmry}
+\end{dhknote}
+
+Nullable 정수형의 논리적 구조는 다음과 같이 이해할 수 있다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) :: Series 객체 b // dtype: Int64
+node n2 (1,2) :: 데이터 영역 // 1 ?
+node n3 (1,3) :: 결측 마스크 // F T
+group g1(n2,n3) :: IntegerArray
+
+edge n1 -> g1
+
+explain :: 마스크가 True인 위치는 실제 데이터 영역의 값과 관계없이 결측으로 해석
+
+caption :: Nullable 정수 배열의 개념적 구조. // ? 는 결측 위치의 내부 저장값을 특정하지 않는다는 뜻이다.
+\end{dhkgraph}
+
+실제 객체 타입도 확인할 수 있다.
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series([10, None, 30], dtype="Int64")
+
+print(type(s.array).__name__)
+print(s.array.dtype)
+print(s.isna().tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+IntegerArray
+Int64
+[False, True, False]
+\end{dhkzsh}
+
+\zsh{Series.array}는 Series가 관리하는 데이터의 배열 인터페이스를 제공한다.
+
+이 경우 반환 객체는 \zsh{IntegerArray}다.
+
+\zsh{IntegerArray}는 데이터와 결측 마스크를 관리할 수 있지만, 내부의 비공개 속성인 \zsh{_data}, \zsh{_mask} 등에 직접 의존하는 코드는 피해야 한다.
+
+그 구조는 공개 API의 안정적인 계약이 아니기 때문이다.
+
+이전 학습과 연결하면 다음과 같이 구분할 수 있다.
+
+\begin{dhksmry}
+    - s는 Series 인스턴스를 참조하는 이름이다.
+
+    - s.array는 Series의 배열 객체를 조회하는 속성 접근이다.
+
+    - s.dtype은 해당 배열의 자료형을 기술하는 객체다.
+
+    - s.isna()는 결측 여부를 계산하여 새로운 불리언 Series를
+      반환하는 메서드 호출이다.
+\end{dhksmry}
+
+결측 상태가 있다는 사실과 값 자체가 특정 숫자라는 사실은 독립적으로 관리될 수 있다.
+
+\subsubsection{\zsh{None}, \zsh{np.nan}, \zsh{pd.NA}, \zsh{pd.NaT}는 무엇이 다를까?}
+
+Pandas에서 결측을 표현하는 대표적인 객체는 네 가지다.
+
+\begin{dhktable}
+|객체|	주된 의미|	일반적인 사용 맥락|
+|None|	Python의 값 부재를 나타내는 싱글턴 객체|	일반 Python 객체, object 열|
+|np.nan|	IEEE 부동소수점 NaN 값|	NumPy 실수 배열, 일반 실수 Series|
+|pd.NA|	Pandas의 결측 스칼라|	Nullable 정수·불리언·문자열 등|
+|pd.NaT|	Not a Time|	날짜·시간·기간 데이터의 결측|
+\end{dhktable}
+
+이들은 모두 결측을 표현할 수 있지만, 동일한 객체도 아니고 비교 연산의 의미도 같지 않다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 2 - 객체 타입과 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import numpy as np
+import pandas as pd
+
+values = {
+    "None": None,
+    "NaN": np.nan,
+    "NA": pd.NA,
+    "NaT": pd.NaT,
+}
+
+for name, value in values.items():
+    print(
+        name,
+        type(value).__name__,
+        pd.isna(value),
+        value == value,
+    )
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+None NoneType True True
+NaN float True False
+NA NAType True <NA>
+NaT NaTType True False
+\end{dhkzsh}
+
+여기에는 매우 중요한 차이가 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. None == None은 True
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{None}은 Python에서 유일한 싱글턴 객체다.
+
+\begin{dhkcode}
+print(None is None)
+print(None == None)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+True
+\end{dhkzsh}
+
+따라서 \zsh{None}의 동일성과 동등성 비교는 모두 참이다.
+
+하지만 이것은 \zsh{None}이 결측이 아니라는 뜻이 아니다.
+
+Python 객체의 비교 규칙과 데이터 분석에서 결측으로 해석하는 규칙은 서로 다른 계층에 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. np.nan == np.nan은 False
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{NaN}은 일반적인 숫자와 다른 IEEE 부동소수점 비교 규칙을 따른다.
+
+\begin{dhkcode}
+import numpy as np
+
+print(np.nan == np.nan)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+\end{dhkzsh}
+
+따라서 \zsh{x == np.nan}을 결측 검사 방법으로 사용해서는 안 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. pd.NA == pd.NA는 <NA>
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+print(pd.NA == pd.NA)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+<NA>
+\end{dhkzsh}
+
+이것은 결측값끼리 비교한 결과를 참이나 거짓으로 확정할 수 없다는 의미를 표현한다.
+
+예를 들어 어떤 학생의 점수가 누락되어 있다면, 그 점수가 다른 누락된 점수와 같다고 단정할 수 없을 것이다.
+
+Pandas의 Nullable 연산은 이러한 불확정성을 표현할 수 있다.
+
+다만 모든 연산이 예외 없이 \zsh{<NA>}를 전파하는 것은 아니다.
+
+특히 불리언 연산에서는 다른 피연산자의 값에 따라 결과를 확정할 수 있다.
+
+이 부분은 \zsh{D.3.7}에서 살펴볼 것이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+결측 검사는 pd.isna()를 사용한다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import numpy as np
+import pandas as pd
+
+print(pd.isna(None))
+print(pd.isna(np.nan))
+print(pd.isna(pd.NA))
+print(pd.isna(pd.NaT))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+True
+True
+True
+True
+\end{dhkzsh}
+
+\zsh{pd.isna()}는 Pandas가 인식하는 결측 상태를 검사하는 함수다.
+
+스칼라를 전달하면 불리언 스칼라를, Series를 전달하면 각 원소의 결측 여부를 나타내는 Series를 반환할 수 있다.
+
+따라서 객체의 동등성 비교와 결측 여부 검사는 서로 다른 연산이라는 점을 기억해야 한다.
+
+\subsubsection{Nullable 자료형은 왜 별도로 필요할까?}
+
+\zsh{Int64}뿐 아니라 Pandas에는 여러 Nullable 자료형이 있다.
+
+\begin{dhktable}
+|일반적인 dtype|	Nullable 대응 dtype|	주요 용도|
+|:---|:---|:---|
+|int64|	Int64|	누락 가능한 정수|
+|float64|	Float64|	누락 가능한 실수|
+|bool|	boolean|	참·거짓·결측|
+|object|	string|	누락 가능한 문자열 데이터|
+\end{dhktable}
+
+여기서 \zsh{object}는 반드시 문자열만 저장한다는 뜻이 아니다.
+
+Python 객체를 참조하는 범용 자료형이기 때문에 문자열, 숫자, 리스트 등 서로 다른 종류의 객체가 들어갈 수도 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 3 - 자료형 추론과 명시적 변환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame({
+    "count": [1, None, 3],
+    "active": [True, None, False],
+    "text": ["ko", None, "en"],
+})
+
+print(df.dtypes)
+
+converted = df.convert_dtypes()
+
+print()
+print(converted.dtypes)
+\end{dhkcode}
+
+Pandas 2.2.3 기준 실행 결과:
+
+\begin{dhkzsh}
+count     float64
+active     object
+text       object
+dtype: object
+
+count              Int64
+active           boolean
+text      string[python]
+dtype: object
+\end{dhkzsh}
+
+\zsh{convert_dtypes()}는 기존 데이터에 적합한 Nullable 자료형을 추론해 새로운 DataFrame을 반환하는 메서드다.
+
+여기서 주의할 점이 있다.
+
+\begin{dhkcode}
+converted = df.convert_dtypes()
+\end{dhkcode}
+
+이 코드는 \zsh{df}라는 이름을 새로운 객체에 재바인딩하는 것이 아니다.
+
+\zsh{convert_dtypes()}의 반환값을 \zsh{converted}라는 새로운 이름에 바인딩한 것이다.
+
+원본 \zsh{df}는 그대로 유지된다.
+
+또한 \zsh{convert_dtypes()}는 데이터를 분석해 dtype을 추론하는 편의 기능이지, 모든 열의 업무상 의미를 판별하는 검증기가 아니다.
+
+예를 들어 문자열 \zsh{"00123"}이 우편번호라면 숫자로 바꾸는 것이 오히려 정보 손실을 일으킬 수 있을 것이다.
+
+자료형 추론과 데이터 의미 검증은 구분해야 한다.
+
+\subsubsection{Nullable Boolean과 3값 논리}
+
+일반적인 Python의 불리언은 \zsh{True}와 \zsh{False} 두 가지 값으로 표현된다.
+
+하지만 데이터 분석에서는 조건의 참·거짓을 판정할 정보가 없는 경우도 존재한다.
+
+Pandas의 \zsh{boolean} dtype은 다음 세 상태를 표현할 수 있다.
+
+\begin{dhksmry}
+    - True
+
+    - False
+
+    - <NA>
+\end{dhksmry}
+
+이것은 \zsh{3값 논리(three-valued logic)}와 연결된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+pd.NA를 Python bool로 변환하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+print(bool(pd.NA))
+\end{dhkcode}
+
+이 코드는 다음 오류를 발생시킨다.
+
+\begin{dhkzsh}
+TypeError: boolean value of NA is ambiguous
+\end{dhkzsh}
+
+\zsh{pd.NA}가 참인지 거짓인지 결정할 수 없기 때문이다.
+
+그런데 불리언 연산에서는 일부 결과를 확정할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 4 - 3값 논리
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+print(pd.NA & False)
+print(pd.NA & True)
+
+print(pd.NA | True)
+print(pd.NA | False)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+<NA>
+True
+<NA>
+\end{dhkzsh}
+
+왜 이런 결과가 발생할까?
+
+\begin{dhktable}
+|연산|	결과	|이유|
+|:---|:---|:---|
+|<NA> & False|	False|	다른 값이 무엇이든 AND 결과는 거짓|
+|<NA> & True|	<NA>|	결측값에 따라 결과가 달라짐|
+|<NA> ㅣ True|	True|	다른 값이 무엇이든 OR 결과는 참|
+|<NA> ㅣ False|	<NA>|	결측값에 따라 결과가 달라짐|
+\end{dhktable}
+
+이것은 \zsh{Kleene} 논리라고 부른다.
+
+여기서 \zsh{&}, \zsh{|}는 Python의 비트 연산자 문법이지만 Pandas 객체에서는 원소별 논리 연산을 수행하도록 구현되어 있다.
+
+따라서 \zsh{and}, \zsh{or}와 혼동하면 안 된다.
+
+특히 \zsh{and}와 \zsh{or}는 피연산자의 진리값을 평가하는 Python 언어 연산자이고, Pandas Series의 원소별 논리 연산을 대신하지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+결측이 포함된 비교 연산
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series([1, None], dtype="Int64")
+
+result = s == 1
+
+print(result.dtype)
+print(result.tolist())
+print(result.fillna(False).tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+boolean
+[True, <NA>]
+[True, False]
+\end{dhkzsh}
+
+\zsh{result}는 Nullable Boolean Series다.
+
+여기서 \zsh{fillna(False)}는 단순한 출력 형식 변경이 아니다.
+
+판정할 수 없는 상태를 거짓으로 처리한다는 정책을 적용한 것이다.
+
+이 정책은 분석 목적에 따라 적절할 수도, 부적절할 수도 있다.
+
+예를 들어 \zsh{"정답 레이블이 1인가?"}라는 조건에서 결측 레이블을 \zsh{False}로 바꾸면, 실제로는 정답이 알려지지 않은 샘플을 클래스 1이 아닌 샘플처럼 해석할 위험이 있다.
+
+참고로 Nullable Boolean 마스크를 행 선택에 사용할 때 결측 위치는 일반적으로 선택되지 않는 것으로 처리된다.
+
+그러나 행 선택에서 제외된다는 사실이 원래 조건의 값이 \zsh{False}였다는 뜻은 아니다.
+
+이 차이는 \zsh{D.6}에서 다시 분석할 것이다.
+
+\subsubsection{문자열·범주·날짜 자료형}
+
+이제 정수와 불리언 이외의 자료형을 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. 문자열: object와 string
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series(
+    ["ko", "en", None],
+    dtype="string[python]",
+)
+
+print(s.dtype)
+print(s.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+string
+['ko', 'en', <NA>]
+\end{dhkzsh}
+
+\zsh{string[python]}은 Pandas의 문자열 확장 자료형을 Python 기반 저장 방식으로 명시한 것이다.
+
+\zsh{object} dtype은 문자열 외의 Python 객체도 저장할 수 있지만, \zsh{string} dtype은 문자열 데이터라는 의미를 더 명확하게 표현한다.
+
+Pandas 버전에 따라 문자열 dtype의 기본 추론 및 저장 백엔드가 달라질 수 있으므로, 재현성이 중요한 예제에서는 \zsh{string[python]}처럼 명시하는 것이 좋다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. 범주형: category
+\end{dhksmry}
+\end{dhknote}
+
+범주형 자료형은 값들이 제한된 범주 집합에 속한다는 정보를 표현한다.
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series(
+    ["train", "valid", None],
+    dtype="category",
+)
+
+print(s.dtype)
+print(s.cat.categories.tolist())
+print(s.isna().tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+category
+['train', 'valid']
+[False, False, True]
+\end{dhkzsh}
+
+범주형은 실제 범주값과 내부 코드의 대응 관계를 이용할 수 있다.
+
+이 자료형의 중요한 특징은 단순히 문자열을 저장하는 것과 달리, 가능한 범주와 범주의 순서를 자료형의 일부로 표현할 수 있다는 점이다.
+
+다만 \zsh{category}가 자동으로 업무상 올바른 범주를 정의해 주는 것은 아니다.
+
+범주 집합과 순서가 중요하다면 \zsh{CategoricalDtype}으로 명시해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 날짜·시간: datetime64[ns]와 NaT
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.to_datetime(
+    pd.Series([
+        "2026-11-01",
+        "invalid",
+        None,
+    ]),
+    errors="coerce",
+)
+
+print(s.dtype)
+print(s.isna().tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+datetime64[ns]
+[False, True, True]
+\end{dhkzsh}
+
+\zsh{errors="coerce"}는 변환할 수 없는 값을 날짜·시간 결측값인 \zsh{NaT}로 바꾸도록 지시한다.
+
+여기서 한 가지 중요한 문제가 발생한다.
+
+원래부터 비어 있던 값과 날짜 형식이 잘못되어 변환에 실패한 값이 모두 \zsh{NaT}가 될 수 있다.
+
+따라서 변환 결과만 보관하면 원래 누락된 데이터와 파싱 실패 데이터를 구분할 수 없게 될 수 있다.
+
+이 문제는 ML 데이터셋 품질 검증에서 중요하므로 \zsh{D.3.11}에서 다시 다룰 것이다.
+
+\subsubsection{자료형 변환과 오류 발생 원리}
+
+Pandas에서 자료형 변환에 사용하는 대표적인 메서드는 \zsh{astype()}이다.
+
+\begin{dhkcode}
+s.astype("Int64")
+\end{dhkcode}
+
+이 메서드는 변환된 자료형의 Series를 반환한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 5 - 변환 실패와 결측 처리
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+raw = pd.Series(
+    ["12", "bad", None],
+    dtype="string[python]",
+)
+
+try:
+    converted = raw.astype("Int64")
+except ValueError as e:
+    print(type(e).__name__)
+
+parsed = pd.to_numeric(
+    raw,
+    errors="coerce",
+).astype("Int64")
+
+print(parsed.tolist())
+
+invalid = raw.notna() & parsed.isna()
+
+print(invalid.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+ValueError
+[12, <NA>, <NA>]
+[False, True, False]
+\end{dhkzsh}
+
+실행 과정을 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+첫 번째 변환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+raw.astype("Int64")
+\end{dhkcode}
+
+\zsh{"12"}는 정수로 변환할 수 있지만 \zsh{"bad"}는 정수로 해석할 수 없다.
+
+따라서 변환이 실패하고 예외가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 번째 변환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+pd.to_numeric(raw, errors="coerce")
+\end{dhkcode}
+
+이번에는 변환할 수 없는 값을 결측으로 처리하도록 명시했다.
+
+따라서 \zsh{"bad"}와 \zsh{None}이 모두 결측이 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+세 번째 단계
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+invalid = raw.notna() & parsed.isna()
+\end{dhkcode}
+
+원래 값이 존재했는데 변환 결과가 결측인 위치를 찾는다.
+
+그 결과 두 번째 원소만 \zsh{True}가 된다.
+
+이것은 단순한 dtype 변환보다 한 단계 더 중요한 데이터 처리 원칙을 보여준다.
+
+결측값으로 변환하기 전에, 결측이 발생한 원인을 보존해야 할 수 있다.
+
+실전 데이터에서는 다음 상태를 구분해야 하는 경우가 많다.
+
+\begin{dhktable}
+|상태	|예시|	의미|
+|:---|:---|:---|
+|원래 누락|	None	|입력값이 존재하지 않음|
+|파싱 실패|	"bad"	|입력값은 있지만 기대한 형식이 아님|
+|적용 불가|	해당 없음	|해당 항목 자체가 의미 없음|
+|아직 미확정|	레이블 검수 중|	추후 값이 결정될 수 있음|
+\end{dhktable}
+
+이들은 모두 결측값으로 표현될 수 있지만, 같은 업무상 의미를 갖는 것은 아니다.
+
+\subsubsection{결측값과 집계 연산}
+
+결측값의 표현 방식은 산술 연산과 집계 결과에도 영향을 준다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 6 - 비교와 합계
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import numpy as np
+import pandas as pd
+
+a = pd.Series([1.0, np.nan])
+
+b = pd.Series(
+    [1, pd.NA],
+    dtype="Int64",
+)
+
+print((a == a).tolist())
+print((b == b).tolist())
+
+print(a.sum())
+print(b.sum())
+
+print(a.sum(skipna=False))
+print(b.sum(skipna=False))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[True, False]
+[True, <NA>]
+1.0
+1
+nan
+<NA>
+\end{dhkzsh}
+
+여기서 두 가지 규칙을 구분해야 한다.
+
+첫째, 원소별 비교 연산은 dtype의 결측 표현과 비교 의미론을 따른다는 점이다.
+
+일반적인 \zsh{float64}에서 \zsh{NaN}은 자기 자신과 비교해도 \zsh{False}를 반환한다.
+
+반면 Nullable 정수형에서는 결측값의 동등성을 판정할 수 없으므로 \zsh{<NA>}가 반환된다.
+
+둘째, 집계 메서드는 결측을 건너뛸지 결정하는 별도의 정책을 갖는다는 점이다.
+
+\zsh{sum()}은 기본적으로 결측을 건너뛰는 \zsh{skipna=True} 동작을 사용한다.
+
+따라서 두 Series 모두 관측된 값 1만 합산한다.
+
+반면 \zsh{skipna=False}를 전달하면 결측을 무시하지 않으므로 결과도 결측이 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+모든 값이 결측이면?
+\end{dhksmry}
+\end{dhknote}
+
+여기에는 추가적인 경계 조건이 있다.
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series(
+    [pd.NA, pd.NA],
+    dtype="Int64",
+)
+
+print(s.sum())
+print(s.sum(min_count=1))
+print(s.count())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+0
+<NA>
+0
+\end{dhkzsh}
+
+왜 첫 번째 결과가 0일까?
+
+\zsh{sum()}은 기본적으로 \zsh{min_count=0}이기 때문에 유효한 값이 하나도 없어도 덧셈의 항등원인 0을 반환할 수 있다.
+
+반면 \zsh{min_count=1}을 지정하면 최소 한 개의 유효한 값이 있어야 집계 결과를 인정한다.
+
+이 경우 유효한 값이 하나도 없으므로 \zsh{<NA>}가 반환된다.
+
+따라서 집계 결과가 0이라는 사실만으로 실제 관측값의 합이 0이었다고 결론 내리면 안 된다.
+
+이것은 학습 로그나 평가 지표를 집계할 때 특히 중요한 경계 조건이다.
+
+\subsubsection{ML/Transforemr 응용 - 누락된 레이블과 잘못된 전처리 결과 구분}
+
+이제 이번 학습의 내용을 실제 데이터 분석 파이프라인에 연결해 본다.
+
+문서 분류 모델을 학습하기 위한 데이터셋이 있다고 가정한다.
+
+각 문서에는 텍스트, 정답 레이블, 토큰 길이, 데이터 분할 정보가 있다.
+
+그런데 일부 데이터에 문제가 발생했다.
+
+\begin{dhksmry}
+    - 문서 d2 : 원본 텍스트 누락
+
+    - 문서 d3 : 정답 레이블 누락, 토큰 길이 변환 실패
+
+    - 문서 d4 : 정답 레이블 형식 오류
+\end{dhksmry}
+
+이 상황을 Pandas 객체로 표현해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 7 - 데이터 품질 상태를 보존하는 전처리
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+docs = pd.DataFrame(
+    {
+        "text": [
+            "good",
+            None,
+            "bad",
+            "ok",
+        ],
+        "raw_label": [
+            "1",
+            "0",
+            None,
+            "unknown",
+        ],
+        "raw_token_length": [
+            "5",
+            "3",
+            "bad",
+            "8",
+        ],
+        "split": [
+            "train",
+            "train",
+            "valid",
+            "valid",
+        ],
+    },
+    index=pd.Index(
+        ["d1", "d2", "d3", "d4"],
+        name="doc_id",
+    ),
+)
+
+docs["label"] = pd.to_numeric(
+    docs["raw_label"],
+    errors="coerce",
+).astype("Int64")
+
+docs["token_length"] = pd.to_numeric(
+    docs["raw_token_length"],
+    errors="coerce",
+).astype("Int64")
+
+docs["invalid_label"] = (
+    docs["raw_label"].notna()
+    & docs["label"].isna()
+)
+
+docs["invalid_token_length"] = (
+    docs["raw_token_length"].notna()
+    & docs["token_length"].isna()
+)
+
+docs["usable"] = (
+    docs["text"].notna()
+    & docs["label"].notna()
+    & docs["token_length"].notna()
+)
+
+print(
+    docs[
+        [
+            "label",
+            "token_length",
+            "invalid_label",
+            "invalid_token_length",
+            "usable",
+        ]
+    ]
+)
+
+print()
+print(docs.index[docs["usable"]].tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+        label  token_length  invalid_label  invalid_token_length  usable
+doc_id
+d1          1             5          False                 False    True
+d2          0             3          False                 False   False
+d3       <NA>          <NA>          False                  True   False
+d4       <NA>             8           True                 False   False
+
+['d1']
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체와 실행 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1단계 - 원본 DataFrame 생성
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{docs}라는 이름은 DataFrame 객체에 바인딩된다.
+
+이 DataFrame은 원본 문자열과 결측 상태를 그대로 보관하고 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2단계 - 정답 레이블 반환
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+docs["label"] = ...
+\end{dhkcode}
+
+\zsh{pd.to_numeric()}이 숫자 변환을 수행하고, 
+
+\zsh{astype("Int64")}가 Nullable 정수형으로 변환한다.
+
+이 결과는 DataFrame의 새로운 열로 할당된다.
+
+이때 원본 \zsh{raw-label} 열은 삭제하거나 덮어쓰지 않았다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3단계 - 파싱 실패 추적
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+docs["invalid_label"] = (
+    docs["raw_label"].notna()
+    & docs["label"].isna()
+)
+\end{dhkcode}
+
+원본에는 값이 있었지만 숫자로 변환되지 못한 경우를 별도로 표시한다.
+
+따라서 \zsh{d3}의 누락된 레이블과 \zsh{d4}의 잘못된 레이블을 구분할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4단계 - 사용 가능 여부 판단
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+docs["usable"] = (
+    docs["text"].notna()
+    & docs["label"].notna()
+    & docs["token_length"].notna()
+)
+\end{dhkcode}
+
+이 표현식은 세 가지 조건을 모두 만족하는 문서를 선택하기 위한 불리언 Series를 생성한다.
+
+현재 예제에서는 \zsh{d1}만 사용 가능한 것으로 판정된다.
+
+다만 이 코드는 모든 프로젝트에 적용되는 보편적인 데이터 품질 정책은 아니다.
+
+실제 Transformer 학습에서는 토큰 길이를 다시 계산할 수 있을 수도 있고, 텍스트가 누락된 문서는 재수집 대상이 될 수도 있다.
+
+중요한 것은 정제 규칙을 적용하기 전에 어떤 문제가 발생했는지 보존했다는 점이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+PyTorch로 전달할 때 주의할 점
+\end{dhksmry}
+\end{dhknote}
+
+Pandas의 Nullable dtype은 데이터 분석에 편리하지만, PyTorch Tensor로 직접 전달할 수 있는 자료형과 항상 일치하지는 않는다.
+
+예를 들어 \zsh{Int64} Series에 \zsh{<NA>}가 포함되어 있다면, Tensor를 생성하기 전에 결측을 처리해야 한다.
+
+또한 \zsh{.to_numpy()}로 변환하는 과정에서 dtype과 결측 표현이 바뀔 수 있으므로 변환 결과를 확인해야 한다.
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series(
+    [1, pd.NA],
+    dtype="Int64",
+)
+
+print(s.to_numpy(dtype="int64", na_value=-1))
+\end{dhkcode}
+
+실행 결과:
+
+\begin{dhkzsh}
+[ 1 -1]
+\end{dhkzsh}
+
+이 코드는 결측을 \zsh{-1}로 치환했다.
+
+그러나 \zsh{-1}이 실제로 유효한 레이블이라면 결측과 유효한 값을 구분할 수 없게 된다.
+
+따라서 모델 입력으로 변환할 때는 다음 세 조건을 함께 확인해야 한다.
+
+\begin{dhksmry}
+1. 결측값이 어떤 정책으로 처리되었는가?
+
+2. 변환된 배열의 dtype이 모델이 기대하는 자료형인가?
+
+3. 변환 후에도 문서 ID와 행 순서가 정답 레이블에 정확하게 대응하는가?
+\end{dhksmry}
+
+특히 세 번째 조건은 \zsh{D.5}와 \zsh{D.21}에서 본격적으로 다룰 것이다.
+
+\subsubsection{자주 발생하는 오해와 경계 조건}
+
+이번 학습의 핵심 오해를 비교해 보자.
+
+\begin{dhktable}
+|오해	|정확한 이해|
+|:---|:---|
+|None과 np.nan은 같은 객체다|	서로 다른 타입과 비교 규칙을 갖는 객체다
+|np.nan == np.nan으로 결측을 검사할 수 있다|	NaN의 자기 비교는 거짓이므로 isna()를 사용해야 한다
+|pd.NA는 항상 False처럼 동작한다|	진리값이 모호하며, 일부 논리 연산에서만 결과를 확정할 수 있다
+|int64와 Int64는 표기만 다르다|	NumPy 정수 dtype과 Pandas Nullable 정수 dtype이다
+|object 열은 문자열 열이다|	Python 객체를 담는 범용 자료형이다
+|errors="coerce"는 잘못된 데이터를 수정한다|	변환 실패를 결측으로 표현할 뿐, 원인을 자동으로 보존하지 않는다
+|sum()이 0이면 합계가 0으로 관측되었다|	유효한 관측값이 없어도 기본 설정에서 0이 반환될 수 있다
+|Nullable dtype은 모든 내부 구현이 같다|	자료형과 백엔드에 따라 저장 방식이 달라진다
+\end{dhktable}
+
+여기에 버전 의존성도 고려해야 한다.
+
+특히 Pandas 2.x와 3.x는 문자열 자료형의 기본 추론, Copy-on-Write 동작 등에서 차이가 있다.
+
+따라서 학습 코드에서는 \zsh{dtype}을 명시하고, 결과를 재현할 때 Pandas 버전을 함께 기록하는 것이 좋다.
+
+이번 학습의 코드는 로컬 환경의 Pandas 2.2.3, NumPy 2.3.5에서 실행해 주요 출력과 오류 동작을 확인하였다.
+
+\subsubsection{핵심 정리 및 다음 학습}
+
+이번 \zsh{D.3}에서 가장 중요한 결론은 세 가지다.
+
+첫째, Python 객체 타입과 데이터 저장 자료형은 다른 개념이다.
+
+\zsh{type(s)}는 Series 객체의 타입을 나타내고, \zsh{s.dtype}은 Series가 관리하는 값들의 자료형을 나타낸다.
+
+둘째, 결측값은 하나의 공통 객체로 통일되어 있지 않다.
+
+\zsh{None}, \zsh{np.nan}, \zsh{pd.NA}, \zsh{pd.NaT}는 서로 다른 객체와 연산 규칙을 갖지만 Pandas의 결측 검사 인터페이스를 통해 공통적으로 다룰 수 있다.
+
+셋째, 결측 처리에는 데이터의 의미에 관한 판단이 필요하다.
+
+\zsh{fillna(0)}, \zsh{errors="coerce"}, \zsh{dropna()}는 단순한 코드 조작이 아니라 데이터의 의미와 분석 대상 자체를 바꿀 수 있는 결정이다.
+
+\zsh{D.3}에서는 Series가 어떤 dtype으로 값을 관리하는지 배웠다.
+
+이제 다음 질문이 자연스럽게 발생할 것이다.
+
+\begin{dhkcode}
+s = pd.Series(
+    [10, 20, 30],
+    index=[2, 0, 1],
+)
+\end{dhkcode}
+
+이때 \zsh{s[0]}은 첫 번째 원소인 10을 반환할까, 아니면 레이블 0에 대응하는 20을 반환할까?
+
+\zsh{D.4}에서는 \zsh{[]}, \zsh{.loc}, \zsh{.iloc}, \zsh{.at}, \zsh{.iat}의 동작을 객체의 속성 탐색과 인덱싱 프로토콜에 연결해 분석할 것이다.
+
+특히 정수 레이블과 정수 위치가 충돌하는 상황, 반환 타입, 슬라이스 경계, 중복 레이블의 영향을 다룰 것이다.
+
+공식 참고 자료:
+
+\begin{dhksmry}
+https://pandas.pydata.org/docs/user_guide/missing_data.html
+https://pandas.pydata.org/docs/user_guide/integer_na.html
+https://pandas.pydata.org/docs/user_guide/boolean.html
+https://pandas.pydata.org/docs/user_guide/categorical.html
+\end{dhksmry}
