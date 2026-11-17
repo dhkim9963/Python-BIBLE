@@ -246,14 +246,819 @@ _iLocIndexer
 실행 흐름을 단순화하면 다음과 같다.
 
 \begin{dhkgraph}[uniform]
-node n1 (2,1) :: DataFrame 객체 df
-node n2 (1,2) [accent] :: df.loc//레이블 인덱서
-node n3 (1,3) [accent]:: [0, "text"]//"beta"
-node n4 (3,2) :: df.iloc//위치 인덱서
-node n5 (3,3) :: [0, 0]//"alpha"
+node n1 (1,1) [span=2] :: DataFrame 객체 df
+node n2 (2,1) [accent] :: df.loc//레이블 인덱서
+node n3 (3,1) [accent]:: [0, "text"]//"beta"
+node n4 (2,2) :: df.iloc//위치 인덱서
+node n5 (3,2) :: [0, 0]//"alpha"
 
 split n1 -> n2, n4
 edge n2->n3
 edge n4->n5
 caption::속성 탐색으로 인덱서 객체를 얻고, 그 객체에 구독 연산을 적용하는 흐름이다.
 \end{dhkgraph}
+
+이제 다음 표현식을 살펴보자.
+
+\begin{dhkcode}
+df.loc[0, "text"]
+\end{dhkcode}
+
+Python 문법 수준에서 대괄호 안의 \zsh{0, "text"}는 두 원소를 갖는 튜플로 전달된다.
+
+개념적으로는 다음과 같은 흐름이다.
+
+\begin{dhkcode}
+indexer = df.loc
+result = indexer.__getitem__((0, "text"))
+\end{dhkcode}
+
+이것은 내부 구현을 단순화한 설명이다.
+
+실제 Pandas는 인덱서의 종류와 키 형태에 따라 여러 내부 경로를 사용한다.
+
+반면 다음 표현식은 두 번의 선택 연산을 수행한다.
+
+\begin{dhkcode}
+df.loc[0]["text"]
+\end{dhkcode}
+
+먼저 \zsh{df.loc[0]}으로 행을 선택한 다음, 반환된 Series에서 \zsh{"text"}를 선택한다.
+
+따라서 두 표현식은 읽기 결과가 같더라도 실행 구조가 다르다.
+
+특히 값을 할당할 때는 이 차이가 중요해진다.
+
+두 단계로 선택한 뒤 값을 변경하는 연쇄 대입(chained assignment)은 Copy-on-Write와 관련된 문제가 있으므로 \zsh{D.7}에서 자세히 다룰 것이다.
+
+\subsubsection{선택 키의 형태에 따라 반환 객체가 달라진다}
+
+\zsh{.loc}과 \zsh{.iloc}은 단순히 데이터를 찾는 기능만 제공하지 않는다.
+
+선택한 축을 유지하는지, 축 하나를 제거하는지에 따라 반환 객체의 차원이 달라진다.
+
+\zsh{D.4.3}의 \zsh{df}를 사용해 보자.
+
+\begin{dhkcode}
+a = df.loc[2]
+b = df.loc[[2]]
+c = df.loc[2, "label"]
+d = df.loc[2, ["label"]]
+e = df.loc[[2], ["label"]]
+
+print(type(a).__name__, a.shape)
+print(type(b).__name__, b.shape)
+print(type(c).__name__, c)
+print(type(d).__name__, d.shape)
+print(type(e).__name__, e.shape)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+Series (3,)
+DataFrame (1, 3)
+int64 1
+Series (1,)
+DataFrame (1, 1)
+\end{dhkzsh}
+
+여기서 \zsh{int64}는 \zsh{type(c).__name__}으로 확인한 NumPy 스칼라 타입 이름이다.
+
+\begin{dhktable}
+|선택 표현식|	반환 객체|	차원|
+|:---|:---|:---|
+|df.loc[2]|	Series	|1|
+|df.loc[[2]]|	DataFrame	|2|
+|df.loc[2, "label"]|	NumPy 정수 스칼라	|0|
+|df.loc[2, ["label"]]|	Series	|1|
+|df.loc[[2], ["label"]]|	DataFrame	|2|
+\end{dhktable}
+
+이 표를 보면 하나의 규칙을 발견할 수 있다.
+
+일반적으로 유일한 레이블을 가진 축에서 스칼라 키 하나로 선택하면 해당 축이 축소되고, 리스트 형태로 선택하면 해당 축이 유지된다.
+
+예를 들어 다음 두 표현식을 비교해 보자.
+
+\begin{dhkcode}
+df.loc[2]
+df.loc[[2]]
+\end{dhkcode}
+
+첫 번째는 행 하나를 Series로 반환한다.
+
+이때 원본 DataFrame의 열 레이블이 반환된 Series의 Index가 된다.
+
+두 번째는 행 하나만 포함하는 DataFrame을 반환한다.
+
+따라서 행 축과 열 축이 모두 유지된다.
+
+다만 이것은 유일한 레이블을 가진 일반적인 경우에 관한 설명이다.
+
+중복 레이블이 있다면 스칼라 레이블을 전달해도 여러 행이나 열이 선택될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+행을 Series로 선택할 때 dtype은 어떻게 될까?
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{D.4.3}의 DataFrame에는 문자열 열과 정수 열이 함께 존재한다.
+
+\begin{dhkcode}
+row = df.loc[2]
+
+print(row.dtype)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+object
+\end{dhkzsh}
+
+하나의 Series는 하나의 dtype을 갖기 때문에, 서로 다른 dtype의 열들을 하나의 행 Series로 구성하면 공통 표현을 위해 dtype이 달라질 수 있다.
+
+이것은 \zsh{D.3}의 자료형 개념과 직접 연결된다.
+
+따라서 특정 열의 dtype을 보존해야 하는 분석에서는 행 전체를 Series로 추출한 결과와 원래 열의 dtype이 반드시 같다고 가정하면 안 된다.
+
+\subsubsection{\zsh{.loc}과 \zsh{.iloc}의 슬라이싱은 왜 종료 경계가 다를까?}
+
+Python의 일반적인 슬라이스는 다음 구조를 사용한다.
+
+\begin{dhkcode}
+sequence[start:stop]
+\end{dhkcode}
+
+여기서 \zsh{stop}의 위치는 포함되지 않는다.
+
+Pandas의 \zsh{.iloc}도 위치 기반 슬라이싱에서 이 규칙을 따른다.
+
+하지만 \zsh{.loc}은 레이블 기반 슬라이싱에서 일반적으로 종료 레이블을 포함한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 2 - 슬라이스 경계 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"score": [90, 80, 70]},
+    index=[2, 0, 1],
+)
+
+print(df.loc[0:1].index.tolist())
+print(df.iloc[0:2].index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[0, 1]
+[2, 0]
+\end{dhkzsh}
+
+왜 다를까?
+
+\zsh{df.loc[0:1]}은 레이블 0에서 시작해 레이블 1까지 선택한다.
+
+현재 Index에서 두 레이블이 모두 존재하므로 두 행이 포함된다.
+
+반면 \zsh{df.iloc[0:2]}는 위치 0부터 위치 2 직전까지 선택한다.
+
+따라서 위치0, 1에 해당하는 레이블 2, 0의 행이 반환된다.
+
+이 차이를 다음처럼 정리할 수 있다.
+
+\begin{dhktable}
+|구분|	.loc[start:stop]|	.iloc[start:stop]|
+|:---|:---|:---|
+|기준|	레이블|	정수 위치|
+|시작 경계|	포함|	포함|
+|종료 경계|	일반적으로 포함|	제외|
+|정수 인수의 의미|	정수 레이블|	정수 위치|
+|음수 인수|	음수 레이블|	뒤에서부터의 위치|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+두 축을 동시에 슬라이싱하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+result = df.loc[0:1]
+\end{dhkcode}
+
+이 표현식은 행만 선택한다.
+
+반면 DataFrame에서는 행과 열을 동시에 지정할 수 있다.
+
+\begin{dhkcode}
+result = df.loc[
+    0:1,
+    "label":"token_length",
+]
+\end{dhkcode}
+
+\zsh{D.4.3}의 공통 DataFrame을 사용했다면 결과는 다음과 같다.
+
+\begin{dhkzsh}
+        label  token_length
+doc_id
+0           0             3
+1           1             7
+\end{dhkzsh}
+
+동일한 영역을 위치 기준으로 선택하면 다음과 같다.
+
+\begin{dhkcode}
+result = df.iloc[1:3, 1:3]
+\end{dhkcode}
+
+이 경우에는 행 위치 1, 2와 열 위치 1, 2를 선택한다.
+
+여기서 중요한 사실은 \zsh{.loc}의 종료 경계 포함 규칙이 행과 열 모두에 적용된다는 점이다.
+
+또한 \zsh{.loc} 슬라이스는 숫자의 대소관계를 단순 비교하는 연산이 아니다.
+
+Index에 저장된 레이블의 순서와 슬라이싱 가능 조건에 따라 범위를 결정한다.
+
+예를 들어 정렬되지 않은 Index에서 슬라이스 경계 레이블이 존재하지 않으면 \zsh{KeyError}가 발생할 수 있다.
+
+반면 정렬된 Index에서는 존재하지 않는 경계값을 기준으로 범위를 결정할 수 있는 경우도 있다.
+
+따라서 \zsh{.loc} 슬라이싱을 일반적인 숫자 구간 필터링과 동일하게 이해해서는 안 된다.
+
+\subsubsection{\zsh{.at}과 \zsh{.iat}은 무엇이 다른가?}
+
+\zsh{.loc}과 \zsh{.iloc}은 행, 열, 범위, 목록 등을 선택할 수 있는 범용 인덱서다.
+
+반면 \zsh{.at}과 \zsh{.iat}은 하나의 셀에 접근하는 용도로 특화된 인덱서다.
+
+\begin{dhktable}
+|인덱서	|기준|	주요 목적|
+|:---|:---|:---|
+|.loc|	레이블|	행·열·범위 선택|
+|.iloc|	위치|	행·열·범위 선택|
+|.at|	레이블|	단일 셀 조회·할당|
+|.iat|	위치|	단일 셀 조회·할당|
+\end{dhktable}
+
+\zsh{D.4.3}의 DataFrame을 사용하면 다음과 같다.
+
+\begin{dhkcode}
+print(df.at[2, "label"])
+print(df.iat[0, 1])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1
+1
+\end{dhkzsh}
+
+첫 번째 표현식은 행 레이블 2, 열 레이블 \zsh{"label"}을 선택한다.
+
+두 번째 표현식은 첫 번째 행과 두 번째 열을 선택한다.
+
+현재 두 좌표가 동일한 셀을 가리키므로 결과도 같다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+.at은 언제나 스칼라를 반환할까?
+\end{dhksmry}
+\end{dhknote}
+
+일반적으로는 그렇지만, 레이블이 중복된 경우에는 예외가 있다.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"score": [10, 20, 30]},
+    index=["A", "A", "B"],
+)
+
+result = df.at["A", "score"]
+
+print(type(result).__name__)
+print(result.tolist())
+\end{dhkcode}
+
+Pandas 2.2.3 기준 실행 결과:
+
+\begin{dhkzsh}
+Series
+[10, 20]
+\end{dhkzsh}
+
+왜 스칼라가 아니라 Series가 반환되었을까?
+
+행 레이블 \zsh{"A"}가 두 번 등장하기 때문이다.
+
+\zsh{"A"}라는 레이블만으로는 하나의 행을 유일하게 결정할 수 없다.
+
+이 경우 Pandas의 \zsh{.at}은 단일 셀을 보장할 수 없고, 중복 레이블에 대응하는 여러 값을 반환할 수 있다.
+
+따라서 \zsh{.at}을 사용하는 코드에서 단일 값이 반드시 필요하다면 Index와 열 레이블의 유일성을 먼저 확인하는 것이 좋다.
+
+\begin{dhkcode}
+print(df.index.is_unique)
+print(df.columns.is_unique)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+이 문제는 단순한 성능 문제가 아니라 레이블이 데이터를 유일하게 식별하는가에 관한 문제다.
+
+\subsubsection{불리언 마스크를 선택할 때 레이블 정렬이 개입한다}
+
+이 부분은 \zsh{D.5}의 Index alignment와 \zsh{D.6}의 불리언 마스크를 연결하는 핵심 개념이다.
+
+일반적인 NumPy 배열에서 불리언 마스크는 원소의 위치를 기준으로 적용된다.
+
+하지만 Pandas의 \zsh{.loc}에 불리언 Series를 전달하면 Series의 Index 레이블이 선택 과정에 개입할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 3 - 같은 불리언 값, 다른 선택 결과
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"score": [90, 80, 70]},
+    index=[2, 0, 1],
+)
+
+mask = pd.Series(
+    [True, False, True],
+    index=[1, 2, 0],
+)
+
+by_label = df.loc[mask]
+by_position = df.iloc[mask.to_numpy()]
+
+print(by_label.index.tolist())
+print(by_position.index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[0, 1]
+[2, 1]
+\end{dhkzsh}
+
+두 결과가 왜 다를까?
+
+먼저 \zsh{mask}의 값을 살펴보자.
+
+\begin{dhktable}
+|마스크의 레이블	|불리언 값|
+|:---|:---|
+|1	|True|
+|2	|False|
+|0	|True|
+\end{dhktable}
+
+\zsh{.loc[mask]}는 DataFrame의 Index 레이블에 맞춰 마스크를 해석한다.
+
+따라서 레이블 2는 제외하고, 레이블 0과 1을 선택한다.
+
+반면 다음 표현식은 다르다.
+
+\begin{dhkcode}
+mask.to_numpy()
+\end{dhkcode}
+
+이 변환을 통해 Index 레이블 정보가 사라지고, 불리언 값의 순서만 남는다.
+
+\begin{dhkzsh}
+[True, False, True]
+\end{dhkzsh}
+
+이 배열을 \zsh{.iloc}에 전달하면 첫 번째 행과 세 번째 행을 선택한다.
+
+그래서 레이블 2와 1이 반환되는 것이다.
+
+이것은 매우 중요한 차이다.
+
+불리언 Series를 레이블 기준으로 적용하는 것과 불리언 배열을 위치 기준으로 적용하는 것은 서로 다른 연산이다.
+
+특히 다른 DataFrame에서 만든 마스크를 무심코 \zsh{.to_numpy()}로 변환하면 행 순서가 다를 때 잘못된 샘플을 선택할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+레이블이 대응하지 않으면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+bad_mask = pd.Series(
+    [True, False],
+    index=[2, 0],
+)
+
+df.loc[bad_mask]
+\end{dhkcode}
+
+현재 DataFrame에는 레이블 1도 존재한다.
+
+그런데 \zsh{bad_mask}에는 레이블 1에 대응하는 값이 없다.
+
+따라서 이 코드는 다음 오류를 발생시킨다.
+
+\begin{dhkzsh}
+IndexingError: Unalignable boolean Series provided as indexer ...
+\end{dhkzsh}
+
+이 오류는 데이터 길이만의 문제가 아니다.
+
+선택 대상의 Index와 불리언 Series의 Index가 정합하게 대응하지 않는 문제다.
+
+이후 \zsh{D.5}에서는 이러한 정렬이 산술 연산과 할당에서도 어떻게 적용되는지 분석할 것이다.
+
+\subsubsection{선택 실패는 어떤 예외를 발생시키는가?}
+
+레이블 기반 선택과 위치 기반 선택은 실패할 때도 다른 예외를 발생시킬 수 있다.
+
+\zsh{D.4.3}의 DataFrame을 기준으로 다음 코드를 살펴보자.
+
+\begin{dhkcode}
+try:
+    df.loc[99]
+except Exception as e:
+    print(type(e).__name__)
+
+try:
+    df.iloc[99]
+except Exception as e:
+    print(type(e).__name__)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+KeyError
+IndexError
+\end{dhkzsh}
+
+\zsh{df.loc[99]}는 레이블 99를 찾으려고 한다.
+
+하지만 현재 Index에는 99가 없으므로 \zsh{KeyError}가 발생한다.
+
+반면 \zsh{df.iloc[99]}는 위치 99의 행을 찾으려고 한다.
+
+현재 DataFrame에는 세 개의 행만 있으므로 유효한 위치 범위를 벗어나 \zsh{IndexError}가 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+음수 인덱스도 다르게 해석된다
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(df.iloc[-1, 1])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1
+\end{dhkzsh}
+
+\zsh{.iloc[-1, 1]}은 마지막 행의 두 번째 열을 선택한다.
+
+하지만 다음 표현식은 다르다.
+
+\begin{dhkcode}
+df.loc[-1, "label"]
+\end{dhkcode}
+
+현재 Index에 -1이라는 레이블이 없으므로 \zsh{KeyError}가 발생한다.
+
+\zsh{.loc}은 음수를 뒤에서부터의 위치로 해석하지 않기 때문이다.
+
+이 차이를 알고 있으면 예외의 종류만 보고도 어떤 선택 기준에서 문제가 발생했는지 추론할 수 있다.
+
+\subsubsection{선택과 할당은 원본 객체를 어떻게 변화시킬까?}
+
+지금까지는 주로 데이터를 읽었다.
+
+하지만 Pandas 인덱서는 값을 변경하는 데에도 사용된다.
+
+다음 예제를 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 4 - DataFrame의 상태 변경
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+original = pd.DataFrame(
+    {"score": [90, 80]},
+    index=["A", "B"],
+)
+
+df = original.copy()
+alias = df
+
+df.loc["A", "score"] = 100
+
+print(original.loc["A", "score"])
+print(df.loc["A", "score"])
+print(alias.loc["A", "score"])
+
+print(df is alias)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+90
+100
+100
+True
+\end{dhkzsh}
+
+이 과정을 Python 객체 모델로 분석해 보자.
+
+첫째, \zsh{original.copy()}가 새로운 DataFrame 객체를 반환한다.
+
+반환 객체가 \zsh{df}라는 이름에 바인딩된다.
+
+둘째, \zsh{alias = df}는 새로운 DataFrame을 생성하지 않는다.
+
+기존 \zsh{df}가 참조하는 객체에 \zsh{alias}라는 이름을 추가로 바인딩한 것이다.
+
+셋째, \zsh{df.loc["A", "score"] = 100}은 기존 DataFrame 객체의 상태를 변경한다.
+
+따라서 같은 객체를 참조하는 \zsh{alias}에서도 변경된 값이 관찰된다.
+
+반면 \zsh{original}은 별도의 DataFrame 객체이므로 원래 값을 유지한다.
+
+여기서 중요한 것은 \zsh{.loc}이 새로운 DataFrame을 반환했느냐가 아니다.
+
+할당문이기 때문에 선택한 위치에 값을 기록하도록 Pandas의 인덱싱 할당 메커니즘이 작동한 것이다.
+
+다만 다음 두 표현식을 동일하게 취급해서는 안 된다.
+
+\begin{dhkcode}
+df.loc["A", "score"] = 100
+df.loc["A"]["score"] = 100
+\end{dhkcode}
+
+첫 번째는 원본 DataFrame에 대한 직접적인 인덱싱 할당이다.
+
+두 번째는 중간에 행 선택 결과를 거치는 연쇄 대입이므로 Copy-on-Write 설정과 Pandas 버전에 따라 원본 변경 여부가 달라질 수 있다.
+
+이 문제는 \zsh{D.7}의 핵심 학습 내용이다.
+
+\subsubsection{ML/Transformer 응용 - 오류 문서 추적과 행 순서 변화}
+
+이번에는 문서 분류 모델의 예측 결과를 분석해 보자.
+
+모델의 예측값과 정답 레이블을 비교해 오류가 발생한 문서를 찾고 모델 신뢰도에 따라 데이터를 정렬한다고 가정한다.
+
+이 과정에서 \zsh{.loc}과 \zsh{.iloc}의 역할이 분명해진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 5 - 문서 ID를 기준으로 오류 추적
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "text": ["alpha", "beta", "gamma"],
+        "label": [1, 0, 1],
+        "prediction": [0, 0, 1],
+    },
+    index=pd.Index(
+        ["doc-C", "doc-A", "doc-B"],
+        name="doc_id",
+    ),
+)
+
+scores = pd.Series(
+    [0.93, 0.82, 0.64],
+    index=["doc-B", "doc-C", "doc-A"],
+    name="confidence",
+)
+
+df["confidence"] = scores
+
+errors = df.loc[
+    df["label"] != df["prediction"],
+    ["text", "label", "prediction"],
+]
+
+ordered = df.sort_values("confidence")
+
+print(df["confidence"].tolist())
+print(errors.index.tolist())
+print(errors.loc["doc-C", "text"])
+
+print(ordered.index.tolist())
+print(ordered.loc["doc-C", "text"])
+print(ordered.iloc[0]["text"])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[0.82, 0.64, 0.93]
+['doc-C']
+alpha
+['doc-A', 'doc-C', 'doc-B']
+alpha
+beta
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+먼저 \zsh{scores}의 Index 순서는 다음과 같다.
+
+\begin{dhkzsh}
+doc-B, doc-C, doc-A
+\end{dhkzsh}
+
+반면 \zsh{df}의 Index 순서는 다음과 같다.
+
+\begin{dhkzsh}
+doc-C, doc-A, doc-B
+\end{dhkzsh}
+
+그런데 다음 할당을 수행했다.
+
+\begin{dhkcode}
+df["confidence"] = scores
+\end{dhkcode}
+
+Pandas는 Series를 DataFrame 열에 할당할 때 Index 레이블을 기준으로 값을 대응시킨다.
+
+따라서 \zsh{df["confidence"]}는 현재 DataFrame의 행 순서에 맞춰 다음 값을 갖게 된다.
+
+\begin{dhkzsh}
+doc-C → 0.82
+doc-A → 0.64
+doc-B → 0.93
+\end{dhkzsh}
+
+이것은 \zsh{D.5}에서 다룰 Index alignment의 예고편이다.
+
+다음으로 오류 문서를 선택한다.
+
+\begin{dhkcode}
+errors = df.loc[
+    df["label"] != df["prediction"],
+    ["text", "label", "prediction"],
+]
+\end{dhkcode}
+
+여기서 \zsh{df["label"] != df["prediction"]}은 불리언 Series를 생성한다.
+
+\zsh{.loc}은 그 조건을 만족하는 행과 지정된 열을 선택해 DataFrame을 반환한다.
+
+현재 오류가 발생한 문서는 \zsh{doc-C} 하나다.
+
+마지막으로 신뢰도 기준으로 정렬한다.
+
+\begin{dhkcode}
+ordered = df.sort_values("confidence")
+\end{dhkcode}
+
+정렬 후 행의 위치는 바뀌었지만 문서 ID는 유지된다.
+
+따라서 다음 표현식은 여전히 \zsh{doc-C}의 텍스트를 반환한다.
+
+\begin{dhkcode}
+ordered.loc["doc-C", "text"]
+\end{dhkcode}
+
+반면 다음 표현식은 정렬된 DataFrame의 첫 번째 행을 선택한다.
+
+\begin{dhkcode}
+ordered.iloc[0]["text"]
+\end{dhkcode}
+
+그래서 결과가 \zsh{"beta"}가 되는 것이다.
+
+여기서 얻어야 할 핵심 원칙은 다음과 같다.
+
+샘플의 정체성을 기준으로 데이터를 추적할 때는 안정적인 식별자 레이블을 사용하고, 현재 배열의 순서를 기준으로 처리할 때는 위치 인덱싱을 사용해야 한다.
+
+이 구분을 놓치면 정렬이나 필터링 이후 텍스트와 정답 레이블, 예측 결과가 서로 다른 샘플에 대응하는 문제가 발생할 수 있다.
+
+\subsubsection{핵심 개념 비교 및 판단 기준}
+
+\begin{dhktable}
+|인터페이스	|기준|	대표 사용법|	주의할 점|
+|:---|:---|:---|:---|
+|Series[...]|	키 종류 및 Index에 따른 해석|	s[0]	|정수 레이블과 위치 혼동|
+|DataFrame[...]|	주로 열 레이블, 슬라이스 등|	df["label"]	|키 형태에 따라 행·열 선택이 달라짐|
+|.loc[...]|	레이블	|df.loc["doc-A"]|	종료 레이블 포함, 중복 레이블|
+|.iloc[...]|	정수 위치	|df.iloc[0]	|범위 초과, 슬라이스 종료 위치 제외|
+|.at[...]|	레이블	|df.at["doc-A", "label"]|	중복 레이블이면 스칼라 보장 안 됨|
+|.iat[...]|	정수 위치	|df.iat[0, 1]|	유효한 단일 위치 필요|
+\end{dhktable}
+
+실제 코드를 읽을 때는 다음 판단 순서를 적용하면 좋다.
+
+\begin{dhksmry}
+선택 표현식을 분석하는 순서
+1. 선택 대상 객체 확인
+   - Series인가, DataFrame인가, 인덱서 객체인가?
+
+2. 키의 의미 확인
+   - 레이블인가, 정수 위치인가, 슬라이스인가, 목록인가?
+
+3. 축 확인
+   - 행을 선택하는가, 열을 선택하는가, 두 축을 동시에 선택하는가?
+
+4. 반환 타입 확인
+   - 스칼라인가, Series인가, DataFrame인가?
+
+5. 경계 조건 확인
+   - 중복 레이블, 누락된 레이블, 불리언 마스크 정합성은 어떤가?
+
+6. 상태 변화 확인
+   - 조회만 하는가, 원본에 할당하는가, 새로운 객체를 이름에 바인딩하는가?
+\end{dhksmry}
+
+이 순서를 따르면 대부분의 Pandas 선택 코드를 Python 객체 모델에 근거해 설명할 수 있다.
+
+특히 \zsh{df.loc[...]}과 \zsh{df.iloc[...]}의 차이를 단순히 이름으로 찾기와 번호로 찾기 정도로 암기하지 않는 것이 중요하다.
+
+이 둘은 서로 다른 인덱서 객체이며, 키 해석, 슬라이싱, 불리언 선택, 예외 발생, 데이터 정렬과의 관계까지 달라진다.
+
+\subsubsection{학습 정리와 다음 학습 위치}
+
+이번 \zsh{D.4}에서는 레이블과 위치라는 두 선택 기준을 Python 객체 모델과 연결했다.
+
+핵심은 Pandas의 데이터 선택이 단순한 배열 접근이 아니라, Index 객체와 인덱서 객체가 함께 참여하는 연산이라는 사실이다.
+
+Pandas의 Index는 선택 연산에만 사용되는 것이 아니다.
+
+다음 두 Series를 생각해 보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "A"],
+)
+
+print(a + b)
+\end{dhkcode}
+
+이 연산은 위치 기준으로 \zsh{[11, 22]}를 계산하지 않는다.
+
+레이블을 기준으로 값을 대응시키기 때문에 다음 결과가 발생한다.
+
+\begin{dhkzsh}
+A    12
+B    21
+dtype: int64
+\end{dhkzsh}
+
+\zsh{D.5}에서는 이러한 Index alignment가 산술 연산, 비교 연산, DataFrame과 Series의 연산, 결측값 생성, 할당 과정에 어떻게 개입하는지 분석할 것이다.
+
+공식 참고 자료
+
+\begin{dhksmry}
+https://pandas.pydata.org/docs/user_guide/indexing.html
+https://pandas.pydata.org/docs/user_guide/advanced.html
+https://pandas.pydata.org/docs/user_guide/migration.html
+\end{dhksmry}
