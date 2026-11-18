@@ -1,0 +1,1528 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% D.5. Index alignment와 이항 연산
+% ==================================================
+
+\subsection{Index alignment와 이항 연산}
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{D.4}에서는 Pandas의 데이터를 선택하는 두 가지 좌표계를 구분했다.
+
+\begin{dhksmry}
+    - 레이블(label): Index가 관리하는 식별값
+
+    - 위치(position): 현재 데이터에서 원소가 놓인 순서
+\end{dhksmry}
+
+\zsh{df.loc[...]}은 레이블을 기준으로, \zsh{df.iloc[...]}은 위치를 기준으로 데이터를 선택했다.
+
+그런데 Pandas에서 Index의 역할은 데이터 선택에 그치지 않는다.
+
+두 Series를 더하거나, DataFrame에 Series를 할당하거나, 
+
+서로 다른 DataFrame을 연산할 때도 Index가 결과에 개입한다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "A"],
+)
+
+print(a + b)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    12
+B    21
+dtype: int64
+\end{dhkzsh}
+
+두 Series의 \zsh{shape}은 모두 \zsh{(2,)}다.
+
+하지만 위치별로 더한 \zsh{[11, 22]}가 아니라 \zsh{[12, 21]}이 반환되었다.
+
+왜 이런 결과가 발생할까?
+
+Pandas는 두 Series를 더할 때 단순히 같은 위치의 원소를 대응시키는 것이 아니라, Index 레이블이 같은 원소끼리 대응시킨 다음 연산하기 때문이다.
+
+이 과정을 \zsh{Index alignment(인덱스 정렬 또는 레이블 정합)}라고 한다.
+
+여기서 alignment를 단순한 행 정렬(sort)과 혼동하면 안 된다.
+
+Alignment의 핵심은 데이터를 어떤 순서로 나열하는가가 아니라, 어떤 원소와 어떤 원소가 서로 대응하는가를 결정하는 데 있다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 \zsh{D.5}에서는 다음 내용을 분석할 것이다.
+
+\begin{dhksmry}
+Index alignment는 정확히 어떤 연산이며, 언제 자동으로 발생하는가?
+
+두 Series의 레이블 순서가 다르거나 일부 레이블이 없으면 어떻게 되는가?
+
+DataFrame끼리 연산하면 행 Index와 열 Index가 각각 어떤 역할을 하는가?
+
+DataFrame과 Series를 연산할 때는 어느 축을 기준으로 대응시키는가?
+
+산술 연산, 비교 연산, 할당은 모두 같은 정렬 규칙을 따르는가?
+
+중복 Index가 있으면 결과의 행 수와 값이 어떻게 달라지는가?
+
+NumPy 배열로 변환하면 왜 레이블 정합성이 사라지는가?
+\end{dhksmry}
+
+이번 학습의 가장 중요한 목표는 다음 판단을 할 수 있게 되는 것이다.
+
+\begin{dhksmry}[centered]
+연산을 수행하기 전에 두 객체의 값뿐 아니라 Index를 확인하여, 어떤 
+
+원소끼리 계산되고 어떤 결과가 결측으로 남을지 예측할 수 있어야 한다.
+\end{dhksmry}
+
+\subsubsection{Index alignment의 정확한 정의}
+
+Index alignment는 두 Pandas 객체의 연산에서 레이블을 기준으로 대응 관계를 구성하는 과정이다.
+
+Series 두 개가 있다고 가정해 보자.
+
+\begin{dhkcode}
+a = pd.Series([10, 20], index=["A", "B"])
+b = pd.Series([1, 2], index=["B", "A"])
+\end{dhkcode}
+
+각 Series는 다음과 같은 대응 관계를 갖고 있다.
+
+\begin{dhkmatrix}[delim=none,style=plain]
+cols:: ,Series a, , ,Series b
+data :: [[A,10, <->, B,1],[B,20,레이블 대응,A,2]]
+\end{dhkmatrix}
+
+\begin{dhkmatrix}[delim=none,style=plain]
+title::Alignment 이후의 계산 관계
+data::[[레이블 A,,10+2, ,12],[레이블 B,,20+1, ,21]]
+\end{dhkmatrix}
+
+두 Series의 Index 레이블이 유일하다고 가정하면, 기본 산술 연산의 대응 관계를 다음과 같이 표현할 수 있다.
+
+\[
+(a+b)[k]=a[k]+b[k]
+\]
+
+여기서 \(k\)는 Index 레이블이다.
+
+두 Series의 레이블 집합이 다르다면 기본 산술 연산은 일반적으로 양쪽 레이블의 합집합(union)을 기준으로 결과를 구성한다.
+
+\[
+I_{\text{result}}=I_a\cup I_b
+\]
+
+다만 이것은 유일한 Index를 갖는 Series의 기본 산술 연산을 설명하는 모델이다.
+
+중복 레이블, 비교 연산, 명시적인 정렬 옵션 등에서는 세부 규칙이 달라질 수 있다.
+
+또한 이 수식은 계산할 값의 대응 관계를 나타내는 것이지, Pandas 내부에서 반드시 레이블별 Python 반복문을 실행한다는 뜻은 아니다.
+
+Pandas는 Index에 맞춰 데이터의 위치 관계를 구성한 다음, 배열 연산을 활용해 계산할 수 있다.
+
+\subsubsection{Series간 산술 연산 - 레이블 순서가 다른 경우}
+
+먼저 \zsh{D.5.1}의 예제를 객체 관점에서 다시 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 1
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import numpy as np
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "A"],
+)
+
+result = a + b
+
+print(result)
+print(result.shape)
+print(result.dtype)
+print(a.index.equals(b.index))
+
+print(a.to_numpy() + b.to_numpy())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    12
+B    21
+dtype: int64
+(2,)
+int64
+False
+[11 22]
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1단계 - Series 객체 생성
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{a}와 \zsh{b}는 서로 다른 Series 인스턴스를 참조한다.
+
+두 객체 모두 \zsh{shape == (2,)}이고 \zsh{dtype == int64} 이지만, Index 레이블의 순서가 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2단계 - a + b 평가
+\end{dhksmry}
+\end{dhknote}
+
+Python은 \zsh{+} 연산에 대응하는 객체의 산술 연산 프로토콜을 사용한다.
+
+Pandas Series는 이러한 연산을 구현하면서 Index alignment를 수행한다.
+
+따라서 \zsh{a}의 \zsh{"A"}에 대응하는 값 10과 \zsh{b}의 \zsh{"A"}에 대응하는 값 2가 더해진다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3단계 - 결과 객체 반환
+\end{dhksmry}
+\end{dhknote}
+
+연산 결과를 담은 새로운 Series가 반환되고, \zsh{result}라는 이름에 바인딩된다.
+
+원본 \zsh{a}, \zsh{b}의 값과 Index는 변경되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4단계 - NumPy 배열과 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+a.to_numpy() + b.to_numpy()
+\end{dhkcode}
+
+이번에는 Series가 아니라 NumPy 배열끼리 더한다.
+
+NumPy 배열에는 Pandas의 Index 레이블이 없으므로 같은 위치의 값이 대응된다.
+
+따라서 결과가 \zsh{[11, 22]}로 달라지는 것이다.
+
+이것은 \zsh{D.1}에서 배운 NumPy와 Pandas의 가장 중요한 차이를 실제 연산으로 확인한 사례다.
+
+Pandas의 Series끼리 연산하는 것과 Series를 NumPy 배열로 변환한 뒤 연산하는 것은 일반적으로 동등하지 않다.
+
+\subsubsection{두 Index가 완전히 일치하지 않으면 어떻게 될까?}
+
+지금까지는 두 Series의 레이블 집합이 같았다.
+
+이번에는 일부 레이블만 일치하는 경우를 살펴보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 2 - 레이블 합집합과 결측값
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+    dtype="int64",
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "C"],
+    dtype="int64",
+)
+
+result = a + b
+
+print(result)
+print(result.shape)
+print(result.dtype)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A     NaN
+B    21.0
+C     NaN
+dtype: float64
+(3,)
+float64
+\end{dhkzsh}
+
+왜 결과가 세 개의 원소를 갖게 되었을까?
+
+두 Series의 레이블을 비교해 보자.
+
+\begin{dhktable}
+|레이블|	a의 값|	b의 값|	연산 결과|
+|:---|:---|:---|:---|
+|A|	10|	없음	|NaN|
+|B|	20|	1	|21.0|
+|C|	없음|	2|	NaN|
+\end{dhktable}
+
+기본 산술 연산은 두 Index의 합집합인 \zsh{["A", "B", "C"]}를 결과 레이블로 구성한다.
+
+그런데 \zsh{"A"}에는 \zsh{b}의 값이 없고, \zsh{"C"}에는 \zsh{a}의 값이 없다.
+
+이 경우 계산에 필요한 피연산자가 존재하지 않으므로 결측값이 발생한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 int64가 float64로 바뀌었을까?
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{D.3}에서 배운 내용을 연결해 보자.
+
+일반적인 NumPy 기반 \zsh{int64}는 \zsh{NaN}을 정수 결측값으로 표현할 수 없다.
+
+따라서 결측이 발생한 결과는 \zsh{float64}로 변환될 수 있다.
+
+하지만 Nullable 정수형이라면 결과가 달라진다.
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+    dtype="Int64",
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "C"],
+    dtype="Int64",
+)
+
+result = a + b
+
+print(result)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    <NA>
+B      21
+C    <NA>
+dtype: Int64
+\end{dhkzsh}
+
+이번에는 \zsh{Int64} 자료형이 결측을 표현할 수 있기 때문에 결과도 Nullable 정수형으로 유지된다.
+
+따라서 다음 두 가지를 구분해야 한다.
+
+\begin{dhksmry}
+    - Alignment는 어떤 레이블끼리 값을 대응시킬지 결정한다.
+
+    - dtype과 연산 규칙은 대응되는 값이 없을 때 결측을 어떻게 표현할지
+      결정한다.
+\end{dhksmry}
+
+Index alignment 자체가 무조건 \zsh{float64}를 만든다는 뜻은 아니다.
+
+\subsubsection{\zsh{fill_value}는 결측값을 어떻게 처리할까?}
+
+기본 산술 연산에서는 대응되는 값이 없으면 결측이 발생할 수 있다.
+
+하지만 Pandas는 산술 메서드에 \zsh{fill_value} 인수를 제공한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 3 - add()와 fill_value
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "C"],
+)
+
+result = a.add(
+    b,
+    fill_value=0,
+)
+
+print(result)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    10.0
+B    21.0
+C     2.0
+dtype: float64
+\end{dhkzsh}
+
+\zsh{Series.add()}는 Series의 산술 메서드다.
+
+\begin{dhkcode}
+a.add(b, fill_value=0)
+\end{dhkcode}
+
+이 표현식에서는 \zsh{a}에 바인딩된 메서드를 호출하고, \zsh{b}와 \zsh{fill_value=0}을 인수로 전달한다.
+
+기본적인 레이블 대응은 그대로 유지하면서, 한쪽 값이 결측인 경우 0을 대신 사용해 계산할 수 있다.
+
+\begin{dhktable}
+|레이블|	a|	b|	계산|
+|:---|:---|:---|:---|
+|A|	10|	없음|	10 + 0|
+|B|	20|	1	|20 + 1|
+|C|	없음|	2|	0 + 2|
+\end{dhktable}
+
+그런데 여기에는 중요한 예외가 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+양쪽 값이 모두 결측이라면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import numpy as np
+import pandas as pd
+
+a = pd.Series(
+    [10, np.nan],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, np.nan],
+    index=["A", "C"],
+)
+
+print(a.add(b, fill_value=0))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    11.0
+B     NaN
+C     NaN
+dtype: float64
+\end{dhkzsh}
+
+\zsh{fill_value=0}을 지정했는데도 \zsh{"B"}와 \zsh{"C"}는 \zsh{NaN}이다.
+
+이유는 \zsh{add(fill_value=0)}이 양쪽 모두 결측인 위치까지 무조건 0으로 바꾸는 연산은 아니기 때문이다.
+
+한쪽만 결측인 경우에는 대체값을 사용할 수 있지만, 양쪽 모두 결측인 경우에는 결측 결과가 유지된다.
+
+반면 다음 코드는 다르다.
+
+\begin{dhkcode}
+result = (a + b).fillna(0)
+
+print(result)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    11.0
+B     0.0
+C     0.0
+dtype: float64
+\end{dhkzsh}
+
+이 경우에는 산술 연산을 먼저 수행한 다음, 결과에 존재하는 결측값을 모두 0으로 바꾼다.
+
+따라서 다음 두 표현식은 일반적으로 동등하지 않다.
+
+\begin{dhkcode}
+a.add(b, fill_value=0)
+
+(a + b).fillna(0)
+\end{dhkcode}
+
+첫 번째는 연산 과정에서 결측 피연산자를 대체하는 방식이고, 두 번째는 연산 결과의 결측을 대체하는 방식이다.
+
+이 차이는 실험 지표를 합산할 때 특히 중요하다.
+
+관측값이 없어서 계산할 수 없는 결과와 실제 계산 결과가 0인 상황은 서로 다른 의미를 갖기 때문이다.
+
+\subsubsection{명시적 Alignment - \zsh{align()}과 \zsh{reindex()}}
+
+지금까지는 \zsh{+} 연산을 수행하면서 Pandas가 자동으로 Index alignment를 처리했다.
+
+그런데 실제 분석에서는 연산하기 전에 두 객체의 레이블을 명시적으로 맞춰야 할 때가 있다.
+
+이때 사용할 수 있는 메서드가 \zsh{align()}과 \zsh{reindex()}다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Series.align()의 구조
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{align()}은 두 객체의 축을 지정된 방식으로 맞춘 결과를 반환한다.
+
+\begin{dhkcode}
+aligned_a, aligned_b = a.align(
+    b,
+    join="inner",
+)
+\end{dhkcode}
+
+여기서 \zsh{join}은 어떤 레이블 집합을 사용할지 결정하는 인수다.
+
+\begin{dhktable}
+|join	|레이블 선택 기준|
+|:---|:---|
+|"outer"|	양쪽 레이블의 합집합|
+|"inner"|	양쪽 레이블의 교집합|
+|"left"|	왼쪽 객체의 레이블|
+|"right"|	오른쪽 객체의 레이블|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 4
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "C"],
+)
+
+left, right = a.align(
+    b,
+    join="inner",
+)
+
+print(left)
+print(right)
+print(left + right)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+B    20
+dtype: int64
+
+B    1
+dtype: int64
+
+B    21
+dtype: int64
+\end{dhkzsh}
+
+\zsh{join="inner"}를 지정했기 때문에 두 Series에 공통으로 존재하는 \zsh{"B"}만 유지되었다.
+
+여기서 반환되는 객체 관계를 분석해 보자.
+
+\begin{dhkcode}
+left, right = a.align(b, join="inner")
+\end{dhkcode}
+
+\zsh{a.align(...)}은 정렬된 두 객체를 담은 튜플을 반환한다.
+
+Python의 언패킹(unpacking)에 의해 첫 번째 결과가 \zsh{left}, 두 번째 결과가 \zsh{right}에 바인딩된다.
+
+원본 \zsh{a}, \zsh{b}는 변경되지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+reindex()와의 차이
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{reindex()}는 하나의 객체를 지정된 레이블 구조에 맞추는 메서드다.
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [1, 2],
+    index=["B", "C"],
+)
+
+aligned_b = b.reindex(a.index)
+
+print(aligned_b)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    NaN
+B    1.0
+dtype: float64
+\end{dhkzsh}
+
+\zsh{b.reindex(a.index)}는 \zsh{a.index}를 목표 Index로 사용한다.
+
+따라서 \zsh{"A"}는 결측이 되고, \zsh{"B"}는 기존 값을 유지한다.
+
+\zsh{"C"}는 목표 Index에 없으므로 결과에서 제외된다.
+
+두 메서드의 차이는 다음과 같다.
+
+\begin{dhktable}
+|메서드	|주요 목적|	반환|
+|:---|:---|:---|
+|a.align(b)|	두 객체의 축을 함께 맞춤|	두 객체를 담은 튜플|
+|a.reindex(index)|	한 객체를 목표 Index에 맞춤	|재인덱싱된 객체|
+\end{dhktable}
+
+여기서 주의할 점은 \zsh{reindex()}가 단순한 순서 변경 메서드가 아니라는 사실이다.
+
+목표 Index에 없는 레이블을 제거하거나 새로운 레이블에 결측값을 생성할 수도 있다.
+
+따라서 \zsh{reindex()}를 사용하기 전에 레이블 집합이 일치하는지 확인하는 것이 중요하다.
+
+\subsubsection{DataFrame 간 연산에서는 두 축이 모두 정렬된다}
+
+Series에는 하나의 Index 축이 있었다.
+
+반면 DataFrame에는 행 Index와 열 Index가 존재한다.
+
+따라서 두 DataFrame을 연산할 때는 행과 열의 레이블이 모두 대응되어야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 5 - 두 축의 Alignment
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.DataFrame(
+    {
+        "x": [1, 2],
+        "y": [10, 20],
+    },
+    index=["A", "B"],
+)
+
+b = pd.DataFrame(
+    {
+        "y": [100, 200],
+        "z": [1000, 2000],
+    },
+    index=["B", "C"],
+)
+
+result = a + b
+
+print(result)
+print(result.shape)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+    x      y   z
+A NaN    NaN NaN
+B NaN  120.0 NaN
+C NaN    NaN NaN
+
+(3, 3)
+\end{dhkzsh}
+
+두 DataFrame의 구조를 비교해 보자.
+
+\begin{dhkmatrix}[delim=none,style=cards]
+title::DataFrame a
+rows:: A,B
+cols::x,y
+data::[[1,10],[2,20]]
+\end{dhkmatrix}
+
+\begin{dhkmatrix}[delim=none,style=cards]
+title::DataFrame b
+rows:: B,C
+cols::y,z
+data::[[100,1000],[200,2000]]
+\end{dhkmatrix}
+
+\begin{dhksmry}[centered]
+공통으로 대응되는 셀
+행 B x 열 y
+20 + 100 = 120
+\end{dhksmry}
+
+두 객체에서 공통으로 존재하는 행 레이블은 \zsh{"B"}다.
+
+공통으로 존재하는 열 레이블은 \zsh{"y"}이다.
+
+따라서 양쪽에 값이 모두 존재하는 셀은 \zsh{("B", "y")} 하나뿐이다.
+
+나머지 셀은 대응되는 피연산자가 없으므로 \zsh{NaN}이 된다.
+
+여기서 중요한 것은 DataFrame끼리의 산술 연산은 행과 열의 위치가 아니라 두 축의 레이블을 기준으로 수행된다는 점이다.
+
+또한 \zsh{a.shape == b.shape == (2,2)}였지만 결과는 \zsh{(3, 3)}이 되었다.
+
+따라서 동일한 \zsh{shape}을 가진 두 DataFrame을 연산한다고 해서 결과의 \zsh{shape}이 반드시 유지되는 것은 아니다.
+
+\subsubsection{DataFrame과 Series의 연산은 어느 축을 기준으로 정렬될까?}
+
+이 부분은 Pandas를 처음 학습할 때 특히 혼동되기 쉽다.
+
+두 DataFrame의 연산에서는 두 축이 모두 정렬되었다.
+
+그렇다면 DataFrame과 Series를 연산하면 Series의 Index가 DataFrame의 행에 대응할까, 열에 대응할까?
+
+기본적으로 DataFrame과 Series의 산술 연산은 Series의 Index를 DataFrame의 열 레이블에 대응시킨다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 6 - 기본 축과 명시적 축
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "label": [1, 0],
+        "score": [10, 20],
+    },
+    index=["doc-A", "doc-B"],
+)
+
+bias = pd.Series(
+    [100, 200],
+    index=["doc-A", "doc-B"],
+)
+
+print(df + bias)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       doc-A  doc-B  label  score
+doc-A    NaN    NaN    NaN    NaN
+doc-B    NaN    NaN    NaN    NaN
+\end{dhkzsh}
+
+왜 모든 값이 \zsh{NaN}이 되었을까?
+
+\zsh{bias}의 Index는 다음과 같다.
+
+\begin{dhkzsh}
+doc-A, doc-B
+\end{dhkzsh}
+
+반면 \zsh{df}의 열 레이블은 다음과 같다.
+
+\begin{dhkzsh}
+label, score
+\end{dhkzsh}
+
+기본 산술 연산은 Series의 Index를 DataFrame의 열 레이블에 대응시키려 한다.
+
+그런데 일치하는 레이블이 없으므로 계산 가능한 값이 존재하지 않는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+행 기준으로 정렬하려면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+result = df.add(
+    bias,
+    axis="index",
+)
+
+print(result)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       label  score
+doc-A    101    110
+doc-B    200    220
+\end{dhkzsh}
+
+이번에는 \zsh{axis="index"}를 명시했다.
+
+따라서 Series의 Index가 DataFrame의 행 Index에 대응한다.
+
+계산 과정은 다음과 같다.
+
+\begin{dhktable}
+|행 레이블|	bias|	label 계산|	score 계산|
+|:---|:---|:---|:---|
+|doc-A|	100	|1 + 100	|10 + 100|
+|doc-B|	200	|0 + 200|	20 + 200|
+\end{dhktable}
+
+반대로 열별로 다른 값을 더하려면 Series의 Index를 열 레이블로 구성하면 된다.
+
+\begin{dhkcode}
+column_bias = pd.Series({
+    "label": 1,
+    "score": 2,
+})
+
+print(df + column_bias)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       label  score
+doc-A      2     12
+doc-B      1     22
+\end{dhkzsh}
+
+이 차이를 정리하면 다음과 같다.
+
+\begin{dhktable}
+|연산|	Series의 Index가 대응되는 축|
+|:---|:---|
+|df + s|	기본적으로 DataFrame의 열|
+|df.add(s, axis="columns")	|DataFrame의 열|
+|df.add(s, axis="index")	|DataFrame의 행|
+\end{dhktable}
+
+NumPy의 브로드캐스팅(broadcasting)과 비교해 보면 차이가 분명해진다.
+
+NumPy에서는 주로 배열의 차원과 길이를 기준으로 브로드캐스팅 가능성을 판단한다.
+
+반면 Pandas에서는 DataFrame과 Series 사이의 산술 연산에 레이블 대응 규칙이 함께 적용된다.
+
+따라서 Series의 길이가 DataFrame의 행 수와 같다는 사실만으로 행 기준 연산이 수행되는 것은 아니다.
+
+\subsubsection{산술 연산과 비교 연산은 같은 규칙을 따를까?}
+
+지금까지 \zsh{+} 연산을 중심으로 살펴보았다.
+
+그런데 \zsh{==} 같은 비교 연산도 항상 같은 방식으로 자동 정렬될까?
+
+그렇지는 않다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 7 - ==와 .eq() 비교
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10, 20],
+    index=["A", "B"],
+)
+
+b = pd.Series(
+    [20, 10],
+    index=["B", "A"],
+)
+
+try:
+    print(a == b)
+except ValueError as e:
+    print(type(e).__name__)
+
+print(a.eq(b))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+ValueError
+A    True
+B    True
+dtype: bool
+\end{dhkzsh}
+
+두 Series는 같은 레이블 집합을 갖고 있지만 순서가 다르다.
+
+\zsh{a == b}는 Pandas의 Series 비교 연산 규칙에 따라, 두 객체의 레이블이 동일한 순서로 배치되어 있지 않으면 \zsh{ValueError}를 발생시킨다.
+
+반면 \zsh{a.eq(b)}는 레이블을 정렬하여 비교할 수 있다.
+
+여기서 중요한 점은 산술 연산의 자동 alignment 규칙을 모든 이항 연산에 그대로 적용하면 안 된다는 사실이다.
+
+\begin{dhktable}
+|연산|	Index가 다른 경우|
+|:---|:---|
+|a + b|	기본적으로 레이블을 맞춰 산술 연산|
+|a.add(b)|	기본적으로 레이블을 맞춰 산술 연산|
+|a == b|	동일하게 레이블이 배치되지 않으면 오류 가능|
+|a.eq(b)|	레이블을 맞춰 비교 가능|
+\end{dhktable}
+
+DataFrame에서도 일반 비교 연산자와 \zsh{.eq()} 같은 유연한 비교 메서드 사이에 유사한 차이가 있다.
+
+또한 \zsh{D.3}에서 배운 Nullable 자료형이라면 비교 결과에 \zsh{<NA>}가 포함될 수도 있다.
+
+따라서 비교 연산에서는 레이블 정합성과 결측값의 비교 의미론을 모두 확인해야 한다.
+
+\subsubsection{Series를 DataFrame에 할당할 때도 Alignment가 발생한다}
+
+이번에는 이항 산술 연산이 아니라 할당을 살펴보자.
+
+\begin{dhkcode}
+df["prediction"] = predictions
+\end{dhkcode}
+
+이 표현식은 DataFrame에 열을 추가하거나 기존 열의 값을 변경하는 할당이다.
+
+그런데 오른쪽에 전달하는 객체가 Series라면, Pandas는 일반적으로 Series의 Index를 DataFrame의 행 Index에 맞춘다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 8 - Series 할당과 NumPy 배열 할당
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"label": [1, 0, 1]},
+    index=["doc-A", "doc-B", "doc-C"],
+)
+
+predictions = pd.Series(
+    [0, 1, 1],
+    index=["doc-C", "doc-A", "doc-B"],
+)
+
+df["prediction"] = predictions
+
+df["positional"] = predictions.to_numpy()
+
+print(df)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       label  prediction  positional
+doc-A      1           1           0
+doc-B      0           1           1
+doc-C      1           0           1
+\end{dhkzsh}
+
+두 열의 값이 달라졌다.
+
+왜 그럴까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Series를 할당한 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+df["prediction"] = predictions
+\end{dhkcode}
+
+Pandas는 Index 레이블을 기준으로 값을 대응시킨다.
+
+\begin{dhkzsh}
+doc-A → 1
+doc-B → 1
+doc-C → 0
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+NumPy 배열을 할당한 경우
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+df["positional"] = predictions.to_numpy()
+\end{dhkcode}
+
+NumPy 배열에는 Index 레이블이 없으므로 값이 현재 행 순서에 따라 할당된다.
+
+\begin{dhkzsh}
+첫 번째 행 → 0
+두 번째 행 → 1
+세 번째 행 → 1
+\end{dhkzsh}
+
+여기서 중요한 사실이 있다.
+
+Series를 할당하는 것과 Series의 값을 NumPy 배열로 변환해 할당하는 것은 서로 다른 의미의 연산이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+할당할 Series에 일부 레이블이 없다면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"label": [1, 0, 1]},
+    index=["doc-A", "doc-B", "doc-C"],
+)
+
+predictions = pd.Series(
+    [1, 0],
+    index=["doc-C", "doc-A"],
+)
+
+df["prediction"] = predictions
+
+print(df)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       label  prediction
+doc-A      1         0.0
+doc-B      0         NaN
+doc-C      1         1.0
+\end{dhkzsh}
+
+\zsh{doc-B}에 대응하는 예측값이 없으므로 \zsh{NaN}이 발생한다.
+
+또한 일반 정수형 Series에 결측이 추가되면서 결과 열의 dtype이 \zsh{float64}로 변경되었다.
+
+이것은 \zsh{D.3}의 dtype 변환과 \zsh{D.5}의 alignment가 함께 작동한 결과다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+객체 상태 관점에서 분석
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+df["prediction"] = predictions
+\end{dhkcode}
+
+이 표현식에서는 기존 DataFrame 객체의 열 구성이 변경된다.
+
+반면 다음 표현식은 다르다.
+
+\begin{dhkcode}
+result = df["label"] + predictions
+\end{dhkcode}
+
+이 경우에는 새로운 Series가 반환되어 \zsh{result}에 바인딩될 뿐, \zsh{df}에 자동으로 열이 추가되지는 않는다.
+
+즉, alignment는 값의 대응 규칙이고, 원본 변경 여부는 수행하는 연산의 종류에 따라 결정된다.
+
+\subsubsection{중복 Index가 있으면 Alignment는 어떻게 작동할까?}
+
+지금까지는 Index 레이블이 유일하다고 가정했다.
+
+하지만 \zsh{D.2}에서 배웠듯이 Pandas의 Index는 중복 레이블을 허용한다.
+
+이 경우에는 단순한 일대일 대응이 성립하지 않을 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 9 - 중복 레이블과 결과 크기
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [1, 2],
+    index=["A", "A"],
+)
+
+b = pd.Series(
+    [10, 20],
+    index=["A", "A"],
+)
+
+c = pd.Series(
+    [10, 20, 30],
+    index=["A", "A", "A"],
+)
+
+print(a + b)
+print()
+print(a + c)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+A    11
+A    22
+dtype: int64
+
+A    11
+A    21
+A    31
+A    12
+A    22
+A    32
+dtype: int64
+\end{dhkzsh}
+
+첫 번째 연산에서는 두 Series의 Index가 동일하게 배치되어 있다.
+
+따라서 같은 위치의 중복 레이블끼리 대응되어 두 개의 결과가 생성된다.
+
+반면 두 번째 연산에서는 \zsh{"A"}가 한쪽에 두 번, 다른 쪽에 3번 등장한다.
+
+이 경우 alignment 과정에서 \zsh{"A"}에 대응하는 값들의 조합이 만들어져 여섯 개의 결과가 발생한다.
+
+\[
+2\times3=6
+\]
+
+이것은 관계형 데이터베이스에서 중복 키를 기준으로 JOIN할 때 발생하는 다대다 (many-to-many) 결과와 유사한 현상이다.
+
+하지만 Pandas의 산술 alignment와 SQL JOIN이 모든 세부 동작에서 동일한 것은 아니다.
+
+여기서는 중복 키가 결과의 크기를 증가시킬 수 있다는 구조적 유사성에 주목하면 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+중복 Index를 검사하는 방법
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(a.index.is_unique)
+print(c.index.has_duplicates)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+여기서 판단 기준은 명확하다.
+
+Index가 유일하면 각 레이블은 하나의 값을 식별할 수 있다.
+
+반면 Index가 중복되어 있으면 하나의 레이블이 여러 값을 가리킬 수 있으므로 겨로가의 개수와 대응 관계가 달라질 수 있다.
+
+특히 모델 평가에서 문서 ID가 중복되어 있다면 예측값과 정답 레이블을 일대일로 대응시킨다는 가정 자체가 깨질 수 있다.
+
+따라서 분석 파이프라인에서는 중요한 식별자에 대해 다음 조건을 확인하는 것이 좋다.
+
+\begin{dhkcode}
+assert df.index.is_unique
+\end{dhkcode}
+
+이것은 Index가 언제나 유일해야 한다는 뜻이 아니다.
+
+문서 ID처럼 유일성을 요구하는 업무 규칙이 있을 때 검증해야 한다는 뜻이다.
+
+\subsubsection{Index의 값과 자료형도 대응 관계에 영향을 준다}
+
+레이블은 단순한 화면 표시가 아니다.
+
+레이블 자체의 값과 타입이 대응 관계를 결정한다.
+
+다음 예제를 살펴보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+a = pd.Series(
+    [10],
+    index=[1],
+)
+
+b = pd.Series(
+    [5],
+    index=["1"],
+)
+
+print(a + b)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+1   NaN
+1   NaN
+dtype: float64
+\end{dhkzsh}
+
+출력 화면에서는 두 행이 모두 1로 표시되지만, 실제 레이블은 서로 다르다.
+
+하나는 정수 \zsh{1}이고, 다른 하나는 문자열 \zsh{"1"}이다.
+
+따라서 Pandas는 두 레이블을 동일한 것으로 대응시키지 않는다.
+
+다음처럼 타입을 확인할 수 있다.
+
+\begin{dhkcode}
+result = a + b
+
+print([
+    type(label).__name__ for label in result.index
+])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+['int', 'str']
+\end{dhkzsh}
+
+여기서 중요한 것은 화면에 같은 문자로 출력된다고 해서 같은 레이블인 것은 아니라는 점이다.
+
+CSV 파일을 읽거나 외부 데이터베이스에서 데이터를 가져올 때 문서 ID가 정수형과 문자열형으로 혼재하면 이러한 문제가 발생할 수 있다.
+
+또한 \zsh{Index.name}은 축의 의미를 설명하는 메타데이터이지만, 단일 Index에서 같은 레이블의 대응 여부를 결정하는 유일한 기준은 아니다.
+
+따라서 Index의 이름만 같다고 해서 alignment가 안전하다고 판단해서는 안 된다.
+
+\subsubsection{Transformer 응용 - 예측 정확도가 100퍼센트에서 33.3퍼센트로 달라지는 이유}
+
+이제 이번 단원의 개념을 하나의 실제 문제로 통합해 보자.
+
+문서 분류 모델의 정답 레이블과 예측 레이블이 각각 Series로 저장되어 있다고 가정한다.
+
+두 Series는 같은 문서 세 개를 포함하지만 순서가 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 10 - 문서 ID 기반 평가
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+truth = pd.Series(
+    [1, 0, 1],
+    index=["doc-A", "doc-B", "doc-C"],
+    dtype="Int64",
+    name="label",
+)
+
+pred = pd.Series(
+    [1, 0, 1],
+    index=["doc-C", "doc-A", "doc-B"],
+    dtype="Int64",
+    name="prediction",
+)
+
+# 1. 식별자 검증
+assert truth.index.is_unique
+assert pred.index.is_unique
+
+assert truth.index.difference(pred.index).empty
+assert pred.index.difference(truth.index).empty
+
+# 2. 문서 ID 기준 정렬
+pred_aligned = pred.reindex(truth.index)
+
+# 3. 레이블 기준 비교
+correct = truth.eq(pred_aligned)
+
+# 4. 정확도 계산
+accuracy = correct.mean()
+
+print(pred_aligned.tolist())
+print(correct.tolist())
+print(round(float(accuracy), 3))
+
+# 5. 잘못된 위치 기반 비교
+positional_correct = (
+    truth.to_numpy(dtype="int64")
+    == pred.to_numpy(dtype="int64")
+)
+
+print(positional_correct.tolist())
+print(positional_correct.mean())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[0, 1, 1]
+[False, False, True]
+0.333
+[True, True, True]
+1.0
+\end{dhkzsh}
+
+결과가 크게 달라졌다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 레이블 기준 정확도는 33.3%일까?
+\end{dhksmry}
+\end{dhknote}
+
+정답과 예측을 문서 ID별로 정리하면 다음과 같다.
+
+\begin{dhktable}
+|문서 ID|	정답|	예측|	정답 여부|
+|:---|:---|:---|:---|
+|doc-A|	1	|0|	False|
+|doc-B|	0	|1|	False|
+|doc-C|	1	|1|	True|
+\end{dhktable}
+
+세 문서 중 하나만 맞았으므로 정확도는 다음과 같다.
+
+\[
+\text{Accuracy}=\frac{1}{3}\approx0.333
+\]
+
+반면 NumPy 배열로 변환한 뒤 위치 기준으로 비교하면 다음과 같다.
+
+\begin{dhkzsh}
+truth 값 순서: [1, 0, 1]
+pred 값 순서:  [1, 0, 1]
+\end{dhkzsh}
+
+이 경우 세 위치의 값이 모두 같으므로 정확도가 100퍼센트로 계산된다.
+
+하지만 이것은 실제 모델이 세 문서를 모두 맞혔다는 뜻이 아니다.
+
+서로 다른 문서의 정답과 예측을 비교했기 때문에 발생한 잘못된 평가 결과다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+왜 Index 검증을 먼저 했을까?
+\end{dhksmry}
+\end{dhknote}
+
+코드 앞부분에서 다음 검사를 수행했다.
+
+\begin{dhkcode}
+assert truth.index.is_unique
+assert pred.index.is_unique
+\end{dhkcode}
+
+두 Series의 문서 ID가 중복되지 않는지 확인하기 위해서다.
+
+그리고 다음 검사를 수행했다.
+
+\begin{dhkcode}
+assert truth.index.difference(pred.index).empty
+assert pred.index.difference(truth.index).empty
+\end{dhkcode}
+
+이것은 한쪽에만 존재하는 문서 ID가 없는지 확인하는 과정이다.
+
+왜 이 검사가 필요할까?
+
+\zsh{reindex()}는 존재하지 않는 레이블에 대해 결측값을 만들 수 있다.
+
+따라서 누락된 예측값이 있는데도 별도의 검사 없이 정렬을 수행하면, 평가 과정에서 결측이 발생한 원인을 놓칠 수 있다.
+
+또한 \zsh{Index.difference()}는 집합에 가까운 레이블 차이를 확인하는 것이므로 중복 개수까지 검증하는 도구는 아니다.
+
+그래서 유일성 검사와 함께 사용하는 것이다.
+
+이 구조는 모델 평가 파이프라인에서 다음 순서를 갖는다는 점이 중요하다.
+
+\begin{dhksmry}[centered]
+정답 Series / 예측 Series
+각 객체가 문서 ID를 Index로 보유
+\da
+Index 유일성 및 레이블 집합 검증
+중복·누락·불필요한 예측 ID 검사
+\da
+reindex() 또는 align()
+문서 ID 기준으로 값의 대응 관계 확정
+\da
+정답 비교 및 평가 지표 계산
+Accuracy · F1 · 오류 샘플 분석
+\end{dhksmry}
+
+이 과정에서 Index는 단순한 행 이름이 아니라 서로 다른 데이터 객체의 정합성을 유지하는 식별 체계로 작동한다.
+
+이것은 이후 Transformer의 토크노하 결과, \zsh{Dataset}, \zsh{DataLoader}, 예측 결과를 Pandas로 다시 결합할 때도 적용되는 원칙이다.
+
+단, PyTorch Tensor 자체는 Pandas Index를 보유하지 않는다.
+
+따라서 Tensor로 변환하는 순간부터는 샘플 ID와 행 순서의 대응을 별도로 관리해야 한다.
+
+이 문제는 \zsh{D.21}에서 더 깊게 다룰 것이다.
+
+\subsubsection{기존 Python 개념과 연결하기}
+
+이번 학습의 핵심은 Pandas가 Python의 일반적인 객체 모델을 기반으로 레이블 정합이라는 추가적인 연산 규칙을 구현했다는 사실이다.
+
+\begin{dhktable}
+|Python 객체 모델 개념|	Pandas에서의 적용|
+|:---|:---|
+|객체 생성|	Series·DataFrame·Index 인스턴스 생성|
+|이름 바인딩|	a, b, result가 각각 객체를 참조|
+|연산자 오버로딩|	a + b가 Pandas의 산술 연산 규칙을 사용|
+|속성 탐색|	a.index, a.dtype 등 조회|
+|메서드 호출|	a.add(b), a.align(b), a.reindex(...)|
+|반환 객체|	산술 연산은 새로운 Series/DataFrame을 반환|
+|상태 변경|	df["prediction"] = s는 기존 DataFrame에 값을 할당|
+|타입과 자료형|	type(s)와 s.dtype은 다른 계층의 정보|
+|동등성|	Index.equals()는 레이블 구조 비교에 사용|
+|객체 동일성|	is는 동일한 Python 객체인지 비교할 뿐 레이블 정합을 판단하지 않음|
+\end{dhktable}
+
+여기서 특히 구분해야 할 개념이 있다.
+
+\begin{dhkcode}
+a.index is b.index
+\end{dhkcode}
+
+이 표현식은 두 Series가 정확히 같은 Index 객체를 참조하는지 검사한다.
+
+반면 다음 표현식은 다르다.
+
+\begin{dhkcode}
+a.index.equals(b.index)
+\end{dhkcode}
+
+이것은 두 Index의 레이블과 순서가 같은지 비교하는 메서드다.
+
+두 Series가 서로 다른 Index 객체를 갖고 있더라도 레이블이 같다면 alignment 관점에서는 대응될 수 있다.
+
+따라서 Index 객체의 동일성과 Index 레이블의 정합성은 서로 다른 개념이다.
+
+또한 \zsh{Index.equals()} 만으로 데이터 품질의 모든 조건이 검증되는 것은 아니다.
+
+레이블의 유일성, 누락 여부, 업무상 식별자의 의미까지 필요에 따라 별도로 검사해야 한다.
+
+\subsubsection{핵심 정리와 판단 기준}
+
+이번 학습에서 가장 중요한 사실은 네 가지다.
+
+첫째, Series 간 기본 산술 연산은 위치가 아니라 레이블을 기준으로 값을 대응시킨다.
+
+따라서 같은 \zsh{shape}을 가진 두 Series라도 Index의 순서나 레이블 집합이 다르면 결과가 달라질 수 있다.
+
+둘째, DataFrame 간 산술 연산에서는 행과 열의 레이블이 모두 개입한다.
+
+두 DataFrame의 \zsh{shape}이 같더라도 연산 결과의 \zsh{shape}은 달라질 수 있다.
+
+셋째, 연산 종류에 따라 Alignment 규칙이 달라진다.
+
+산술 연산, 비교 연산, Series 할당, NumPy 배열 할당은 모두 동일한 규칙을 사용하는 것이 아니다.
+
+넷째, Alignment는 데이터 정합성을 유지하는 데 유용하지만, 데이터의 올바름을 자동으로 보장하지는 않는다.
+
+중복 ID, 누락 ID, 잘못된 레이블 자료형이 있다면 alignment가 수행되더라도 결과가 잘못되거나 예상보다 커질 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실전 판단 기준
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhktable}
+|확인할 질문|	판단 기준|
+|:---|:---|
+|두 객체의 크기가 같은가?|	shape 확인|
+|같은 원소를 식별하는가?	|Index 레이블의 의미 확인|
+|레이블 집합이 같은가?	|Index.difference() 등으로 확인|
+|레이블 순서까지 같은가?|	Index.equals() 확인|
+|레이블이 유일한가?	|Index.is_unique 확인|
+|어떤 축을 기준으로 연산하는가?|	axis 확인|
+|결측이 발생할 수 있는가?	|Index 합집합과 dtype 확인|
+|원본이 변경되는가?|	산술 연산인지 할당인지 구분|
+|NumPy로 변환해도 안전한가?|	레이블 제거 후 행 순서가 보장되는지 확인|
+\end{dhktable}
+
+이 기준을 익히면 Pandas의 연산 결과를 단순히 실행해 보는 수준을 넘어, 실행 전에 객체와 Index의 관계를 근거로 예측할 수 있게 된다.
+
+\subsubsection{다음 학습}
+
+이번 \zsh{D.5}에서는 Index가 산술 연산과 할당 과정에 어떻게 개입하는지 배웠다.
+
+다음 학습에서는 이러한 Index alignment를 불리언 마스크와 연결할 것이다.
+
+\begin{dhkcode}
+mask = df["score"] >= 80
+
+result = df.loc[mask]
+\end{dhkcode}
+
+여기서 \zsh{mask}는 어떤 객체일까?
+
+\zsh{df.loc[mask]}는 마스크의 위치를 기준으로 행을 선택할까, 아니면 Index 레이블을 기준으로 선택할까?
+
+그리고 마스크에 \zsh{<NA>}가 포함되어 있다면 어떻게 될까?
+
+\zsh{D.6}에서는 \zsh{isin()}, \zsh{where()}, \zsh{mask()}, \zsh{query()}까지 확장하면서 조건을 계산하는 과정과 조건을 적용하는 과정을 구분해 분석할 것이다.
+
+공식 참고 자료
+
+\begin{dhksmry}
+https://pandas.pydata.org/docs/user_guide/basics.html
+https://pandas.pydata.org/docs/user_guide/indexing.html
+https://pandas.pydata.org/docs/reference/api/pandas.Series.align.html
+\end{dhksmry}
