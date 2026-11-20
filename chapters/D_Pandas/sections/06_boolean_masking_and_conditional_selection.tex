@@ -1,0 +1,1343 @@
+% !TeX root = ../main.tex
+
+% ==================================================
+% D.6. 불리언 마스크와 조건부 선택
+% ==================================================
+
+\subsection{불리언 마스크와 조건부 선택}
+
+\subsubsection{이전 학습과의 연결}
+
+\zsh{D.4}에서는 Pandas의 데이터를 선택하는 두 가지 좌표계인
+
+\zsh{레이블(label)}과 \zsh{위치(position)}를 구분했다.
+
+\zsh{D.5}에서는 한 단계 더 나아가, 서로 다른 Series와 DataFrame을 연산할 때 Index 레이블을 기준으로 값의 대응 관계가 결정된다는 사실을 배웠다.
+
+이번 학습에서는 이 두 개념을 결합할 것이다.
+
+다음 코드를 살펴보자.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"score": [90, 70, 85]},
+    index=["A", "B", "C"],
+)
+
+condition = df["score"] >= 80
+
+result = df.loc[condition]
+\end{dhkcode}
+
+이 코드는 점수가 80점 이상인 행을 선택한다.
+
+그런데 여기서 중요한 질문은 단순히 어떤 행이 반환되는지가 아니다.
+
+\zsh{condition}은 어떤 객체이며, 그 객체가 \zsh{df.loc[...]}에 전달되었을 때 Pandas는 어떤 기준으로 행을 선택할까?
+
+실행 과정을 나누어 보면 다음과 같다.
+
+\begin{dhksmry}
+    1. 비교식 평가
+       df["score"] >= 80
+       불리언 Series 생성 · Index 유지
+
+                \da
+
+    2. 인덱서에 조건 전달
+       df.loc[condition]
+       조건 Series의 레이블을 DataFrame의 Index에 대응
+
+                \da
+
+    3. 조건부 행 선택
+       레이블 A, C에 해당하는 행 반환
+       새로운 DataFrame 결과 · 원본은 변경되지 않음
+\end{dhksmry}
+
+여기서 가장 중요한 구분은 조건을 계산하는 과정과 조건을 적용하는 과정은 서로 다른 연산이라는 사실이다.
+
+\subsubsection{이번 학습의 핵심 질문}
+
+이번 학습에서는 다음 내용을 분석할 것이다.
+
+\begin{dhksmry}
+1. 불리언 마스크(Boolean mask)는 어떤 객체이며, 어떻게 생성되는가?
+
+2. &, |, ~는 Python의 and, or, not과 어떻게 다른가?
+
+3. 마스크에 <NA>가 존재하면 조건 계산과 행 선택에서 각각 어떻게 
+   처리되는가?
+
+4. isin()은 일반적인 비교 연산과 어떤 차이가 있는가?
+
+5. where()와 mask()는 행 필터링과 어떻게 다른가?
+
+6. query()는 어떤 방식으로 조건식을 평가하며, Python 코드 및 SQL과 
+   무엇이 다른가?
+
+7. 마스크의 Index가 선택 대상의 Index와 다르면 어떤 일이 발생하는가?
+
+8. ML/Transformer 분석에서 특정 클래스의 오류 샘플과 길이 초과 문서를 
+   어떻게 안전하게 추출하는가?
+\end{dhksmry}
+
+이번 단원의 핵심은 다음 문장으로 정리할 수 있다.
+
+불리언 마스크는 단순한 참·거짓 배열이 아니라, Pandas에서는 Index와 dtype을 갖고 데이터 선택 및 변환에 참여하는 객체일 수 있다.
+
+\subsubsection{불리언 마스크의 객체 모델}
+
+먼저 가장 기본적인 부릴언 마스크를 생성해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 1 - 비교식의 반환 객체
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "score": [90, 70, 85],
+    },
+    index=pd.Index(
+        ["A", "B", "C"],
+        name="student_id",
+    ),
+)
+
+mask = df["score"] >= 80
+
+print(mask)
+print(type(mask).__name__)
+print(mask.dtype)
+print(mask.index.equals(df.index))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+student_id
+A     True
+B    False
+C     True
+Name: score, dtype: bool
+
+Series
+bool
+True
+\end{dhkzsh}
+
+이제 객체 생성 과정과 반환 과정을 분석해 보자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1. df["score"]의 평가
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+df["score"]
+\end{dhkcode}
+
+DataFrame의 \zsh{__getitem__} 메커니즘을 통해 \zsh{"score"} 열을 선택한다.
+
+그 결과 Series 객체를 얻는다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2. >= 80의 평가
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+df["score"] >= 80
+\end{dhkcode}
+
+Python의 비교 연산자 \zsh{>=}에 대응하는 Pandas의 연산 구현이 호출된다.
+
+Pandas는 Series의 각 원소와 스칼라 80을 비교하여 결과를 계산한다.
+
+여기서 80은 Index를 갖는 객체가 아니므로, Series의 각 원소에 같은 기준값을 적용한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3. 새로운 Series 반환
+\end{dhksmry}
+\end{dhknote}
+
+비교 결과는 단일 불리언 값이 아니다.
+
+\begin{dhkzsh}
+A → True
+B → False
+C → True
+\end{dhkzsh}
+
+이 결과를 관리하는 Series가 생성되고 \zsh{mask}라는 이름에 바인딩된다.
+
+원본 Series의 Index 레이블도 결과에 유지된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4. 마스크와 원본 DataFrame의 관계
+\end{dhksmry}
+\end{dhknote}
+
+\zsh{mask}는 \zsh{df}와 동일한 객체가 아니다.
+
+또한 \zsh{mask}는 원본 점수들을 저장하는 것이 아니라, 비교 연산의 결과를 저장한다.
+
+따라서 원본의 점수를 나중에 변경한다고 해서 이미 계산된 \zsh{mask}가 자동으로 다시 계산되는 것은 아니다.
+
+\begin{dhkcode}
+df.loc["B", "score"] = 95
+
+print(mask.loc["B"])
+print((df["score"] >= 80).loc["B"])
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+False
+True
+\end{dhkzsh}
+
+첫 번째 출력은 과거에 계산한 \zsh{mask}의 값이다.
+
+두 번째 출력은 변경된 DataFrame을 대상으로 비교식을 다시 평가한 결과이다.
+
+즉, 불리언 마스크는 조건식을 기억하고 자동 갱신하는 객체가 아니라, 특정 시점에 계산된 조건의 결과를 담은 객체다.
+
+이 차이는 Python의 함수 호출 결과와 함수 객체를 구분했던 내용과도 연결된다.
+
+\subsubsection{여러 조건을 결합하는 방법 - \zsh{&, |, ~}}
+
+실제 데이터 분석에서는 하나의 조건만 사용하는 경우보다 여러 조건을 결합하는 경우가 많다.
+
+예를 들어 문서 분류 데이터셋에서 다음 조건을 만족하는 문서를 찾는다고 가정하자.
+
+\begin{dhksmry}
+    - 데이터 분할이 "valid"일 것
+
+    - 토큰 길이가 300을 초과할 것
+
+    - 언어가 "ko"일 것
+\end{dhksmry}
+
+Python에서는 일반적으로 \zsh{and}, \zsh{or}, \zsh{not}을 사용해 논리 연산을 수행한다.
+
+하지만 Pandas Series에 대해서는 원소별 논리 연산을 수행하기 위해 \zsh{&}, \zsh{|}, \zsh{~}를 사용해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 2 - 공통 분석 데이터셋
+\end{dhksmry}
+\end{dhknote}
+
+이후 예제에서 사용할 DataFrame을 먼저 정의하자.
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "language": ["ko", "en", "ko", "en", "ko"],
+        "label": [1, 0, 1, None, 0],
+        "prediction": [1, 1, 0, 1, None],
+        "token_length": [120, 420, None, 300, 510],
+        "split": ["train", "valid", "valid", "train", "valid"],
+    },
+    index=pd.Index(
+        ["d1", "d2", "d3", "d4", "d5"],
+        name="doc_id",
+    ),
+).astype({
+    "label": "Int64",
+    "prediction": "Int64",
+    "token_length": "Int64",
+})
+
+print(df)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       language  label  prediction  token_length  split
+doc_id
+d1           ko      1           1           120  train
+d2           en      0           1           420  valid
+d3           ko      1           0          <NA>  valid
+d4           en   <NA>           1           300  train
+d5           ko      0        <NA>           510  valid
+\end{dhkzsh}
+
+이제 여러 조건을 결합해 보자.
+
+\begin{dhkcode}
+valid = df["split"] == "valid"
+korean = df["language"] == "ko"
+long = df["token_length"] > 300
+
+mask = valid & korean & long
+
+print(mask.tolist())
+print(df.loc[mask].index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[False, False, <NA>, False, True]
+['d5']
+\end{dhkzsh}
+
+세 조건은 각각 Series를 반환한다.
+
+\zsh{&} 연산자는 각 Series의 원소별 논리 AND 연산을 수행해한다.
+
+여기서 중요한 것은 다음 두 표현식의 차이다.
+
+\begin{dhkcode}
+# Pandas Series의 원소별 논리 연산
+mask = valid & korean
+
+# Python 객체 자체의 진리값 평가
+mask = valid and korean
+\end{dhkcode}
+
+두 번째 표현식은 일반적인 다중 원소 Series에 대해 다음 오류를 발생시킨다.
+
+\begin{dhkzsh}
+ValueError: The truth value of a Series is ambiguous.
+\end{dhkzsh}
+
+왜 이런 오류가 발생할까?
+
+Python의 \zsh{and}는 피연산자 객체의 진리값을 평가하여 연산한다.
+
+그런데 Series에는 여러 개의 불리언 값이 존재하므로 Series 객체 전체를 참으로 볼지, 거짓으로 볼지 결정할 수 없다.
+
+반면 Pandas Series의 \zsh{&} 연산은 원소별 논리 연산을 수행하도록 구현되어 있다.
+
+\begin{dhktable}
+|연산자|	의미|	Pandas Series에서의 사용|
+|:---|:---|:---|
+|&|	원소별 AND|	여러 조건을 모두 만족|
+|│|	원소별 OR	|하나 이상의 조건을 만족|
+|~|	원소별 NOT	|조건 결과를 반전|
+|and|	Python 논리 AND|	일반적인 Series끼리 직접 사용 불가|
+|or|	Python 논리 OR	|일반적인 Series끼리 직접 사용 불가|
+|not|	Python 논리 NOT	|일반적인 Series에 직접 사용 불가|
+\end{dhktable}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+비교식에 괄호가 필요한 이유
+\end{dhksmry}
+\end{dhknote}
+
+다음 표현식을 살펴보자.
+
+\begin{dhkcode}
+mask = (
+    (df["token_length"] > 300)
+    & (df["label"] == 0)
+)
+\end{dhkcode}
+
+이것은 올바른 표현식이다.
+
+하지만 다음처럼 작성하면 문제가 발생할 수 있다.
+
+\begin{dhkcode}
+mask = df["token_length"] > 300 & df["label"] == 0
+\end{dhkcode}
+
+Python에서는 \zsh{&}의 연산자 우선순위가 비교 연산자보다 높다.
+
+따라서 개발자가 의도한 다음 구조로 평가되지 않는다.
+
+\begin{dhkcode}
+(df["token_length"] > 300) & (df["label"] == 0)
+\end{dhkcode}
+
+실제로는 \zsh{300 & df["label"]}과 같은 부분이 먼저 평가되는 등 의도하지 않은 연산 구조가 만들어진다.
+
+그 결과 잘못된 비교나 \zsh{ValueError}가 발생할 수 있다.
+
+따라서 Pandas의 복합 조건에서는 각 비교식을 괄호로 묶는 습관이 중요하다.
+
+또한 \zsh{&}와 \zsh{|}는 Python의 \zsh{and}, \zsh{or}처럼 피연산자를 단락 평가(short-circuit evaluation)하지 않는다.
+
+양쪽 조건식을 평가한 뒤 원소별 연산을 수행하므로, 한쪽 조건이 거짓이라는 이유로 다른 쪽의 오류 가능성이 사라지는 것은 아니다.
+
+\subsubsection{Nullable Boolean}과 결측갑스이 선택 규칙
+
+\zsh{D.3}에서는 Nullable Boolean이 \zsh{True}, \zsh{False}, \zsh{<NA>}를 표현할 수 있다는 사실을 배웠다.
+
+그렇다면 \zsh{<NA>}가 포함된 마스크를 \zsh{.loc}에 전달하면 어떻게 될까?
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 3 - 결측을 포함한 마스크
+\end{dhksmry}
+\end{dhknote}
+
+앞서 정의한 \zsh{df}를 그대로 사용하자.
+
+\begin{dhkcode}
+mask = df["token_length"] > 300
+
+print(mask.dtype)
+print(mask.tolist())
+
+print(df.loc[mask].index.tolist())
+print(df.loc[~mask].index.tolist())
+print(df.loc[mask.isna()].index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+boolean
+[False, True, <NA>, False, True]
+['d2', 'd5']
+['d1', 'd4']
+['d3']
+\end{dhkzsh}
+
+이 결과를 주의 깊게 살펴봐야 한다.
+
+\zsh{d3}의 토큰 길이는 결측이다.
+
+따라서 다음 비교식의 결과도 \zsh{<NA>}가 된다.
+
+\begin{dhkcode}
+df["token_length"] > 300
+\end{dhkcode}
+
+Pandas에서 Nullable Boolean 마스크를 행 선택에 사용할 때는 \zsh{<NA>}가 있는 위치를 선택하지 않는다.
+
+따라서 \zsh{df.loc[mask]}는 \zsh{d2}, \zsh{d5}만 반환한다.
+
+그런데 다음 표현식은 어떨까?
+
+\begin{dhkcode}
+df.loc[~mask]
+\end{dhkcode}
+
+\zsh{~}는 \zsh{True}와 \zsh{False}를 반전하지만 \zsh{<NA>}는 그대로 \zsh{<NA>}로 유지한다.
+
+따라서 \zsh{d3}는 반대 조건으로 선택할 때도 제외된다.
+
+이것은 매우 중요한 사실이다.
+
+결측이 포함된 마스크에서는 \zsh{mask}로 선택한 행과 \zsh{~mask}로 선택한 행의 합집합이 원본의 모든 행이 아닐 수 있다.
+
+\begin{dhkgraph}[uniform]
+node n1 (1,1) [accent] :: True // d2, d5 // 조건 만족
+node n2 (1,2) [blue] :: False // d1, d4 // 조건 불만족
+node n3 (1,3) [orange] :: <NA> // d3 // 판정 불가
+explain :: 조건 결과에 따른 세 가지 상태
+\end{dhkgraph}
+
+따라서 다음 세 집합을 구분해야 한다.
+
+\begin{dhkcode}
+passed = df.loc[mask]
+failed = df.loc[~mask]
+unknown = df.loc[mask.isna()]
+\end{dhkcode}
+
+이 방식은 조건을 만족하는 데이터와 만족하지 않는 데이터뿐 아니라, 판정 자체가 불가능한 데이터도 별도로 보존한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+fillna()로 결측을 처리하면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(mask.fillna(False).tolist())
+print(mask.fillna(True).tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[False, True, False, False, True]
+[False, True, True, False, True]
+\end{dhkzsh}
+
+\zsh{fillna(False)}는 판정할 수 없는 데이터를 조건 불만족으로 처리한다.
+
+반면 \zsh{fillna(True)}는 판정할 수 없는 데이터를 조건 만족으로 처리한다.
+
+어느 쪽이 올바른지는 분석 목적에 따라 다르다.
+
+예를 들어 토큰 길이가 300을 초과하는 문서를 제외하는 전처리라면, 길이를 알 수 없는 문서를 함께 제외할지 별도로 검수할지 결정해야 한다.
+
+중요한 것은 결측값을 \zsh{False}로 바꾸는 행위가 단순한 기술적 변환이 아니라 데이터 처리 정책이라는 점이다.
+
+\subsubsection{\zsh{isin()} - 하나의 값이 여러 후보에 속하는가?}
+
+지금까지는 하나의 값과 비교했다.
+
+\begin{dhkcode}
+df["language"] == "ko"
+\end{dhkcode}
+
+그런데 분석 대상 언어가 \zsh{"ko"} 또는 \zsh{"en"}처럼 여러 개라면 어떻게 할까?
+
+이때 사용할 수 있는 메서드가 \zsh{isin()}이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 4 - 여러 값에 대한 소속 검사
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+s = pd.Series(
+    ["ko", "en", "ja", None],
+    dtype="string[python]",
+)
+
+mask = s.isin(["ko", "en"])
+
+print(mask.tolist())
+print(s.loc[mask].tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[True, True, False, False]
+['ko', 'en']
+\end{dhkzsh}
+
+\zsh{isin()}은 각 원소가 전달된 후보 집합에 포함되는지 검사한다.
+
+따라서 다음과 같은 의미를 갖는다.
+
+\begin{dhkcode}
+s.isin(["ko", "en"])
+\end{dhkcode}
+
+각 원소가 \zsh{"ko"} 또는 \zsh{"en"}에 해당하는가?
+
+일반적인 단일 비교와 비교하면 다음과 같다.
+
+\begin{dhktable}
+|표현식|	의미|
+|:---|:---|
+|s == "ko"|	"ko"와 같은가?|
+|s.isin(["ko", "en"])|	"ko" 또는 "en" 중 하나인가?|
+|~s.isin(["ko", "en"])|	두 후보 중 어느 것에도 속하지 않는가?|
+\end{dhktable}
+
+여기서 주의할 점이 있다.
+
+\zsh{isin()}은 문자열 내부의 부분 문자열을 찾는 메서드가 아니다.
+
+예를 들어 \zsh{"korean"}이라는 값이 있을 때 \zsh{"ko"}가 부분 문자열로 포함되어 있다는 이유만으로 \zsh{isin(["ko"])}가 참이 되지는 않는다.
+
+부분 문자열 검색은 이후 \zsh{D.10}에서 다룰 \zsh{.str.contains()}와 같은 문자열 접근자를 사용해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+Nullable 자료형에서 isin()과 비교식의 차이
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+s = pd.Series(
+    [1, None, 0],
+    dtype="Int64",
+)
+
+print((s == 1).tolist())
+print(s.isin([1]).tolist())
+print(s.isin([pd.NA]).tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[True, <NA>, False]
+[True, False, False]
+[False, True, False]
+\end{dhkzsh}
+
+여기서 중요한 차이가 있다.
+
+\zsh{==}는 Nullable 정수형의 비교 의미론을 사용하므로 결측 위치에 \zsh{<NA>}를 반환한다.
+
+반면 \zsh{isin()}은 후보 집합에 포함되는지를 판단한다.
+
+이 예제에서는 후보에 결측이 없으면 결측 위치가 \zsh{False}이고, \zsh{pd.NA}를 후보로 전달하면 해당 결측 위치가 \zsh{True}가 된다.
+
+따라서 \zsh{isin()}을 단순히 여러 개의 \zsh{==} 비교를 연결한 것과 모든 경우에 동등하다고 가정하면 안 된다.
+
+\subsubsection{\zsh{where()}와 \zsh{mask()} - 선택과 값 변경의 차이}
+
+이제 이번 학습의 중요한 구분을 살펴보자.
+
+\begin{dhkcode}
+df.loc[condition]
+\end{dhkcode}
+
+이 표현식은 조건을 만족하는 행을 선택한다.
+
+그런데 다음 표현식은 다르게 작동한다.
+
+\begin{dhkcode}
+df.where(condition)
+\end{dhkcode}
+
+\zsh{where()}는 일반적으로 원본 객체의 형태를 유지하면서, 조건을 만족하지 않는 위치의 값을 다른 값으로 대체하는 메서드다.
+
+반대로 \zsh{mask()}는 조건을 만족하는 위치의 값을 대체한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 5 - where()와 mask()
+\end{dhksmry}
+\end{dhknote}
+
+앞서 정의한 DataFrame에서 토큰 길이 Series를 선택한다.
+
+\begin{dhkcode}
+s = df["token_length"]
+
+condition = s <= 300
+
+print(condition.tolist())
+
+print(s.where(condition, other=0).tolist())
+print(s.mask(condition, other=0).tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[True, False, <NA>, True, False]
+[120, 0, 0, 300, 0]
+[0, 420, 0, 0, 510]
+\end{dhkzsh}
+
+각 원소에서 무슨 일이 발생했는지 분석해 보자.
+
+\begin{dhktable}
+|문서|	원래 값|	조건 <=300|	where(..., 0)|	mask(..., 0)|
+|:---|:---|:---|:---|:---|
+|d1|	120|	True|	120|	0|
+|d2|	420|	False|	0|	420|
+|d3|	<NA>|	<NA>|	0|	0|
+|d4|	300|	True|	300|	0|
+|d5|	510|	False|	0|	510|
+\end{dhktable}
+
+\zsh{where()}는 조건이 참인 위치의 원래 값을 유지하고, 나머지를 대체한다.
+
+반면 \zsh{mask()}는 조건이 참인 위치를 대체하고, 거짓인 위치의 값을 유지한다.
+
+여기서 결측 조건의 처리가 중요하다.
+
+Pandas의 \zsh{where()}는 조건이 \zsh{<NA>}인 위치를 대체 대상으로 처리한다.
+
+\zsh{mask()} 역시 조건이 \zsh{<NA>}인 위치를 대체 대상으로 처리한다.
+
+따라서 두 경우 모두 \zsh{d3}의 값이 0으로 바뀌었다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+where()와 mask()는 항상 완전한 반대일까?
+\end{dhksmry}
+\end{dhknote}
+
+일반적인 참·거짓 조건에 대해서는 다음과 같은 관계로 이해할 수 있다.
+
+\begin{dhkcode}
+s.mask(condition, other=0)
+s.where(~condition, other=0)
+\end{dhkcode}
+
+하지만 Nullable Boolean의 \zsh{<NA>}가 포함되면 조건 반전 후에도 \zsh{<NA>}가 남는다.
+
+이때 Pandas의 결측 조건 처리 규칙까지 함께 고려해야 하므로, 단순한 2값 논리의 반대 연산으로만 이해해서는 안 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+행 필터링과의 차이
+\end{dhksmry}
+\end{dhknote}
+
+다음 세 표현식을 비교해 보자.
+
+\begin{dhkcode}
+selected = s.loc[condition]
+replaced_false = s.where(condition, other=0)
+replaced_true = s.mask(condition, other=0)
+\end{dhkcode}
+
+\begin{dhktable}
+|표현식|	결과의 길이|	동작|
+|:---|:---|:---|
+|s.loc[condition]|	조건에 따라 감소|	조건을 만족하는 원소만 선택|
+|s.where(condition, 0)|	원본과 동일|	조건 불만족 위치를 대체|
+|s.mask(condition, 0)|	원본과 동일|	조건 만족 위치를 대체|
+\end{dhktable}
+
+즉, \zsh{loc}는 데이터를 선택하는 연산이고, \zsh{where}와 \zsh{mask}는 값을 조건부로 유지하거나 대체하는 연산이다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+결측을 유지하고 싶다면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+print(s.where(condition).tolist())
+print(s.mask(condition).tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[120, <NA>, <NA>, 300, <NA>]
+[<NA>, 420, <NA>, <NA>, 510]
+\end{dhkzsh}
+
+\zsh{other}를 생략하면 일반적으로 조건에 따라 대체되는 위치에 결측값이 사용된다.
+
+이 경우에는 원본 dtype과 결측 표현 방식에 따라 결과 dtype이 달라질 수 있다.
+
+이번 예제의 \zsh{s}는 Nullable 정수형 \zsh{Int64}이므로 \zsh{<NA>}를 표현할 수 있다.
+
+또한 \zsh{where()}와 \zsh{mask()}는 기본적으로 결과 객체를 반환한다.
+
+반환값을 별도의 이름에 바인딩하는 것만으로 원본 Series가 변경되는 것은 아니다.
+
+\subsubsection{\zsh{query()} - 문자열로 조건식을 표현하기}
+
+Pandas는 조건을 문자열로 작성할 수 있는 \zsh{DataFrame.query()} 메서드도 제공한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 6 - query() 사용
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+threshold = 400
+
+result = df.query(
+    "token_length > @threshold and language == 'ko'",
+    engine="python",
+)
+
+print(result.index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+['d5']
+\end{dhkzsh}
+
+이 코드는 다음 조건을 표현한다.
+
+\begin{dhksmry}
+    - token_length가 외부 변수 threshold보다 클 것
+
+    - language가 "ko"일 것
+\end{dhksmry}
+
+여기서 \zsh{@threshold}는 \zsh{query()} 표현식 외부에 존재하는 Python 변수를 참조하기 위한 문법이다.
+
+또한 \zsh{query()} 내부에서는 \zsh{and}, \zsh{or}, \zsh{not}과 같은 표현을 사용할 수 있다.
+
+이는 일반적인 Series 조건식을 Python 코드로 직접 작성할 때 \zsh{&}, \zsh{|}, \zsh{~}를 사용해야 하는 것과 다르다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+일반적인 불리언 마스크와 비교
+\end{dhksmry}
+\end{dhknote}
+
+다음 두 표현식은 현재 예제에서 같은 행을 선택한다.
+
+\begin{dhkcode}
+result1 = df.loc[
+    (df["token_length"] > threshold)
+    & (df["language"] == "ko")
+]
+
+result2 = df.query(
+    "token_length > @threshold and language == 'ko'",
+    engine="python",
+)
+\end{dhkcode}
+
+하지만 실행 메커니즘은 같지 않다.
+
+첫 번째 표현식은 Python에서 Series 비교 연산을 수행하고, 그 결과를 \zsh{.loc}에 전달한다.
+
+두 번째 표현식은 \zsh{query()}가 문자열 표현식을 해석하여 조건을 평가하고, 그 조건에 맞는 행을 선택한다.
+
+따라서 \zsh{query()}는 단순히 \zsh{.loc}의 다른 표기법이 아니라 표현식 평가 기능을 포함하는 메서드다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+열 이름에 공백이 있다면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+sample = pd.DataFrame({
+    "token length": [100, 500],
+})
+
+result = sample.query(
+    "`token length` > 300"
+)
+
+print(result.index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+[1]
+\end{dhkzsh}
+
+열 이름에 공백이 있는 경우에는 백틱(backtick)을 사용해 참조할 수 있다.
+
+다만 모든 특수한 열 이름을 제한 없이 지원하는 것은 아니다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+SQL의 WHERE와 같은가?
+\end{dhksmry}
+\end{dhknote}
+
+문법적으로 비슷한 부분은 있지만 동일한 시스템은 아니다.
+
+\begin{dhktable}
+|구분|	Pandas query()|	SQL WHERE|
+|:---|:---|:---|
+|대상|	메모리의 DataFrame|	데이터베이스의 테이블·쿼리 결과|
+|조건 표현|	Pandas 표현식 문법|	SQL 조건식|
+|외부 변수|	@variable|	DB 드라이버의 매개변수 바인딩 등|
+|결측 의미론|	Pandas dtype과 연산 규칙|	SQL의 NULL 및 3값 논리|
+|실행|	Pandas 표현식 평가 엔진|	데이터베이스 쿼리 엔진|
+\end{dhktable}
+
+특히 \zsh{query()}에 전달하는 문자열은 평가 대상 표현식이므로, 신뢰할 수 없는 외부 입력을 그대로 삽입해서는 안 된다.
+
+또한 \zsh{engine="python"}은 Python 평가 엔진을 사용하도록 명시한 것이다.
+
+Nullable dtype을 사용하는 예제에서 동작을 명확하게 확인하기 위해 지정했지만, 데이터 크기와 표현식에 따라 다른 엔진보다 느릴 수 있다.
+
+\subsubsection{불리언 마스크의 Index alignment}
+
+\zsh{D.5}에서는 두 Series의 산술 연산에서 Index alignment가 발생한다는 사실을 배웠다.
+
+불리언 마스크를 \zsh{.loc}에 전달할 때도 Index 레이블이 중요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 7 - 같은 값, 다른 선택 결과
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {"score": [10, 20, 30, 40, 50]},
+    index=["d1", "d2", "d3", "d4", "d5"],
+)
+
+mask = pd.Series(
+    [True, False, True, False, True],
+    index=["d5", "d1", "d2", "d4", "d3"],
+)
+
+by_label = df.loc[mask]
+
+by_position = df.iloc[
+    mask.to_numpy()
+]
+
+print(by_label.index.tolist())
+print(by_position.index.tolist())
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+['d2', 'd3', 'd5']
+['d1', 'd3', 'd5']
+\end{dhkzsh}
+
+두 결과가 달라졌다.
+
+왜 그럴까?
+
+\zsh{.loc[mask]}는 마스크의 Index를 DataFrame의 Index에 대응시킨다.
+
+따라서 마스크에서 \zsh{True}인 레이블 \zsh{d5}, \zsh{d2}, \zsh{d3}에 해당하는 행을 선택한다.
+
+반환된 행은 원본 DataFrame의 순서에 따라 \zsh{d2}, \zsh{d3}, \zsh{d5}로 나타난다.
+
+반면 \zsh{mask.to_numpy()}는 Index 레이블 정보를 제거하고 불리언 값만 배열로 반환한다.
+
+\begin{dhkzsh}
+[True, False, True, False, True]
+\end{dhkzsh}
+
+따라서 \zsh{.iloc}에서는 첫 번째, 세 번째, 다섯 번째 위치를 선택하게 된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+마스크의 레이블이 부족하다면?
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+bad_mask = pd.Series(
+    [True, False],
+    index=["d1", "d2"],
+)
+
+df.loc[bad_mask]
+\end{dhkcode}
+
+이 코드는 다음 오류를 발생시킨다.
+
+\begin{dhkzsh}
+IndexingError: Unalignable boolean Series provided as indexer ...
+\end{dhkzsh}
+
+DataFrame의 모든 행에 대응하는 불리언 값을 구성할 수 없기 때문이다.
+
+여기서 주의할 점은 \zsh{.loc}의 불리언 마스크 처리와 \zsh{where()}의 조건 정렬이 완전히 같은 정책을 갖는 것은 아니라는 사실이다.
+
+예를 들어 \zsh{where()}는 대응되지 않는 조건 위치를 대체 대상으로 처리할 수 있다.
+
+반면 \zsh{.loc}은 필요한 레이블에 대응하는 불리언 값이 없으면 오류를 발생시킬 수 있다.
+
+따라서 Pandas의 모든 메서드가 Index alignment를 수행한다고 해서, 정합하지 않은 레이블을 처리하는 방식까지 동일한 것은 아니다.
+
+\subsubsection{조건부 선택과 조건부 할당은 다르다}
+
+이전 학습에서는 데이터 조회와 상태 변경을 구분했다.
+
+불리언 마스크에서도 이 차이를 유지해야 한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 8 - 선택과 상태 변경
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "score": [90, 70, 85],
+        "status": ["pending", "pending", "pending"],
+    },
+    index=["A", "B", "C"],
+)
+
+mask = df["score"] >= 80
+
+selected = df.loc[mask]
+
+df.loc[mask, "status"] = "passed"
+
+print(selected["status"].tolist())
+print(df["status"].tolist())
+\end{dhkcode}
+
+Pandas 2.2.3에서 Copy-on-Write를 활성화한 환경 또는 Pandas 3.x의 Copy-on-Write 동작을 기준으로 보면 결과는 다음과 같다.
+
+\begin{dhkzsh}
+['pending', 'pending']
+['passed', 'pending', 'passed']
+\end{dhkzsh}
+
+여기서 객체 관계를 분석해 보자.
+
+먼저 다음 표현식은 조건을 만족하는 행을 선택해 결과 DataFrame을 반환한다.
+
+\begin{dhkcode}
+selected = df.loc[mask]
+\end{dhkcode}
+
+반면 다음 표현식은 원본 DataFrame의 지정된 위치에 값을 할당한다.
+
+\begin{dhkcode}
+df.loc[mask, "status"] = "passed"
+\end{dhkcode}
+
+두 표현식의 역할은 다르다.
+
+또한 \zsh{selected}가 원본 \zsh{df}와 내부 데이터를 공유하는지, 독립적으로 보유하는지는 Pandas 버전과 Copy-on-Write 설정 등에 영향을 받을 수 있다.
+
+따라서 \zsh{selected}가 원본의 변경을 자동으로 반영한다고 가정해서는 안 된다.
+
+실무에서 명확한 의도가 중요하다면 다음처럼 구분하는 편이 좋다.
+
+\begin{dhkcode}
+# 조건에 맞는 데이터 추출
+selected = df.loc[mask].copy()
+
+# 원본 DataFrame의 특정 위치 변경
+df.loc[mask, "status"] = "passed"
+\end{dhkcode}
+
+이 부분은 \zsh{D.7}에서 객체 복사, 내부 데이터 공유, Copy-on-Write와 함께 더 자세히 다룰 것이다.
+
+\subsubsection{Transformer 응용 - 오류 샘플과 길이 초과 문서 추출}
+
+이제 이번 단원의 개념을 하나의 분석 과정에 통합해 보자.
+
+문서 분류 모델의 평가 결과를 분석한다고 가정하자.
+
+분석 목표는 두 가지다.
+
+첫째, 검증 데이터 중 정답 레이브로가 예측 레이블이 다른 문서를 찾는 것이다.
+
+둘째, 토큰 길이가 300을 초과하는 문서를 찾되, 길이를 알 수 없는 문서를 별도로 보존하는 것이다.
+
+\zsh{D.6.4}에서 정의한 공통 DataFrame을 사용하자.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+독립 실행 코드 9 - 오류 문서 분석
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+import pandas as pd
+
+df = pd.DataFrame(
+    {
+        "language": ["ko", "en", "ko", "en", "ko"],
+        "label": [1, 0, 1, None, 0],
+        "prediction": [1, 1, 0, 1, None],
+        "token_length": [120, 420, None, 300, 510],
+        "split": ["train", "valid", "valid", "train", "valid"],
+    },
+    index=pd.Index(
+        ["d1", "d2", "d3", "d4", "d5"],
+        name="doc_id",
+    ),
+).astype({
+    "label": "Int64",
+    "prediction": "Int64",
+    "token_length": "Int64",
+})
+
+valid = df["split"].eq("valid")
+
+known = (
+    df["label"].notna()
+    & df["prediction"].notna()
+)
+
+wrong = df["label"].ne(
+    df["prediction"]
+)
+
+error_mask = valid & known & wrong
+
+errors = df.loc[
+    error_mask,
+    ["language", "label", "prediction"],
+]
+
+print(errors)
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+       language  label  prediction
+doc_id
+d2           en      0           1
+d3           ko      1           0
+\end{dhkzsh}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+실행 과정 분석
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+1단계 - 검증 데이터 판정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+valid = df["split"].eq("valid")
+\end{dhkcode}
+
+검증 데이터에 해당하는 행을 나타내는 불리언 Series를 생성한다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+2단계 - 평가 가능한 문서 판정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+known = (
+    df["label"].notna()
+    & df["prediction"].notna()
+)
+\end{dhkcode}
+
+정답과 예측이 모두 존재하는 문서만 평가 대상으로 인정한다.
+
+여기서 결측을 무조건 오답으로 처리하지 않았다는 점이 중요하다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+3단계 - 예측 오류 판정
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+wrong = df["label"].ne(df["prediction"])
+\end{dhkcode}
+
+\zsh{ne()}는 \zsh{not equal} 비교 메서드다.
+
+두 Series의 값을 비교해 서로 다르면 \zsh{True}를 반환한다.
+
+Nullable 정수형이므로 어느 한쪽이 결측인 경우에는 \zsh{<NA>}가 발생할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+4단계 - 최종 조건 결합
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+error_mask = valid & known & wrong
+\end{dhkcode}
+
+세 조건을 결합해 검증 데이터이면서, 정답과 예측이 존재하고, 두 값이 서로 다른 문서만 선택한다.
+
+이때 \zsh{known}이 \zsh{False}인 행은 Nullable Boolean의 AND 연산 규칙에 따라 최종 결과가 \zsh{False}로 확정될 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+5단계 - 오류 샘플 추출
+\end{dhksmry}
+\end{dhknote}
+
+\begin{dhkcode}
+errors = df.loc[
+    error_mask,
+    ["language", "label", "prediction"],
+]
+\end{dhkcode}
+
+마지막으로 \zsh{.loc}을 사용해 조건을 만족하는 행과 필요한 열만 선택한다.
+
+결과는 두 행을 가진 DataFrame이다.
+
+원본 문서 ID인 \zsh{d2}, \zsh{d3}도 Index로 유지된다.
+
+이렇게 하면 모델의 오류를 분석할 때 해당 문서의 원본 텍스트나 메타데이터를 다시 추적할 수 있다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+길이 초과 문서와 길이 미확정 문서 구분
+\end{dhksmry}
+\end{dhknote}
+
+이번에는 토큰 길이를 분석해 보자.
+
+\begin{dhkcode}
+long_mask = df["token_length"] > 300
+
+long_docs = df.loc[long_mask]
+unknown_docs = df.loc[long_mask.isna()]
+
+print(long_docs.index.tolist())
+print(unknown_docs.index.tolist())
+
+print(long_mask.notna().sum())
+print(len(df))
+\end{dhkcode}
+
+예상 출력:
+
+\begin{dhkzsh}
+['d2', 'd5']
+['d3']
+4
+5
+\end{dhkzsh}
+
+총 다섯 문서 중 네 문서는 토큰 길이 조건을 판정할 수 있다.
+
+그중 두 문서의 길이가 300을 초과하고, 한 문서는 길이를 알 수 없다.
+
+여기서 단순히 다음과 같이 계산하면 문제가 생길 수 있다.
+
+\begin{dhkcode}
+len(long_docs) / len(df)
+\end{dhkcode}
+
+결과는 \zsh{2 / 5 = 0.4}다.
+
+하지만 이것은 전체 문서 중 길이 초과로 확인된 문서의 비율이지, 길이가 관측된 문서 중 길이 초과 비율과는 다르다.
+
+후자를 계산하려면 다음과 같이 해야 한다.
+
+\begin{dhkcode}
+long_mask.sum() / long_mask.notna().sum()
+\end{dhkcode}
+
+결과는 \zsh{2 / 4 = 0.5}다.
+
+두 지표는 분모의 정의가 다르다.
+
+\begin{dhktable}
+|지표	|계산|	값|
+|:---|:---|:---|
+|전체 문서 중 길이 초과 확인 비율|	2 / 5	|40 퍼센트|
+|길이가 확인된 문서 중 초과 비율|	2 / 4	|50 퍼센트|
+|토큰 길이 미확정 비율|	1 / 5	|20 퍼센트|
+\end{dhktable}
+
+이것은 단순한 코드 차이가 아니라 분석 대상 모집단과 관측 가능한 표본을 어떻게 정의하는가의 문제다.
+
+따라서 결측값을 포함한 불리언 마스크에서는 참인 원소의 개수뿐 아니라, 판정 가능한 원소의 개수도 함께 관리해야 한다.
+
+\subsubsection{주요 메서드 비교}
+
+이번 학습에서 배운 인터페이스를 비교해 보자.
+
+\begin{dhktable}
+|표현식	|주요 목적	|반환 객체|
+|:---|:---|:---|
+|s > value|	비교 조건 생성|	불리언 Series|
+|a & b|	원소별 AND|	불리언 Series|
+|a │ b|	원소별 OR|	불리언 Series|
+|~a	|원소별 NOT|	불리언 Series|
+|s.isin(values)	|후보 집합 소속 검사|	불리언 Series|
+|df.loc[mask]|	조건에 맞는 행 선택	|DataFrame|
+|s.where(cond, other)|	조건이 거짓인 위치 대체|	Series|
+|s.mask(cond, other)|	조건이 참인 위치 대체|	Series|
+|df.query(expr)	|문자열 조건식으로 행 선택|	DataFrame|
+|df.loc[mask, col] = value|	조건부 할당	|기존 DataFrame 상태 변경|
+\end{dhktable}
+
+여기서 세 가지를 구분하면 대부분의 조건부 분석 코드를 설명할 수 있다.
+
+조건 생성은 비교식과 논리 연산을 통해 불리언 객체를 만드는 과정이다.
+
+조건부 선택은 불리언 객체를 사용해 필요한 행이나 원소를 추출하는 과정이다.
+
+조건부 변환은 원본의 형태를 유지하면서 조건에 따라 값을 대체하거나, 특정 위치의 상태를 변경하는 과정이다.
+
+이 세 과정은 함께 사용되지만 동일한 연산은 아니다.
+
+\subsubsection{자주 발생하는 오해와 경계 조건}
+
+\begin{dhktable}
+|오해	|정확한 이해|
+|:---|:---|
+|불리언 마스크는 항상 NumPy 배열이다|	Pandas에서는 Index와 dtype을 가진 Series일 수 있다|
+|and, or로 Series 조건을 결합하면 된다|	일반적인 원소별 조건에는 &, │를 사용해야 한다
+|~mask는 mask로 선택되지 않은 모든 행을 선택한다|	<NA>는 반전 후에도 결측이므로 양쪽에서 제외될 수 있다|
+|isin()은 여러 개의 ==를 단순 결합한 것이다|	결측값 처리 등에서 차이가 있다
+|where()는 조건을 만족하는 행만 반환한다|	기본적으로 형태를 유지하고 값을 대체한다
+|query()는 SQL이다	|Pandas의 표현식 평가 및 행 선택 메서드다|
+|같은 길이의 마스크라면 언제나 안전하다|	Index 레이블이 다르면 선택 결과가 달라지거나 오류가 발생할 수 있다|
+|조건부 선택은 원본을 변경한다|	조회와 할당은 별개의 연산이다|
+|결측을 False로 바꾸는 것은 단순한 형식 변환이다|	판정 불가 상태를 불만족으로 처리하는 정책이다|
+\end{dhktable}
+
+여기서 \zsh{D.5}와 연결되는 핵심은 마스크의 길이만 검사해서는 충분하지 않다는 사실이다.
+
+조건부 선택에서 중요한 것은 마스크가 어떤 행을 식별하는지, 그 Index가 원본 데이터와 올바르게 대응하는지, 결측값이 어떤 정책으로 처리되는지다.
+
+\subsubsection{핵심 정리와 다음 학습 위치}
+
+이번 학습의 내용을 Python 객체 모델 관점에서 정리해 보자.
+
+\begin{dhkcode}
+mask = df["score"] >= 80
+result = df.loc[mask]
+\end{dhkcode}
+
+첫 번째 표현식은 Series 객체에 비교 연산을 적용해 새로운 불리언 Series를 생성한다.
+
+두 번째 표현식은 DataFrame의 \zsh{.loc} 인덱서 객체에 불리언 Series를 전달해 행을 선택한다.
+
+따라서 다음 흐름을 기억하면 된다.
+
+\begin{dhksmry}[centered]
+데이터 객체 \ra 조건 평가 \ra 불리언 객체 \ra 선택 또는 변환
+\end{dhksmry}
+
+그리고 Nullable Boolean이 개입한다면 이 과정에 판정 불가 상태에 대한 처리 규칙까지 추가된다.
+
+\begin{dhknote}
+\begin{dhksmry}[centered]
+다음 학습 - D.7 객체 변경·재바인딩·Copy-on-Write
+\end{dhksmry}
+\end{dhknote}
+
+지금까지는 주로 데이터를 조회하거나 새로운 결과 객체를 생성했다.
+
+다음 학습에서는 기존 객체를 변경하는 과정에 집중할 것이다.
+
+특히 다음 세 표현식의 차이를 분석할 것이다.
+
+\begin{dhkcode}
+df2 = df
+df2 = df.copy()
+df2 = df.assign(new_column=1)
+\end{dhkcode}
+
+그리고 다음과 같은 연쇄 대입이 왜 문제가 되는지 살펴볼 것이다.
+
+\begin{dhkcode}
+df.loc[mask, "score"] = 100
+df[mask]["score"] = 100
+\end{dhkcode}
+
+이 과정에서 Python의 이름 바인딩, 객체 동일성, 내부 데이터 공유, Copy-on-Write가 서로 어떻게 연결되는지 분석하게 된다.
+
+공식 참고 자료
+
+\begin{dhksmry}
+https://pandas.pydata.org/docs/user_guide/indexing.html
+https://pandas.pydata.org/docs/user_guide/boolean.html
+https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html
+https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.where.html
+\end{dhksmry}
